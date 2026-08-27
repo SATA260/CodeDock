@@ -19,22 +19,22 @@ func isTerminal(f *os.File) bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-func newHandler() slog.Handler {
+func newHandler(level string) slog.Handler {
 	return tint.NewHandler(os.Stderr, &tint.Options{
-		Level:      parseLevel(os.Getenv("LOG_LEVEL")),
+		Level:      parseLevel(level),
 		TimeFormat: "15:04:05.000",
 		NoColor:    !isTerminal(os.Stderr),
 	})
 }
 
-// Init 初始化全局 slog。读取 LOG_LEVEL（debug、info、warn、error），默认 debug。
-func Init() {
-	slog.SetDefault(slog.New(newHandler()))
+// Init 初始化全局 slog。level 为 debug、info、warn 或 error。
+func Init(level string) {
+	slog.SetDefault(slog.New(newHandler(level)))
 }
 
 // NewLogger 创建带 component 前缀的 slog logger。
 func NewLogger(component string) *slog.Logger {
-	return slog.New(newHandler()).With("component", component)
+	return slog.Default().With("component", component)
 }
 
 // RequestAttrs 提取 request_id，供 handler 与访问日志使用相同的观察字段。

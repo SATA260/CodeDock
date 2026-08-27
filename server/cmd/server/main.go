@@ -9,32 +9,26 @@ import (
 	"syscall"
 	"time"
 
+	"codedock/internal/config"
 	"codedock/internal/logger"
 )
 
-const (
-	defaultHTTPAddress = ":8080"
-	shutdownTimeout    = 10 * time.Second
-)
+const shutdownTimeout = 10 * time.Second
 
 func main() {
-	logger.Init()
+	cfg := config.Load()
+	logger.Init(cfg.LogLevel)
 	log := logger.NewLogger("server")
 
-	address := os.Getenv("HTTP_ADDR")
-	if address == "" {
-		address = defaultHTTPAddress
-	}
-
 	server := &http.Server{
-		Addr:              address,
+		Addr:              cfg.HTTPAddr,
 		Handler:           newRouter(log),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		log.Info("api listening", "addr", address)
+		log.Info("api listening", "addr", cfg.HTTPAddr)
 		serverErrors <- server.ListenAndServe()
 	}()
 
