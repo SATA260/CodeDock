@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	github.com/go-chi/chi/v5 v5.3.0
+	github.com/lmittmann/tint v1.2.0
 	modernc.org/sqlite v1.57.0
 )
 

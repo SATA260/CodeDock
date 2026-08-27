@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"codedock/internal/logger"
 )
 
 const (
@@ -17,6 +18,9 @@ const (
 )
 
 func main() {
+	logger.Init()
+	log := logger.NewLogger("server")
+
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
 		address = defaultHTTPAddress
@@ -24,13 +28,13 @@ func main() {
 
 	server := &http.Server{
 		Addr:              address,
-		Handler:           newRouter(),
+		Handler:           newRouter(log),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		log.Printf("API listening on %s", address)
+		log.Info("api listening", "addr", address)
 		serverErrors <- server.ListenAndServe()
 	}()
 
@@ -40,14 +44,15 @@ func main() {
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("API server stopped: %v", err)
+			log.Error("api server stopped", "error", err)
+			os.Exit(1)
 		}
 	case <-signalContext.Done():
 		shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownContext); err != nil {
-			log.Printf("API server shutdown failed: %v", err)
+			log.Error("api server shutdown failed", "error", err)
 		}
 	}
 }
