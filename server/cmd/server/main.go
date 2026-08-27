@@ -3,34 +3,32 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"codedock/internal/config"
+	"codedock/internal/logger"
 )
 
-const (
-	defaultHTTPAddress = ":8080"
-	shutdownTimeout    = 10 * time.Second
-)
+const shutdownTimeout = 10 * time.Second
 
 func main() {
-	address := os.Getenv("HTTP_ADDR")
-	if address == "" {
-		address = defaultHTTPAddress
-	}
+	cfg := config.Load()
+	logger.Init(cfg.LogLevel)
+	log := logger.NewLogger("server")
 
 	server := &http.Server{
-		Addr:              address,
-		Handler:           newRouter(),
+		Addr:              cfg.HTTPAddr,
+		Handler:           newRouter(log),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		log.Printf("API listening on %s", address)
+		log.Info("api listening", "addr", cfg.HTTPAddr)
 		serverErrors <- server.ListenAndServe()
 	}()
 
@@ -40,14 +38,15 @@ func main() {
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("API server stopped: %v", err)
+			log.Error("api server stopped", "error", err)
+			os.Exit(1)
 		}
 	case <-signalContext.Done():
 		shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownContext); err != nil {
-			log.Printf("API server shutdown failed: %v", err)
+			log.Error("api server shutdown failed", "error", err)
 		}
 	}
 }
