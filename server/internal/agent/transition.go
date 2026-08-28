@@ -7,7 +7,8 @@ import (
 	pkgagent "codedock/pkg/agent"
 )
 
-// Transition 消费模型流，并把 LLM 收到的增量通过事件总线分发出去。本阶段为空实现。
+// Transition 消费模型流，并把 LLM 收到的增量通过事件总线分发出去。
+// TODO: 消费 ModelStream 增量并发布到 Bus。
 func Transition(_ context.Context, bus *events.Bus, _ pkgagent.ModelStream) error {
 	if bus == nil {
 		return nil

@@ -68,7 +68,8 @@ type ModelStream interface {
 	Close() error
 }
 
-// Stream 使用 Eino ToolCallingChatModel 发起流式调用。本阶段为空实现。
+// Stream 使用 Eino ToolCallingChatModel 发起流式调用。
+// TODO: 创建 Eino 模型并发起流式调用。
 func Stream(_ context.Context, _ Chat) (ModelStream, error) {
 	var chat einomodel.ToolCallingChatModel
 	_ = chat

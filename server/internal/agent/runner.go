@@ -53,7 +53,7 @@ func (r *Runtime) Worker() *Worker {
 //     - 工具跑完：结果进入下一 Turn，从步骤 1 再来
 //  10. 取消、超时、超限或错误：进入 cancelled / failed，保留已落库内容
 //
-// 本阶段为空实现，下面只保留调用顺序。
+// TODO: 按下列步骤实现 Run 主循环，当前仅保留调用顺序。
 func (r *Runtime) Execute(ctx context.Context, runID string) error {
 	// 1. 领取：读 Run，占用 session lease，创建本轮 Turn。
 	_ = runID

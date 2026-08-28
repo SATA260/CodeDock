@@ -6,7 +6,8 @@ import (
 	"codedock/pkg/db/sqlite"
 )
 
-// Create 新建指定 scope 的 Markdown 文档。本阶段为空实现。
+// Create 新建指定 scope 的 Markdown 文档。
+// TODO: 调用 sqlc InsertTextMemory 写入全文，并用 ByteLen 填充字节长度。
 func Create(_ context.Context, q *sqlite.Queries, memory TextMemory) (TextMemory, error) {
 	_ = ByteLen(memory.Content)
 	if q != nil {
@@ -15,7 +16,8 @@ func Create(_ context.Context, q *sqlite.Queries, memory TextMemory) (TextMemory
 	return TextMemory{}, nil
 }
 
-// Get 读取 Markdown 全文。本阶段为空实现。
+// Get 读取 Markdown 全文。
+// TODO: 按 scope 与 scope_id 读取 Markdown 全文。
 func Get(_ context.Context, q *sqlite.Queries, key TextMemoryKey) (TextMemory, error) {
 	_ = key
 	if q != nil {
@@ -24,7 +26,8 @@ func Get(_ context.Context, q *sqlite.Queries, key TextMemoryKey) (TextMemory, e
 	return TextMemory{}, nil
 }
 
-// Update 覆盖更新 Markdown 全文。本阶段为空实现。
+// Update 覆盖更新 Markdown 全文。
+// TODO: 覆盖更新 Markdown 全文与 ByteLen。
 func Update(_ context.Context, q *sqlite.Queries, memory TextMemory) (TextMemory, error) {
 	_ = ByteLen(memory.Content)
 	if q != nil {
@@ -33,7 +36,8 @@ func Update(_ context.Context, q *sqlite.Queries, memory TextMemory) (TextMemory
 	return TextMemory{}, nil
 }
 
-// Delete 删除指定 scope 的 Markdown 文档。本阶段为空实现。
+// Delete 删除指定 scope 的 Markdown 文档。
+// TODO: 按 scope 与 scope_id 删除 Markdown 文档。
 func Delete(_ context.Context, q *sqlite.Queries, key TextMemoryKey) error {
 	_ = key
 	if q != nil {

@@ -9,7 +9,8 @@ type Prompt struct {
 	Context ContextSnapshot
 }
 
-// Build 将上下文组装为模型调用。本阶段为空实现。
+// Build 将上下文组装为模型调用。
+// TODO: 将系统提示词、历史和工具定义组装为 Chat。
 func Build(_ context.Context, _ Prompt) (Chat, error) {
 	return Chat{}, nil
 }

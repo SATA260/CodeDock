@@ -34,7 +34,8 @@ type DeleteTextMemoryResponse struct {
 	OK bool
 }
 
-// ListTextMemories 列出用户可见的 Markdown 记忆。本阶段为空实现。
+// ListTextMemories 列出用户可见的 Markdown 记忆。
+// TODO: 解析 UserID / ProjectID，按 user / project scope 列出可见 Markdown 记忆。
 func (a *API) ListTextMemories(w http.ResponseWriter, _ *http.Request) {
 	_ = ListTextMemoriesRequest{}
 	if a.queries != nil {
@@ -43,7 +44,8 @@ func (a *API) ListTextMemories(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, ListTextMemoriesResponse{})
 }
 
-// GetTextMemory 查看 Markdown 全文。本阶段为空实现。
+// GetTextMemory 查看 Markdown 全文。
+// TODO: 按 path 中的 scope / scope_id 读取全文并返回 ByteLen。
 func (a *API) GetTextMemory(w http.ResponseWriter, _ *http.Request) {
 	_ = GetTextMemoryRequest{}
 	if a.queries != nil {
@@ -52,7 +54,8 @@ func (a *API) GetTextMemory(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, GetTextMemoryResponse{})
 }
 
-// DeleteTextMemory 用户清空某一 scope 的记忆。本阶段为空实现。
+// DeleteTextMemory 用户清空某一 scope 的记忆。
+// TODO: 按 path 中的 scope / scope_id 删除 Markdown 记忆。
 func (a *API) DeleteTextMemory(w http.ResponseWriter, _ *http.Request) {
 	_ = DeleteTextMemoryRequest{}
 	if a.queries != nil {

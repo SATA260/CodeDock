@@ -24,6 +24,7 @@ func main() {
 	log := logger.NewLogger("server")
 
 	bus := events.New()
+	// TODO: 打开数据库，跑 migration，并把 sqlc Queries 注入 Runtime 与 Handler。
 	runtime := agent.New(nil, bus)
 	api := handler.New(nil, runtime, bus)
 

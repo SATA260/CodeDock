@@ -54,7 +54,8 @@ type MessageHit struct {
 	Rank    float64
 }
 
-// ByteLen 计算 Markdown 字节长度。本阶段为空实现。
+// ByteLen 计算 Markdown 字节长度。
+// TODO: 按 UTF-8 字节计算 Content 长度。
 func ByteLen(_ string) int {
 	return 0
 }

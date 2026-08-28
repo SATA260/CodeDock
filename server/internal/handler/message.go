@@ -24,7 +24,8 @@ type DeleteMessageResponse struct {
 	OK bool
 }
 
-// CreateMessage 写入用户消息；若触发执行则在 Handler 内启动 Run。本阶段为空实现。
+// CreateMessage 写入用户消息；若触发执行则在 Handler 内启动 Run。
+// TODO: 写入用户消息，并按 InputMode 决定是否启动 Run。
 func (a *API) CreateMessage(w http.ResponseWriter, r *http.Request) {
 	_ = CreateMessageRequest{}
 	if a.queries != nil {
@@ -34,7 +35,8 @@ func (a *API) CreateMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, MessageResponse{})
 }
 
-// ListMessages 分页查询消息。本阶段为空实现。
+// ListMessages 分页查询消息。
+// TODO: 按 session_id 分页查询消息。
 func (a *API) ListMessages(w http.ResponseWriter, _ *http.Request) {
 	if a.queries != nil {
 		_ = a.queries.ListSessionMessages
@@ -42,7 +44,8 @@ func (a *API) ListMessages(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, ListMessagesResponse{})
 }
 
-// DeleteMessage 删除消息。本阶段为空实现。
+// DeleteMessage 删除消息。
+// TODO: 按 message_id 删除消息。
 func (a *API) DeleteMessage(w http.ResponseWriter, _ *http.Request) {
 	if a.queries != nil {
 		_ = a.queries.DeleteMessage

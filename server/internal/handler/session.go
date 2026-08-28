@@ -25,7 +25,8 @@ type ListSessionsResponse struct {
 	Sessions []pkgagent.Session
 }
 
-// CreateSession 创建会话。本阶段为空实现。
+// CreateSession 创建会话。
+// TODO: 解析请求并写入 sessions。
 func (a *API) CreateSession(w http.ResponseWriter, _ *http.Request) {
 	_ = CreateSessionRequest{}
 	if a.queries != nil {
@@ -34,7 +35,8 @@ func (a *API) CreateSession(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, SessionResponse{})
 }
 
-// ListSessions 列出会话。本阶段为空实现。
+// ListSessions 列出会话。
+// TODO: 按查询条件列出 sessions。
 func (a *API) ListSessions(w http.ResponseWriter, _ *http.Request) {
 	if a.queries != nil {
 		_ = a.queries.ListSessions
@@ -42,7 +44,8 @@ func (a *API) ListSessions(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, ListSessionsResponse{})
 }
 
-// GetSession 查询单个会话。本阶段为空实现。
+// GetSession 查询单个会话。
+// TODO: 按 session_id 读取并返回会话。
 func (a *API) GetSession(w http.ResponseWriter, _ *http.Request) {
 	if a.queries != nil {
 		_ = a.queries.GetSession
@@ -50,7 +53,8 @@ func (a *API) GetSession(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, SessionResponse{})
 }
 
-// UpdateSession 更新会话。本阶段为空实现。
+// UpdateSession 更新会话。
+// TODO: 按 session_id 更新会话字段。
 func (a *API) UpdateSession(w http.ResponseWriter, _ *http.Request) {
 	_ = UpdateSessionRequest{}
 	if a.queries != nil {
@@ -59,7 +63,8 @@ func (a *API) UpdateSession(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, SessionResponse{})
 }
 
-// ArchiveSession 归档会话。本阶段为空实现。
+// ArchiveSession 归档会话。
+// TODO: 将指定会话标记为 archived。
 func (a *API) ArchiveSession(w http.ResponseWriter, _ *http.Request) {
 	if a.queries != nil {
 		_ = a.queries.ArchiveSession

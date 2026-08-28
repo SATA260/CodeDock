@@ -141,7 +141,8 @@ type DispatchResult struct {
 	ApprovalIDs     []string
 }
 
-// Dispatch 按已解析的工具调用执行调度。本阶段为空实现。
+// Dispatch 按已解析的工具调用执行调度。
+// TODO: 按权限与审批策略调度工具调用。
 func Dispatch(_ context.Context, _ Invocation) (DispatchResult, error) {
 	return DispatchResult{}, nil
 }
