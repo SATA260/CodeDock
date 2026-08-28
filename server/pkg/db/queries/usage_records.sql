@@ -2,15 +2,13 @@
 SELECT * FROM usage_records
 WHERE id = ?;
 
--- name: ListUsageByRun :many
-SELECT * FROM usage_records
-WHERE run_id = ?
-ORDER BY created_at;
+-- name: CountUsageByRun :one
+SELECT COUNT(*) FROM usage_records
+WHERE run_id = ?;
 
--- name: ListUsageBySession :many
-SELECT * FROM usage_records
-WHERE session_id = ?
-ORDER BY created_at;
+-- name: CountUsageBySession :one
+SELECT COUNT(*) FROM usage_records
+WHERE session_id = ?;
 
 -- name: InsertUsageRecord :one
 INSERT INTO usage_records (

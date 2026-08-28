@@ -10,6 +10,30 @@ import (
 	"database/sql"
 )
 
+const countUsageByRun = `-- name: CountUsageByRun :one
+SELECT COUNT(*) FROM usage_records
+WHERE run_id = ?
+`
+
+func (q *Queries) CountUsageByRun(ctx context.Context, runID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUsageByRun, runID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countUsageBySession = `-- name: CountUsageBySession :one
+SELECT COUNT(*) FROM usage_records
+WHERE session_id = ?
+`
+
+func (q *Queries) CountUsageBySession(ctx context.Context, sessionID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUsageBySession, sessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getUsageRecord = `-- name: GetUsageRecord :one
 SELECT id, session_id, run_id, turn_id, request_id, provider, model, usage_type, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, reasoning_tokens, total_tokens, estimated, raw_provider_usage, created_at FROM usage_records
 WHERE id = ?
@@ -108,96 +132,4 @@ func (q *Queries) InsertUsageRecord(ctx context.Context, arg InsertUsageRecordPa
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const listUsageByRun = `-- name: ListUsageByRun :many
-SELECT id, session_id, run_id, turn_id, request_id, provider, model, usage_type, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, reasoning_tokens, total_tokens, estimated, raw_provider_usage, created_at FROM usage_records
-WHERE run_id = ?
-ORDER BY created_at
-`
-
-func (q *Queries) ListUsageByRun(ctx context.Context, runID string) ([]UsageRecord, error) {
-	rows, err := q.db.QueryContext(ctx, listUsageByRun, runID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []UsageRecord
-	for rows.Next() {
-		var i UsageRecord
-		if err := rows.Scan(
-			&i.ID,
-			&i.SessionID,
-			&i.RunID,
-			&i.TurnID,
-			&i.RequestID,
-			&i.Provider,
-			&i.Model,
-			&i.UsageType,
-			&i.CacheCreationInputTokens,
-			&i.CacheReadInputTokens,
-			&i.OutputTokens,
-			&i.ReasoningTokens,
-			&i.TotalTokens,
-			&i.Estimated,
-			&i.RawProviderUsage,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listUsageBySession = `-- name: ListUsageBySession :many
-SELECT id, session_id, run_id, turn_id, request_id, provider, model, usage_type, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, reasoning_tokens, total_tokens, estimated, raw_provider_usage, created_at FROM usage_records
-WHERE session_id = ?
-ORDER BY created_at
-`
-
-func (q *Queries) ListUsageBySession(ctx context.Context, sessionID string) ([]UsageRecord, error) {
-	rows, err := q.db.QueryContext(ctx, listUsageBySession, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []UsageRecord
-	for rows.Next() {
-		var i UsageRecord
-		if err := rows.Scan(
-			&i.ID,
-			&i.SessionID,
-			&i.RunID,
-			&i.TurnID,
-			&i.RequestID,
-			&i.Provider,
-			&i.Model,
-			&i.UsageType,
-			&i.CacheCreationInputTokens,
-			&i.CacheReadInputTokens,
-			&i.OutputTokens,
-			&i.ReasoningTokens,
-			&i.TotalTokens,
-			&i.Estimated,
-			&i.RawProviderUsage,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }

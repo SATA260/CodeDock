@@ -74,6 +74,17 @@ func (q *Queries) ClearActiveRun(ctx context.Context, arg ClearActiveRunParams) 
 	return err
 }
 
+const countSessions = `-- name: CountSessions :one
+SELECT COUNT(*) FROM sessions
+`
+
+func (q *Queries) CountSessions(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSessions)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getSession = `-- name: GetSession :one
 SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at FROM sessions
 WHERE id = ?
@@ -165,45 +176,6 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (S
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const listSessions = `-- name: ListSessions :many
-SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at FROM sessions
-ORDER BY updated_at DESC
-`
-
-func (q *Queries) ListSessions(ctx context.Context) ([]Session, error) {
-	rows, err := q.db.QueryContext(ctx, listSessions)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Session
-	for rows.Next() {
-		var i Session
-		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
-			&i.UserID,
-			&i.AgentID,
-			&i.Status,
-			&i.ActiveRunID,
-			&i.LastEventSeq,
-			&i.CompactionSeq,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const updateCompactionSeq = `-- name: UpdateCompactionSeq :exec

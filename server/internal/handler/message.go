@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	pkgagent "codedock/pkg/agent"
+	"codedock/pkg/db/sqlite"
 )
 
 type CreateMessageRequest struct {
@@ -22,6 +23,7 @@ type MessageResponse struct {
 type ListMessagesResponse struct {
 	Messages     []pkgagent.Message `json:"messages"`
 	AsOfEventSeq int64              `json:"as_of_event_seq"`
+	PageInfo
 }
 
 type DeleteMessageResponse struct {
@@ -66,7 +68,24 @@ func (a *API) ListMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	rows, err := a.q(r.Context()).ListSessionMessages(r.Context(), session.ID)
+	page, err := ParsePageQuery(r, messagePageDefaults)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	q := a.q(r.Context())
+	total, err := q.CountSessionMessages(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	rows, err := q.ListSessionMessagesPage(r.Context(), sqlite.ListSessionMessagesPageParams{
+		SessionID: session.ID,
+		SortBy:    page.SortBy,
+		SortOrder: page.SortOrder,
+		Limit:     int64(page.Limit()),
+		Offset:    int64(page.Offset()),
+	})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -78,6 +97,7 @@ func (a *API) ListMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ListMessagesResponse{
 		Messages:     messages,
 		AsOfEventSeq: session.LastEventSeq,
+		PageInfo:     page.Info(total),
 	})
 }
 

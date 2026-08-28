@@ -10,6 +10,18 @@ import (
 	"database/sql"
 )
 
+const countSessionMessages = `-- name: CountSessionMessages :one
+SELECT COUNT(*) FROM messages
+WHERE session_id = ?
+`
+
+func (q *Queries) CountSessionMessages(ctx context.Context, sessionID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSessionMessages, sessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteMessage = `-- name: DeleteMessage :exec
 DELETE FROM messages
 WHERE id = ?

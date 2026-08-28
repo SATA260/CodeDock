@@ -7,6 +7,10 @@ SELECT * FROM messages
 WHERE session_id = ?
 ORDER BY event_seq, created_at;
 
+-- name: CountSessionMessages :one
+SELECT COUNT(*) FROM messages
+WHERE session_id = ?;
+
 -- name: InsertMessage :one
 INSERT INTO messages (
     id, session_id, run_id, turn_id, role, content, attachments, tool_calls, event_seq, created_at

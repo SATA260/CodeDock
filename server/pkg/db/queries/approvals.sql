@@ -2,10 +2,9 @@
 SELECT * FROM approvals
 WHERE id = ?;
 
--- name: ListSessionApprovals :many
-SELECT * FROM approvals
-WHERE session_id = ?
-ORDER BY id;
+-- name: CountSessionApprovals :one
+SELECT COUNT(*) FROM approvals
+WHERE session_id = ?;
 
 -- name: InsertApproval :one
 INSERT INTO approvals (

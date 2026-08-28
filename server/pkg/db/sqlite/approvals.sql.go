@@ -9,6 +9,18 @@ import (
 	"context"
 )
 
+const countSessionApprovals = `-- name: CountSessionApprovals :one
+SELECT COUNT(*) FROM approvals
+WHERE session_id = ?
+`
+
+func (q *Queries) CountSessionApprovals(ctx context.Context, sessionID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSessionApprovals, sessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getApproval = `-- name: GetApproval :one
 SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at FROM approvals
 WHERE id = ?
@@ -69,43 +81,6 @@ func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) 
 		&i.ExpiresAt,
 	)
 	return i, err
-}
-
-const listSessionApprovals = `-- name: ListSessionApprovals :many
-SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at FROM approvals
-WHERE session_id = ?
-ORDER BY id
-`
-
-func (q *Queries) ListSessionApprovals(ctx context.Context, sessionID string) ([]Approval, error) {
-	rows, err := q.db.QueryContext(ctx, listSessionApprovals, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Approval
-	for rows.Next() {
-		var i Approval
-		if err := rows.Scan(
-			&i.ID,
-			&i.SessionID,
-			&i.RunID,
-			&i.ToolCallID,
-			&i.Scope,
-			&i.Status,
-			&i.ExpiresAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const updateApproval = `-- name: UpdateApproval :one

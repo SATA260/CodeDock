@@ -28,6 +28,7 @@ type SessionResponse struct {
 
 type ListSessionsResponse struct {
 	Sessions []pkgagent.Session `json:"sessions"`
+	PageInfo
 }
 
 // CreateSession 创建会话。
@@ -64,9 +65,25 @@ func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, SessionResponse{Session: mapSession(row)})
 }
 
-// ListSessions 列出会话。
+// ListSessions 分页列出会话。
 func (a *API) ListSessions(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.q(r.Context()).ListSessions(r.Context())
+	page, err := ParsePageQuery(r, sessionPageDefaults)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	q := a.q(r.Context())
+	total, err := q.CountSessions(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	rows, err := q.ListSessions(r.Context(), sqlite.ListSessionsParams{
+		SortBy:    page.SortBy,
+		SortOrder: page.SortOrder,
+		Limit:     int64(page.Limit()),
+		Offset:    int64(page.Offset()),
+	})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -75,7 +92,7 @@ func (a *API) ListSessions(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		sessions = append(sessions, mapSession(row))
 	}
-	writeJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions})
+	writeJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions, PageInfo: page.Info(total)})
 }
 
 // GetSession 查询单个会话。

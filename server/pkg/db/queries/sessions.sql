@@ -2,9 +2,8 @@
 SELECT * FROM sessions
 WHERE id = ?;
 
--- name: ListSessions :many
-SELECT * FROM sessions
-ORDER BY updated_at DESC;
+-- name: CountSessions :one
+SELECT COUNT(*) FROM sessions;
 
 -- name: InsertSession :one
 INSERT INTO sessions (

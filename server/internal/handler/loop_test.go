@@ -121,6 +121,7 @@ func newFixture(t *testing.T, extras ...tool.Tool) *fixture {
 func testRouter(api *handler.API) http.Handler {
 	r := chi.NewRouter()
 	r.Post("/sessions", api.CreateSession)
+	r.Get("/sessions", api.ListSessions)
 	r.Get("/sessions/{session_id}", api.GetSession)
 	r.Post("/sessions/{session_id}/runs", api.StartRun)
 	r.Post("/sessions/{session_id}/messages", api.CreateMessage)

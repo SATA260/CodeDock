@@ -26,16 +26,34 @@ type ApprovalResponse struct {
 
 type ListApprovalsResponse struct {
 	Approvals []pkgagent.Approval `json:"approvals"`
+	PageInfo
 }
 
-// ListApprovals 查询会话下的审批。
+// ListApprovals 分页查询会话下的审批。
 func (a *API) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	session, err := a.loadSession(r)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	rows, err := a.q(r.Context()).ListSessionApprovals(r.Context(), session.ID)
+	page, err := ParsePageQuery(r, approvalPageDefaults)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	q := a.q(r.Context())
+	total, err := q.CountSessionApprovals(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	rows, err := q.ListSessionApprovals(r.Context(), sqlite.ListSessionApprovalsParams{
+		SessionID: session.ID,
+		SortBy:    page.SortBy,
+		SortOrder: page.SortOrder,
+		Limit:     int64(page.Limit()),
+		Offset:    int64(page.Offset()),
+	})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -44,7 +62,7 @@ func (a *API) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		items = append(items, mapApproval(row))
 	}
-	writeJSON(w, http.StatusOK, ListApprovalsResponse{Approvals: items})
+	writeJSON(w, http.StatusOK, ListApprovalsResponse{Approvals: items, PageInfo: page.Info(total)})
 }
 
 // GetApproval 查询单条审批。
