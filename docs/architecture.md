@@ -17,12 +17,14 @@ server/cmd/server
 server/internal/handler
     |-- CRUD / SSE / Start / Continue / Cancel / 审批 --> pkg/db/sqlite
     |-- 领取 Run 后的 Loop --> internal/agent
+    |-- 用户记忆查看 / 删除 --> pkg/db/sqlite
     |
     v
 server/internal/agent
     |-- sqlc 读写 Run / Turn / 事件 / 用量
     |-- 调用 pkg/agent 无状态方法
     |-- 发布 internal/events.Bus
+    |-- memory：Markdown 记忆与 message 索引（后期 Loop 单向调用）
     |
     v
 server/pkg/agent
@@ -41,8 +43,9 @@ CodeDock/
 ├── server/
 │   ├── cmd/server/              # 服务启动、配置、Router 和依赖装配
 │   ├── internal/
-│   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel
+│   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel、记忆查看/删除
 │   │   ├── agent/               # 运行时编排 + sqlc 持久化
+│   │   │   └── memory/          # Markdown 记忆与 context message 索引
 │   │   ├── events/              # 进程内事件总线
 │   │   ├── config/
 │   │   ├── logger/
@@ -70,11 +73,18 @@ internal/handler
   -> pkg/db/sqlite.Queries
   -> pkg/agent          # 映射响应、token 统计、Profile 装配
   -> internal/agent     # Worker 领取后的 Loop
+  -> internal/agent/memory  # 用户侧记忆响应类型
 
 internal/agent
   -> pkg/db/sqlite.Queries
   -> pkg/agent
   -> internal/events
+  -> internal/agent/memory  # 后期 Loop 单向调用
+
+internal/agent/memory
+  -> pkg/db/sqlite.Queries
+  不 import 父包 internal/agent
+  不负责 Prompt / Context Packet / 压缩
 
 pkg/agent
   不依赖 handler、internal、sqlc
@@ -88,6 +98,7 @@ pkg/agent
 承担大部分接口逻辑：
 
 - Session / Message / Usage / Approval 的增删改查
+- 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引）
 - SSE：回放 `afterSeq` 之后的持久化事件，再订阅 `internal/events.Bus`
 - Run 的 Start / Continue / Retry / Cancel 和审批裁决直接在 Handler 中处理，需要执行时再交给 Worker
 
@@ -104,6 +115,17 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。
 - Worker 用 channel 和 goroutine 领取 Run
 
 不实现提示词、压缩算法或 Eino 适配。
+
+### `internal/agent/memory`
+
+Markdown 记忆与 context message 索引，与 Loop 独立：
+
+- 类型与 `ByteLen`
+- Agent 侧 TextMemory 的 Create / Get / Update / Delete
+- `SearchMessages` 只查不写
+- `IndexMessage` 供 Loop 后期写 message 时调用，不暴露给 Handler 或 Agent 工具
+
+不 import 父包；不解析 Markdown；不负责 Prompt / Context Packet / 压缩。不放在 `pkg`。
 
 ### `pkg/agent`
 
@@ -128,7 +150,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。
 ## 组装关系
 
 ```text
-Handler CRUD / SSE / Start / Continue / Cancel / 审批裁决
+Handler CRUD / SSE / Start / Continue / Cancel / 审批裁决 / 记忆查看删除
   -> sqlc
   -> 必要时 pkg.CountTokens
   -> Worker.Submit

@@ -39,6 +39,22 @@ type CompactionCheckpoint struct {
 	CreatedAt    string
 }
 
+type ContextMessage struct {
+	ID        string
+	ProjectID string
+	GroupID   string
+	SessionID string
+	RunID     string
+	Role      string
+	Content   string
+	CreatedAt string
+}
+
+type ContextMessagesFt struct {
+	Content string
+	ID      string
+}
+
 type Message struct {
 	ID          string
 	SessionID   string
@@ -91,6 +107,16 @@ type SessionLease struct {
 	FencingToken int64
 	HeartbeatAt  string
 	ExpiresAt    string
+}
+
+type TextMemory struct {
+	ID        string
+	Scope     string
+	ScopeID   string
+	Content   string
+	ByteLen   int64
+	CreatedAt string
+	UpdatedAt string
 }
 
 type Turn struct {

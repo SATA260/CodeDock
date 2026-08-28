@@ -44,6 +44,11 @@ func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 			r.Get("/{approval_id}", api.GetApproval)
 			r.Post("/{approval_id}/decision", api.DecideApproval)
 		})
+		router.Route("/memories", func(r chi.Router) {
+			r.Get("/", api.ListTextMemories)
+			r.Get("/{scope}/{scope_id}", api.GetTextMemory)
+			r.Delete("/{scope}/{scope_id}", api.DeleteTextMemory)
+		})
 	}
 
 	return router
