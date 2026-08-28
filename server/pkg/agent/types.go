@@ -175,6 +175,7 @@ type Session struct {
 	TenantID      string
 	UserID        string
 	AgentID       string
+	WorkspaceID   string
 	Status        SessionStatus
 	ActiveRunID   *string
 	LastEventSeq  int64

@@ -64,6 +64,7 @@ func mapSession(row sqlite.Session) pkgagent.Session {
 		TenantID:      row.TenantID,
 		UserID:        row.UserID,
 		AgentID:       row.AgentID,
+		WorkspaceID:   row.WorkspaceID,
 		Status:        pkgagent.SessionStatus(row.Status),
 		ActiveRunID:   ptrString(row.ActiveRunID),
 		LastEventSeq:  row.LastEventSeq,

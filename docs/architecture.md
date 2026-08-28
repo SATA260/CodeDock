@@ -24,7 +24,7 @@ server/internal/agent
     |-- sqlc 读写 Run / Turn / 事件 / 用量 / checkpoint
     |-- 调用 pkg/agent 无状态方法
     |-- 先持久化 AgentEvent，再发布 internal/events.Bus
-    |-- memory：Markdown 记忆与 message 索引（后期 Loop 单向调用）
+    |-- memory：热层目录+专题，冷层按工作区 FTS（后期 Loop 单向调用）
     |
     v
 server/pkg/agent
@@ -45,7 +45,7 @@ CodeDock/
 │   ├── internal/
 │   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel、记忆查看/删除
 │   │   ├── agent/               # 运行时编排 + sqlc 持久化
-│   │   │   └── memory/          # Markdown 记忆与 context message 索引
+│   │   │   └── memory/          # 热层目录+专题，冷层工作区 FTS 索引
 │   │   ├── events/              # 进程内事件总线
 │   │   ├── config/
 │   │   ├── logger/
@@ -98,7 +98,7 @@ pkg/agent
 承担大部分接口逻辑：
 
 - Session / Message / Usage / Approval 的增删改查
-- 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引）
+- 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引；List 用 user_id / workspace_id，Get/Delete 用 name 默认目录）
 - SSE：先按 `afterSeq` / `Last-Event-ID` 回放已落库事件，再 `SubscribeAll` 并按 Session 过滤；客户端断开不取消 Run
 - Run 的 Start / Continue / Retry / Cancel 和审批裁决直接在 Handler 中处理，需要执行时再交给 Worker
 - 同一 Session 只有一个 active Run：`interrupt` 先取消再开新 Run；`queue` 只落库，当前结束后自动领取
@@ -120,14 +120,14 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。
 
 ### `internal/agent/memory`
 
-Markdown 记忆与 context message 索引，与 Loop 独立：
+热层是每个 scope 一篇目录（`kind=index`，`name` 固定 `index`）加多篇专题（`kind=topic`）。scope 只有 `user` / `workspace`。冷层是同一 `workspace_id` 下的 context message FTS。与 Loop 独立：
 
-- 类型与 `ByteLen`
-- Agent 侧 TextMemory 的 Create / Get / Update / Delete
-- `SearchMessages` 只查不写
-- `IndexMessage` 供 Loop 后期写 message 时调用，不暴露给 Handler 或 Agent 工具
+- 类型、`ByteLen`、`IndexOverBudget`（200 行 / 25KB，本阶段空实现）
+- Agent 侧 TextMemory 的 Get / Upsert / Delete / List
+- `SearchMessages` 只查不写；`IndexMessage` 供 Loop 后期写 message 时调用
+- `ReadTool` / `WriteTool` / `SearchTool` 空 stub，不写入默认 Registry
 
-不 import 父包；不解析 Markdown；不负责 Prompt / Context Packet / 压缩。不放在 `pkg`。本阶段 Loop 不调用 `IndexMessage`。
+不 import 父包；不解析 Markdown；不负责 Prompt / Context Packet / 压缩。不放在 `pkg`。不新建 Workspace 业务包，只持有 `workspace_id` 字段。本阶段 Loop 不装载目录、不调用 `IndexMessage`。后期：新 Session / 压缩后装目录；写 message 时 `IndexMessage`。
 
 ### `pkg/agent`
 

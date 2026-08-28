@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"time"
 
+	"codedock/internal/util"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db/sqlite"
-	"codedock/internal/util"
 )
 
 // nullString 把空字符串转成无效的 sql.NullString。
@@ -87,6 +87,7 @@ func mapSession(row sqlite.Session) pkgagent.Session {
 		TenantID:      row.TenantID,
 		UserID:        row.UserID,
 		AgentID:       row.AgentID,
+		WorkspaceID:   row.WorkspaceID,
 		Status:        pkgagent.SessionStatus(row.Status),
 		ActiveRunID:   ptrString(row.ActiveRunID),
 		LastEventSeq:  row.LastEventSeq,

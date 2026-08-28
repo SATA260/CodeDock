@@ -11,29 +11,27 @@ import (
 
 const insertContextMessage = `-- name: InsertContextMessage :one
 INSERT INTO context_messages (
-    id, project_id, group_id, session_id, run_id, role, content, created_at
+    id, workspace_id, session_id, run_id, role, content, created_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, project_id, group_id, session_id, run_id, role, content, created_at
+RETURNING id, workspace_id, session_id, run_id, role, content, created_at
 `
 
 type InsertContextMessageParams struct {
-	ID        string
-	ProjectID string
-	GroupID   string
-	SessionID string
-	RunID     string
-	Role      string
-	Content   string
-	CreatedAt string
+	ID          string
+	WorkspaceID string
+	SessionID   string
+	RunID       string
+	Role        string
+	Content     string
+	CreatedAt   string
 }
 
 func (q *Queries) InsertContextMessage(ctx context.Context, arg InsertContextMessageParams) (ContextMessage, error) {
 	row := q.db.QueryRowContext(ctx, insertContextMessage,
 		arg.ID,
-		arg.ProjectID,
-		arg.GroupID,
+		arg.WorkspaceID,
 		arg.SessionID,
 		arg.RunID,
 		arg.Role,
@@ -43,8 +41,7 @@ func (q *Queries) InsertContextMessage(ctx context.Context, arg InsertContextMes
 	var i ContextMessage
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
-		&i.GroupID,
+		&i.WorkspaceID,
 		&i.SessionID,
 		&i.RunID,
 		&i.Role,
@@ -57,25 +54,24 @@ func (q *Queries) InsertContextMessage(ctx context.Context, arg InsertContextMes
 const searchContextMessages = `-- name: SearchContextMessages :many
 SELECT
     id,
-    project_id,
-    group_id,
+    workspace_id,
     session_id,
     run_id,
     role,
     content,
     created_at
 FROM context_messages
-WHERE project_id = ?
+WHERE workspace_id = ?
 LIMIT ?
 `
 
 type SearchContextMessagesParams struct {
-	ProjectID string
-	Limit     int64
+	WorkspaceID string
+	Limit       int64
 }
 
 func (q *Queries) SearchContextMessages(ctx context.Context, arg SearchContextMessagesParams) ([]ContextMessage, error) {
-	rows, err := q.db.QueryContext(ctx, searchContextMessages, arg.ProjectID, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, searchContextMessages, arg.WorkspaceID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -85,8 +81,7 @@ func (q *Queries) SearchContextMessages(ctx context.Context, arg SearchContextMe
 		var i ContextMessage
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
-			&i.GroupID,
+			&i.WorkspaceID,
 			&i.SessionID,
 			&i.RunID,
 			&i.Role,

@@ -40,14 +40,13 @@ type CompactionCheckpoint struct {
 }
 
 type ContextMessage struct {
-	ID        string
-	ProjectID string
-	GroupID   string
-	SessionID string
-	RunID     string
-	Role      string
-	Content   string
-	CreatedAt string
+	ID          string
+	WorkspaceID string
+	SessionID   string
+	RunID       string
+	Role        string
+	Content     string
+	CreatedAt   string
 }
 
 type ContextMessagesFt struct {
@@ -107,6 +106,7 @@ type Session struct {
 	CompactionSeq int64
 	CreatedAt     string
 	UpdatedAt     string
+	WorkspaceID   string
 }
 
 type SessionLease struct {
@@ -126,6 +126,8 @@ type TextMemory struct {
 	ByteLen   int64
 	CreatedAt string
 	UpdatedAt string
+	Kind      string
+	Name      string
 }
 
 type Turn struct {

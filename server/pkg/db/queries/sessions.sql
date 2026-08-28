@@ -7,9 +7,9 @@ SELECT COUNT(*) FROM sessions;
 
 -- name: InsertSession :one
 INSERT INTO sessions (
-    id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at
+    id, tenant_id, user_id, agent_id, workspace_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
 
