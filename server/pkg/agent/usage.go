@@ -1,7 +1,13 @@
 package agent
 
-// CountTokens 统计一段文本的 token 数。
-// TODO: 统计一段文本的 token 数。
-func CountTokens(_ string) int64 {
-	return 0
+// CountTokens 按 UTF-8 字节估算 token 数（约 4 字节 1 token）。
+func CountTokens(text string) int64 {
+	if text == "" {
+		return 0
+	}
+	n := int64(len(text) / 4)
+	if n == 0 {
+		return 1
+	}
+	return n
 }

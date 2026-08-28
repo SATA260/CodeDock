@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
+// newRouter 注册健康检查与 Session / Run / Approval / Memory 路由。
 func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)

@@ -24,3 +24,25 @@ RETURNING *;
 UPDATE sessions
 SET status = 'archived', updated_at = ?
 WHERE id = ?;
+
+-- name: ClaimActiveRun :one
+UPDATE sessions
+SET active_run_id = ?, updated_at = ?
+WHERE id = ? AND active_run_id IS NULL
+RETURNING *;
+
+-- name: ClearActiveRun :exec
+UPDATE sessions
+SET active_run_id = NULL, updated_at = ?
+WHERE id = ? AND active_run_id = ?;
+
+-- name: IncrementEventSeq :one
+UPDATE sessions
+SET last_event_seq = last_event_seq + 1, updated_at = ?
+WHERE id = ?
+RETURNING last_event_seq;
+
+-- name: UpdateCompactionSeq :exec
+UPDATE sessions
+SET compaction_seq = ?, updated_at = ?
+WHERE id = ?;

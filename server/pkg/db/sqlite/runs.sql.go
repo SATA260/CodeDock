@@ -88,6 +88,89 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (Run, erro
 	return i, err
 }
 
+const listQueuedRuns = `-- name: ListQueuedRuns :many
+SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at FROM runs
+WHERE session_id = ? AND status = 'queued'
+ORDER BY id
+LIMIT 1
+`
+
+func (q *Queries) ListQueuedRuns(ctx context.Context, sessionID string) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, listQueuedRuns, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.TriggerMessageID,
+			&i.Mode,
+			&i.Config,
+			&i.Status,
+			&i.CurrentTurnID,
+			&i.StopReason,
+			&i.CancelRequested,
+			&i.StartedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecoverableRuns = `-- name: ListRecoverableRuns :many
+SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at FROM runs
+WHERE status IN ('queued', 'loading_context', 'running_llm', 'executing_tools')
+ORDER BY id
+`
+
+func (q *Queries) ListRecoverableRuns(ctx context.Context) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, listRecoverableRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.TriggerMessageID,
+			&i.Mode,
+			&i.Config,
+			&i.Status,
+			&i.CurrentTurnID,
+			&i.StopReason,
+			&i.CancelRequested,
+			&i.StartedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessionRuns = `-- name: ListSessionRuns :many
 SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at FROM runs
 WHERE session_id = ?

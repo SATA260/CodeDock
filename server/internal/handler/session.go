@@ -3,71 +3,156 @@ package handler
 import (
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
+	cderr "codedock/internal/errors"
 	pkgagent "codedock/pkg/agent"
+	"codedock/pkg/db/sqlite"
+	"codedock/internal/util"
 )
 
 type CreateSessionRequest struct {
-	TenantID string
-	UserID   string
-	AgentID  string
+	TenantID string `json:"tenant_id"`
+	UserID   string `json:"user_id"`
+	AgentID  string `json:"agent_id"`
 }
 
 type UpdateSessionRequest struct {
-	AgentID string
-	Status  pkgagent.SessionStatus
+	AgentID string                 `json:"agent_id"`
+	Status  pkgagent.SessionStatus `json:"status"`
 }
 
 type SessionResponse struct {
-	Session pkgagent.Session
+	Session pkgagent.Session `json:"session"`
 }
 
 type ListSessionsResponse struct {
-	Sessions []pkgagent.Session
+	Sessions []pkgagent.Session `json:"sessions"`
 }
 
 // CreateSession 创建会话。
-// TODO: 解析请求并写入 sessions。
-func (a *API) CreateSession(w http.ResponseWriter, _ *http.Request) {
-	_ = CreateSessionRequest{}
-	if a.queries != nil {
-		_ = a.queries.InsertSession
+func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {
+	var req CreateSessionRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, SessionResponse{})
+	if req.UserID == "" {
+		writeError(w, cderr.Invalid("user_id is required"))
+		return
+	}
+	if req.TenantID == "" {
+		req.TenantID = "default"
+	}
+	if req.AgentID == "" {
+		req.AgentID = "default"
+	}
+	now := util.FormatTime(util.Now())
+	row, err := a.q(r.Context()).InsertSession(r.Context(), sqlite.InsertSessionParams{
+		ID:            util.NewID(),
+		TenantID:      req.TenantID,
+		UserID:        req.UserID,
+		AgentID:       req.AgentID,
+		Status:        string(pkgagent.SessionActive),
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, SessionResponse{Session: mapSession(row)})
 }
 
 // ListSessions 列出会话。
-// TODO: 按查询条件列出 sessions。
-func (a *API) ListSessions(w http.ResponseWriter, _ *http.Request) {
-	if a.queries != nil {
-		_ = a.queries.ListSessions
+func (a *API) ListSessions(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.q(r.Context()).ListSessions(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, ListSessionsResponse{})
+	sessions := make([]pkgagent.Session, 0, len(rows))
+	for _, row := range rows {
+		sessions = append(sessions, mapSession(row))
+	}
+	writeJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions})
 }
 
 // GetSession 查询单个会话。
-// TODO: 按 session_id 读取并返回会话。
-func (a *API) GetSession(w http.ResponseWriter, _ *http.Request) {
-	if a.queries != nil {
-		_ = a.queries.GetSession
+func (a *API) GetSession(w http.ResponseWriter, r *http.Request) {
+	session, err := a.loadSession(r)
+	if err != nil {
+		writeError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, SessionResponse{})
+	writeJSON(w, http.StatusOK, SessionResponse{Session: session})
 }
 
 // UpdateSession 更新会话。
-// TODO: 按 session_id 更新会话字段。
-func (a *API) UpdateSession(w http.ResponseWriter, _ *http.Request) {
-	_ = UpdateSessionRequest{}
-	if a.queries != nil {
-		_ = a.queries.UpdateSession
+func (a *API) UpdateSession(w http.ResponseWriter, r *http.Request) {
+	session, err := a.loadSession(r)
+	if err != nil {
+		writeError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, SessionResponse{})
+	var req UpdateSessionRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	if req.AgentID != "" {
+		session.AgentID = req.AgentID
+	}
+	if req.Status != "" {
+		session.Status = req.Status
+	}
+	row, err := a.q(r.Context()).UpdateSession(r.Context(), sqlite.UpdateSessionParams{
+		AgentID:       session.AgentID,
+		Status:        string(session.Status),
+		ActiveRunID:   nullString(deref(session.ActiveRunID)),
+		LastEventSeq:  session.LastEventSeq,
+		CompactionSeq: session.CompactionSeq,
+		UpdatedAt:     util.FormatTime(util.Now()),
+		ID:            session.ID,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, SessionResponse{Session: mapSession(row)})
 }
 
 // ArchiveSession 归档会话。
-// TODO: 将指定会话标记为 archived。
-func (a *API) ArchiveSession(w http.ResponseWriter, _ *http.Request) {
-	if a.queries != nil {
-		_ = a.queries.ArchiveSession
+func (a *API) ArchiveSession(w http.ResponseWriter, r *http.Request) {
+	session, err := a.loadSession(r)
+	if err != nil {
+		writeError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, SessionResponse{})
+	if session.ActiveRunID != nil {
+		writeError(w, cderr.Conflict("cannot archive session with active run"))
+		return
+	}
+	if err := a.q(r.Context()).ArchiveSession(r.Context(), sqlite.ArchiveSessionParams{
+		UpdatedAt: util.FormatTime(util.Now()),
+		ID:        session.ID,
+	}); err != nil {
+		writeError(w, err)
+		return
+	}
+	session.Status = pkgagent.SessionArchived
+	writeJSON(w, http.StatusOK, SessionResponse{Session: session})
+}
+
+// loadSession 从路径参数读取并映射会话。
+func (a *API) loadSession(r *http.Request) (pkgagent.Session, error) {
+	id := chi.URLParam(r, "session_id")
+	if id == "" {
+		return pkgagent.Session{}, cderr.Invalid("session_id is required")
+	}
+	row, err := a.q(r.Context()).GetSession(r.Context(), id)
+	if err != nil {
+		return pkgagent.Session{}, wrapHandlerDB(err)
+	}
+	return mapSession(row), nil
 }

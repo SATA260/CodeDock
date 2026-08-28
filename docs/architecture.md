@@ -2,7 +2,7 @@
 
 本文档定义 CodeDock 当前的技术骨架。目录按能力拆分；Issue、Task、Review、Workspace 等业务目录不属于本项目的基础结构。
 
-当前阶段只搭架构，方法均为空实现，不写具体业务规则。
+Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。当前只注册示例 Tool `ping`。
 
 ## 总体架构
 
@@ -21,16 +21,16 @@ server/internal/handler
     |
     v
 server/internal/agent
-    |-- sqlc 读写 Run / Turn / 事件 / 用量
+    |-- sqlc 读写 Run / Turn / 事件 / 用量 / checkpoint
     |-- 调用 pkg/agent 无状态方法
-    |-- 发布 internal/events.Bus
+    |-- 先持久化 AgentEvent，再发布 internal/events.Bus
     |-- memory：Markdown 记忆与 message 索引（后期 Loop 单向调用）
     |
     v
 server/pkg/agent
 ```
 
-`pkg/ai` 已删除。大模型调用和 Eino 适配都放在 `pkg/agent`。
+`pkg/ai` 已删除。大模型调用放在 `pkg/agent`，由 `ModelConfig` 在方法内创建，不由 Runtime 注入。
 
 ## 当前目录骨架
 
@@ -52,7 +52,7 @@ CodeDock/
 │   │   ├── errors/
 │   │   └── util/
 │   ├── pkg/
-│   │   ├── agent/               # 全部通用无状态逻辑，含 Eino 模型调用
+│   │   ├── agent/               # 全部通用无状态逻辑，含模型调用与 Tool
 │   │   └── db/                  # Client 与 sqlc 生成代码
 │   ├── migrations/
 │   ├── go.mod
@@ -99,8 +99,9 @@ pkg/agent
 
 - Session / Message / Usage / Approval 的增删改查
 - 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引）
-- SSE：回放 `afterSeq` 之后的持久化事件，再订阅 `internal/events.Bus`
+- SSE：先按 `afterSeq` / `Last-Event-ID` 回放已落库事件，再 `SubscribeAll` 并按 Session 过滤；客户端断开不取消 Run
 - Run 的 Start / Continue / Retry / Cancel 和审批裁决直接在 Handler 中处理，需要执行时再交给 Worker
+- 同一 Session 只有一个 active Run：`interrupt` 先取消再开新 Run；`queue` 只落库，当前结束后自动领取
 
 Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。
 
@@ -110,11 +111,12 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。
 
 - 用 sqlc 读 Session、Run、消息、checkpoint、lease
 - 调用 `pkg.Load` / `CompactIfNeeded` / `Build` / `Stream` / `Dispatch`
-- `Transition(bus, stream)` 把 LLM 增量发到事件总线
-- 用 sqlc 写 Run、Turn、消息、用量、事件、checkpoint
-- Worker 用 channel 和 goroutine 领取 Run
+- 同事务递增 `sessions.last_event_seq` 并插入 `AgentEvent`，提交后再 `Bus.Publish`
+- `Transition` 消费模型流，把增量先落库再发到事件总线
+- Worker 用带缓冲 channel 领取 Run；启动时恢复非 `waiting_approval` 且 lease 空/过期的 Run
+- 审批暂停时写入 `run_tool_checkpoints`，批准后从 checkpoint 继续，不重跑已完成工具
 
-不实现提示词、压缩算法或 Eino 适配。
+不实现提示词、压缩算法或模型适配。
 
 ### `internal/agent/memory`
 
@@ -125,27 +127,28 @@ Markdown 记忆与 context message 索引，与 Loop 独立：
 - `SearchMessages` 只查不写
 - `IndexMessage` 供 Loop 后期写 message 时调用，不暴露给 Handler 或 Agent 工具
 
-不 import 父包；不解析 Markdown；不负责 Prompt / Context Packet / 压缩。不放在 `pkg`。
+不 import 父包；不解析 Markdown；不负责 Prompt / Context Packet / 压缩。不放在 `pkg`。本阶段 Loop 不调用 `IndexMessage`。
 
 ### `pkg/agent`
 
 全部 Agent 通用逻辑，方法无状态：
 
-- 领域类型与枚举
-- 用量 `CountTokens`，统计一段文本的 token 数
+- 领域类型、状态机 `CanTransition`、用量 `CountTokens`（UTF-8 字节 / 4）
 - 提示词 `Build`
 - 上下文 `Load` / `NeedsCompaction` / `CompactIfNeeded`
-- Tool 抽象与无状态 `Dispatch`
-- Agent 配置抽象 `profile.Config`
-- 模型调用 `Stream` / 压缩：本包内创建 Eino `ToolCallingChatModel`，不由运行时注入
+- Tool 抽象、内存 `Registry`、示例 `ping`，以及无状态 `Dispatch`
+- Agent 配置抽象 `profile.Config` 与 `RunConfigSnapshot`
+- 模型调用 `Stream` / 压缩：在函数内按 `ModelConfig.Provider` 创建
+  - `fake`：读 `Model.Options` 脚本（多段 text / tool_calls、失败次数、可取消挂起），测试不打外网
+  - `openai`：OpenAI 兼容 HTTP（`BaseURL` + API Key）
 
 ### `pkg/db`
 
-统一数据库入口。SQLite 已接入 sqlc；Handler 和运行时直接使用 `*sqlite.Queries`。
+统一数据库入口。SQLite 已接入 sqlc；Handler 和运行时直接使用 `*sqlite.Queries`。启动时按文件名顺序应用 `migrations/*.sql`。
 
 ### `internal/events`
 
-进程内同步发布订阅总线，供运行时发布、SSE 订阅。
+进程内同步发布订阅总线。`Subscribe` / `SubscribeAll` 返回 unsubscribe，避免 SSE 泄漏监听器。流式事件是通知，重连必须按 `event_seq` 回放已落库事件。
 
 ## 组装关系
 
@@ -160,9 +163,13 @@ Worker
        -> sqlc 读写
        -> pkg.Load / CompactIfNeeded
        -> pkg.Build
-       -> pkg.Stream
-       -> Transition(bus, stream)
-       -> pkg.Dispatch
+       -> pkg.Stream          # 按 ModelConfig 在 pkg 内创建 fake 或 openai
+       -> Transition：先落库再 Bus
+       -> pkg.Dispatch        # ping 及测试用 Tool
 ```
+
+## 配置
+
+`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
 
 修改 Agent 能力或跨端协议时，需要检查契约、取消与终态、流式事件语义以及敏感信息处理。

@@ -26,6 +26,54 @@ func (q *Queries) ArchiveSession(ctx context.Context, arg ArchiveSessionParams) 
 	return err
 }
 
+const claimActiveRun = `-- name: ClaimActiveRun :one
+UPDATE sessions
+SET active_run_id = ?, updated_at = ?
+WHERE id = ? AND active_run_id IS NULL
+RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at
+`
+
+type ClaimActiveRunParams struct {
+	ActiveRunID sql.NullString
+	UpdatedAt   string
+	ID          string
+}
+
+func (q *Queries) ClaimActiveRun(ctx context.Context, arg ClaimActiveRunParams) (Session, error) {
+	row := q.db.QueryRowContext(ctx, claimActiveRun, arg.ActiveRunID, arg.UpdatedAt, arg.ID)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.UserID,
+		&i.AgentID,
+		&i.Status,
+		&i.ActiveRunID,
+		&i.LastEventSeq,
+		&i.CompactionSeq,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const clearActiveRun = `-- name: ClearActiveRun :exec
+UPDATE sessions
+SET active_run_id = NULL, updated_at = ?
+WHERE id = ? AND active_run_id = ?
+`
+
+type ClearActiveRunParams struct {
+	UpdatedAt   string
+	ID          string
+	ActiveRunID sql.NullString
+}
+
+func (q *Queries) ClearActiveRun(ctx context.Context, arg ClearActiveRunParams) error {
+	_, err := q.db.ExecContext(ctx, clearActiveRun, arg.UpdatedAt, arg.ID, arg.ActiveRunID)
+	return err
+}
+
 const getSession = `-- name: GetSession :one
 SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at FROM sessions
 WHERE id = ?
@@ -47,6 +95,25 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const incrementEventSeq = `-- name: IncrementEventSeq :one
+UPDATE sessions
+SET last_event_seq = last_event_seq + 1, updated_at = ?
+WHERE id = ?
+RETURNING last_event_seq
+`
+
+type IncrementEventSeqParams struct {
+	UpdatedAt string
+	ID        string
+}
+
+func (q *Queries) IncrementEventSeq(ctx context.Context, arg IncrementEventSeqParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, incrementEventSeq, arg.UpdatedAt, arg.ID)
+	var last_event_seq int64
+	err := row.Scan(&last_event_seq)
+	return last_event_seq, err
 }
 
 const insertSession = `-- name: InsertSession :one
@@ -137,6 +204,23 @@ func (q *Queries) ListSessions(ctx context.Context) ([]Session, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateCompactionSeq = `-- name: UpdateCompactionSeq :exec
+UPDATE sessions
+SET compaction_seq = ?, updated_at = ?
+WHERE id = ?
+`
+
+type UpdateCompactionSeqParams struct {
+	CompactionSeq int64
+	UpdatedAt     string
+	ID            string
+}
+
+func (q *Queries) UpdateCompactionSeq(ctx context.Context, arg UpdateCompactionSeqParams) error {
+	_, err := q.db.ExecContext(ctx, updateCompactionSeq, arg.CompactionSeq, arg.UpdatedAt, arg.ID)
+	return err
 }
 
 const updateSession = `-- name: UpdateSession :one

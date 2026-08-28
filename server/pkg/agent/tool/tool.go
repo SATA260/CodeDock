@@ -121,6 +121,9 @@ type Registry interface {
 	Prompts() []Prompt
 }
 
+// DispatchHook 由运行时注入，用于发出工具过程事件。
+type DispatchHook func(kind string, call Call, attempt int, result *Result)
+
 // Invocation 包含处理一组工具调用所需的全部信息。
 type Invocation struct {
 	SessionID        string
@@ -132,6 +135,10 @@ type Invocation struct {
 	MaxParallel      int
 	PermissionPolicy PermissionPolicy
 	ApprovalPolicy   ApprovalPolicy
+	AgentMode        string
+	Registry         Registry
+	ApprovedCallIDs  []string
+	OnEvent          DispatchHook
 }
 
 // DispatchResult 按模型调用顺序保存结果，并标识是否因审批暂停。
@@ -139,10 +146,5 @@ type DispatchResult struct {
 	Results         []Result
 	WaitingApproval bool
 	ApprovalIDs     []string
-}
-
-// Dispatch 按已解析的工具调用执行调度。
-// TODO: 按权限与审批策略调度工具调用。
-func Dispatch(_ context.Context, _ Invocation) (DispatchResult, error) {
-	return DispatchResult{}, nil
+	PendingCalls    []Call
 }

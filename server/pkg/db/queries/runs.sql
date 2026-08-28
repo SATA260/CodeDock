@@ -20,3 +20,14 @@ UPDATE runs
 SET status = ?, current_turn_id = ?, stop_reason = ?, cancel_requested = ?, started_at = ?, finished_at = ?
 WHERE id = ?
 RETURNING *;
+
+-- name: ListQueuedRuns :many
+SELECT * FROM runs
+WHERE session_id = ? AND status = 'queued'
+ORDER BY id
+LIMIT 1;
+
+-- name: ListRecoverableRuns :many
+SELECT * FROM runs
+WHERE status IN ('queued', 'loading_context', 'running_llm', 'executing_tools')
+ORDER BY id;

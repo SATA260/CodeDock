@@ -9,7 +9,7 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
-// Health reports whether the API process can serve HTTP requests.
+// Health 报告进程是否还能处理 HTTP 请求。
 func Health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

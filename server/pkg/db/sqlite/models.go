@@ -82,6 +82,15 @@ type Run struct {
 	FinishedAt       sql.NullString
 }
 
+type RunToolCheckpoint struct {
+	RunID          string
+	TurnID         string
+	CompletedCalls string
+	PendingCalls   string
+	Results        string
+	UpdatedAt      string
+}
+
 type SchemaMigration struct {
 	Version   string
 	AppliedAt string

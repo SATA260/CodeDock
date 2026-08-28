@@ -18,3 +18,8 @@ RETURNING *;
 -- name: DeleteMessage :exec
 DELETE FROM messages
 WHERE id = ?;
+
+-- name: ListMessagesAfterSeq :many
+SELECT * FROM messages
+WHERE session_id = ? AND event_seq > ?
+ORDER BY event_seq, created_at;

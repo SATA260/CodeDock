@@ -94,6 +94,51 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (M
 	return i, err
 }
 
+const listMessagesAfterSeq = `-- name: ListMessagesAfterSeq :many
+SELECT id, session_id, run_id, turn_id, role, content, attachments, tool_calls, event_seq, created_at FROM messages
+WHERE session_id = ? AND event_seq > ?
+ORDER BY event_seq, created_at
+`
+
+type ListMessagesAfterSeqParams struct {
+	SessionID string
+	EventSeq  int64
+}
+
+func (q *Queries) ListMessagesAfterSeq(ctx context.Context, arg ListMessagesAfterSeqParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, listMessagesAfterSeq, arg.SessionID, arg.EventSeq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RunID,
+			&i.TurnID,
+			&i.Role,
+			&i.Content,
+			&i.Attachments,
+			&i.ToolCalls,
+			&i.EventSeq,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessionMessages = `-- name: ListSessionMessages :many
 SELECT id, session_id, run_id, turn_id, role, content, attachments, tool_calls, event_seq, created_at FROM messages
 WHERE session_id = ?
