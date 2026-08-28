@@ -35,7 +35,8 @@ type Client interface {
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
-// Open 按引擎创建 Client。本阶段仅实现 SQLite。
+// Open 按引擎创建 Client。
+// TODO: 实现 Postgres 引擎。
 func Open(ctx context.Context, cfg Config) (Client, error) {
 	switch cfg.Engine {
 	case EngineSQLite:

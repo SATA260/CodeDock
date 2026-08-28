@@ -6,6 +6,7 @@ import (
 	"testing"
 )
 
+// TestOpenUnsupportedEngine 校验未实现的引擎返回 ErrEngineUnsupported。
 func TestOpenUnsupportedEngine(t *testing.T) {
 	_, err := Open(context.Background(), Config{
 		Engine: EnginePostgres,
@@ -16,6 +17,7 @@ func TestOpenUnsupportedEngine(t *testing.T) {
 	}
 }
 
+// TestOpenSQLite 校验内存 SQLite 能打开并返回 Queries。
 func TestOpenSQLite(t *testing.T) {
 	client, err := Open(context.Background(), Config{
 		Engine: EngineSQLite,

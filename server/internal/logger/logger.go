@@ -19,6 +19,7 @@ func isTerminal(f *os.File) bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
+// newHandler 创建带颜色的终端 slog Handler。
 func newHandler(level string) slog.Handler {
 	return tint.NewHandler(os.Stderr, &tint.Options{
 		Level:      parseLevel(level),
@@ -51,6 +52,7 @@ func FromRequest(r *http.Request) *slog.Logger {
 	return slog.Default().With(RequestAttrs(r)...)
 }
 
+// parseLevel 把配置字符串解析成 slog 级别，未知值按 debug。
 func parseLevel(s string) slog.Level {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "info":

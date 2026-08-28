@@ -2,25 +2,33 @@
 
 修改 CodeDock 代码前，先阅读 [`docs/architecture.md`](docs/architecture.md)。该文档是当前目录归属和模块边界的依据。
 
+Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。当前只注册示例 Tool `ping`（返回 `{"ok":true}`），不实现文件 / Shell / Git。
+
 ## 目录放置规则
 
 - 服务启动、配置读取、Router 和依赖装配放在 `server/cmd/server`。
-- HTTP 和 WebSocket 的解析、校验和响应放在 `server/internal/handler`。
-- Agent 契约、Session、Tool、Result 和 Provider 适配放在 `server/pkg/agent`。
-- 直接模型调用和模型供应商适配放在 `server/pkg/ai`。
+- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，以及用户侧记忆查看/删除。
+- Agent 运行时编排和 sqlc 持久化放在 `server/internal/agent`。
+- Markdown 记忆与 context message 索引放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`。
+- Agent 通用无状态逻辑放在 `server/pkg/agent`：类型、token 统计、提示词、上下文、Tool、Agent 配置、模型调用。
+- 进程内事件总线放在 `server/internal/events`。
+- 数据库入口和 sqlc 生成代码放在 `server/pkg/db`。
 - 数据库结构演进放在 `server/migrations`。
 - Web 路由和页面入口放在 `apps/web`。
-- 共享后端契约和通用适配器放在 `server/pkg`；不要把具体产品业务流程放在那里。
+- 不要创建 `server/pkg/ai`。大模型调用属于 `pkg/agent`。
 
 ## 边界规则
 
-- Handler 负责协议边界和请求转发，不直接启动子进程或调用模型。
+- `pkg/agent` 不持有包级状态，不查库，不依赖 handler 或 internal。
+- 模型由 `pkg/agent` 在 `Stream` / `CompactIfNeeded` 内按 `ModelConfig` 创建：`provider=fake` 走脚本化假模型（测试用），`provider=openai` 走 OpenAI 兼容 HTTP。不由 Runtime 注入模型实例。
+- Handler 直接使用 `*sqlite.Queries` 做 CRUD、SSE 回放、Run 的 Start / Continue / Cancel 和审批裁决；领取后的 Loop 才进入 `internal/agent`。
+- `internal/agent` 负责把 pkg 的计算结果持久化为 Run、Turn、消息、用量和事件。`AgentEvent` 必须先同事务写入并递增 `sessions.last_event_seq`，提交后再 `events.Bus.Publish`。
+- 示例 Tool 只有 `ping`。业务 Tool（文件 / Shell / Git）本阶段不实现。
+- `internal/agent/memory` 负责 TextMemory 读写、`SearchMessages` 和 `IndexMessage`；用户侧只看/删 Markdown 记忆。不负责 Prompt / Context Packet / 压缩。`IndexMessage` 仍留后期接入，本阶段 Loop 不调用。
+- 不要使用 Store 接口包装 sqlc。
 - Agent 契约不得依赖 React、UI 包或路由框架。
-- Provider 的参数、流式输出、Session 恢复和错误映射不得泄漏到 Handler。
-- 修改面向客户端的协议时，同时更新服务端协议定义和 Web 端对应的类型与解析。
-- 流式事件是通知，不是真实数据源；重连时应重新获取或恢复 Agent 状态。
+- 流式事件是通知，不是真实数据源；重连时应按 `event_seq` 回放。
 - 不要预先创建 Issue、Task、Review、Workspace 或其他具体业务域目录。
-- 不要为了预设产品形态创建尚未实现的通用目录。
-- 不要把产品工作流放入 Agent 通用层或 `server/pkg`。
+- 不要把产品工作流放入 `server/pkg`。
 
 当需求变更没有明显的代码归属时，先依据 `docs/architecture.md` 对其分类，再开始编写代码。

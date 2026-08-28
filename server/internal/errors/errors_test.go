@@ -2,6 +2,7 @@ package errors
 
 import "testing"
 
+// TestWrapAndIs 校验包装错误能被 Is / IsNotFound 识别。
 func TestWrapAndIs(t *testing.T) {
 	err := NotFound("session %s", "abc")
 	if !IsNotFound(err) {
