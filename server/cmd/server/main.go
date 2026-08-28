@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,9 +25,14 @@ const shutdownTimeout = 10 * time.Second
 
 // main 打开数据库、跑迁移、装配 Runtime/Handler 并监听 HTTP，关闭时优雅退出。
 func main() {
+	if err := config.LoadDotEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "load .env: %v\n", err)
+		os.Exit(1)
+	}
 	cfg := config.Load()
 	logger.Init(cfg.LogLevel)
 	log := logger.NewLogger("server")
+	log.Info("config loaded", "http_addr", cfg.HTTPAddr, "llm_provider", cfg.LLMProvider, "llm_model", cfg.LLMModel)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

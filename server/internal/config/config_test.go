@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // TestLoadDefaults 校验未设置环境变量时的默认配置。
 func TestLoadDefaults(t *testing.T) {
@@ -51,5 +55,32 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.LLMProvider != "openai" || cfg.LLMModel != "gpt-4o" || cfg.LLMAPIKey != "sk-test" || cfg.LLMBaseURL != "https://api.example.com/v1" {
 		t.Fatalf("Load() LLM = %+v", cfg)
+	}
+}
+
+// TestParseDotEnvFile 校验注释、引号、export 与行尾注释。
+func TestParseDotEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	body := "# comment\n\nexport LLM_PROVIDER=openai\nLLM_MODEL=\"gpt-4o\"\nLLM_API_KEY='sk-test'\nHTTP_ADDR=:9090 # listen\nEMPTY=\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pairs, err := parseDotEnvFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pairs["LLM_PROVIDER"] != "openai" || pairs["LLM_MODEL"] != "gpt-4o" || pairs["LLM_API_KEY"] != "sk-test" {
+		t.Fatalf("pairs = %#v", pairs)
+	}
+	if pairs["HTTP_ADDR"] != ":9090" || pairs["EMPTY"] != "" {
+		t.Fatalf("pairs = %#v", pairs)
+	}
+}
+
+// TestParseDotEnvLineRejectsInvalid 校验缺少等号时报错。
+func TestParseDotEnvLineRejectsInvalid(t *testing.T) {
+	if _, _, err := parseDotEnvLine("NOT_A_PAIR"); err == nil {
+		t.Fatal("expected error")
 	}
 }
