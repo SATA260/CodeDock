@@ -6,13 +6,13 @@ import (
 	"errors"
 	"time"
 
+	cderr "codedock/internal/errors"
 	"codedock/internal/events"
+	"codedock/internal/util"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db"
 	"codedock/pkg/db/sqlite"
-	"codedock/internal/util"
-	cderr "codedock/internal/errors"
 )
 
 // q 返回当前上下文可用的 Queries；事务内自动切到 WithTx。
@@ -119,6 +119,7 @@ func (r *Runtime) publishAll(events []pkgagent.AgentEvent) {
 func (r *Runtime) PersistTransition(ctx context.Context, runID string, next pkgagent.RunStatus, reason string) error {
 	ctx = dbCtx(ctx)
 	var published []pkgagent.AgentEvent
+	var from pkgagent.RunStatus
 	err := r.db.WithTx(ctx, func(ctx context.Context) error {
 		row, err := r.q(ctx).GetRun(ctx, runID)
 		if err != nil {
@@ -128,7 +129,7 @@ func (r *Runtime) PersistTransition(ctx context.Context, runID string, next pkga
 		if err := pkgagent.CanTransition(run.Status, next); err != nil {
 			return cderr.Conflict("%s", err.Error())
 		}
-		from := run.Status
+		from = run.Status
 		now := util.Now()
 		run.Status = next
 		if next == pkgagent.RunLoadingContext && run.StartedAt == nil {
@@ -177,6 +178,10 @@ func (r *Runtime) PersistTransition(ctx context.Context, runID string, next pkga
 		return err
 	}
 	r.publishAll(published)
+	r.logger().Info("run state changed", "run_id", runID, "from", from, "to", next, "reason", reason)
+	if pkgagent.IsTerminal(next) {
+		r.logger().Info("run reached terminal", "run_id", runID, "status", next, "reason", reason)
+	}
 	return nil
 }
 

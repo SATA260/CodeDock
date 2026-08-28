@@ -4,15 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"time"
 
 	cderr "codedock/internal/errors"
 	"codedock/internal/events"
+	"codedock/internal/util"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db"
 	"codedock/pkg/db/sqlite"
-	"codedock/internal/util"
 )
 
 // Runtime 负责 Agent 运行时编排和数据库持久化。
@@ -22,17 +23,29 @@ type Runtime struct {
 	bus     *events.Bus
 	worker  *Worker
 	tools   tool.Registry
+	log     *slog.Logger
 }
 
-// New 创建运行时及其 Worker。
-func New(client db.Client, queries *sqlite.Queries, bus *events.Bus, tools tool.Registry) *Runtime {
+// New 创建运行时及其 Worker。log 为 nil 时回退到 slog.Default。
+func New(client db.Client, queries *sqlite.Queries, bus *events.Bus, tools tool.Registry, log *slog.Logger) *Runtime {
 	if tools == nil {
 		tools = tool.NewRegistry()
 		_ = tools.Register(tool.Ping())
 	}
-	runtime := &Runtime{db: client, queries: queries, bus: bus, tools: tools}
+	if log == nil {
+		log = slog.Default()
+	}
+	runtime := &Runtime{db: client, queries: queries, bus: bus, tools: tools, log: log}
 	runtime.worker = NewWorker(runtime)
 	return runtime
+}
+
+// logger 返回运行时日志；Runtime 或字段为空时回退到 slog.Default。
+func (r *Runtime) logger() *slog.Logger {
+	if r == nil || r.log == nil {
+		return slog.Default()
+	}
+	return r.log
 }
 
 // Worker 返回领取 Run 的 Worker。
@@ -61,8 +74,10 @@ func (r *Runtime) Start(ctx context.Context) {
 	}
 	rows, err := r.q(ctx).ListRecoverableRuns(ctx)
 	if err != nil {
+		r.logger().Error("list recoverable runs failed", "error", err)
 		return
 	}
+	r.logger().Info("recovering runs", "count", len(rows))
 	for _, row := range rows {
 		_ = r.worker.Submit(ctx, row.ID)
 	}
@@ -79,6 +94,7 @@ func (r *Runtime) Execute(ctx context.Context, runID string) error {
 	if pkgagent.IsTerminal(run.Status) {
 		return nil
 	}
+	r.logger().Info("execute run", "session_id", run.SessionID, "run_id", run.ID, "status", run.Status)
 	if err := r.acquireLease(dbCtx(ctx), run.SessionID, run.ID); err != nil {
 		return err
 	}
@@ -378,6 +394,7 @@ func (r *Runtime) runTools(ctx context.Context, run pkgagent.Run, turn pkgagent.
 		if err := r.PersistTransition(ctx, run.ID, pkgagent.RunWaitingApproval, "approval required"); err != nil {
 			return false, err
 		}
+		r.logger().Info("run waiting approval", "session_id", run.SessionID, "run_id", run.ID, "turn_id", turn.ID, "pending", len(out.PendingCalls))
 		return true, nil
 	}
 
@@ -523,15 +540,15 @@ func (r *Runtime) persistCompaction(ctx context.Context, run pkgagent.Run, snaps
 		ID:            run.SessionID,
 	})
 	usage, err := r.insertUsage(ctx, pkgagent.UsageRecord{
-		SessionID:    run.SessionID,
-		RunID:        run.ID,
-		TurnID:       deref(run.CurrentTurnID),
-		RequestID:    row.ID,
-		Provider:     run.Config.Model.Provider,
-		Model:        run.Config.Model.Model,
-		UsageType:    "compaction",
-		TotalTokens:  pkgagent.CountTokens(snapshot.Summary.Content),
-		Estimated:    true,
+		SessionID:   run.SessionID,
+		RunID:       run.ID,
+		TurnID:      deref(run.CurrentTurnID),
+		RequestID:   row.ID,
+		Provider:    run.Config.Model.Provider,
+		Model:       run.Config.Model.Model,
+		UsageType:   "compaction",
+		TotalTokens: pkgagent.CountTokens(snapshot.Summary.Content),
+		Estimated:   true,
 	})
 	if err != nil {
 		return err
@@ -547,6 +564,9 @@ func (r *Runtime) persistCompaction(ctx context.Context, run pkgagent.Run, snaps
 		}),
 	})
 	_ = usage
+	if err == nil {
+		r.logger().Info("context compacted", "session_id", run.SessionID, "run_id", run.ID, "checkpoint_id", row.ID, "base_event_seq", row.BaseEventSeq)
+	}
 	return err
 }
 
@@ -628,6 +648,7 @@ func (r *Runtime) terminate(ctx context.Context, run pkgagent.Run, status pkgage
 	if pkgagent.IsTerminal(run.Status) {
 		return nil
 	}
+	r.logger().Warn("run terminating", "session_id", run.SessionID, "run_id", run.ID, "status", status, "stop_reason", reason, "message", message)
 	run.StopReason = &reason
 	if run.CancelRequested && status == pkgagent.RunCancelled {
 		run.CancelRequested = true
@@ -700,9 +721,11 @@ func (r *Runtime) stopFromErr(ctx context.Context, run pkgagent.Run, err error) 
 		run = current
 	}
 	if run.CancelRequested || errors.Is(err, context.Canceled) {
+		r.logger().Warn("run stopped", "session_id", run.SessionID, "run_id", run.ID, "stop_reason", pkgagent.StopCancelled, "error", err)
 		return r.terminate(ctx, run, pkgagent.RunCancelled, pkgagent.StopCancelled, "cancelled")
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
+		r.logger().Warn("run stopped", "session_id", run.SessionID, "run_id", run.ID, "stop_reason", pkgagent.StopTimeout, "error", err)
 		return r.terminate(ctx, run, pkgagent.RunFailed, pkgagent.StopTimeout, "timeout")
 	}
 	reason := pkgagent.StopModelError
@@ -714,6 +737,7 @@ func (r *Runtime) stopFromErr(ctx context.Context, run pkgagent.Run, err error) 
 
 // fail 把 Run 标为 failed 后原样返回错误。
 func (r *Runtime) fail(ctx context.Context, run pkgagent.Run, err error, reason pkgagent.StopReason) error {
+	r.logger().Error("run failed", "session_id", run.SessionID, "run_id", run.ID, "stop_reason", reason, "error", err)
 	_ = r.terminate(ctx, run, pkgagent.RunFailed, reason, err.Error())
 	return err
 }

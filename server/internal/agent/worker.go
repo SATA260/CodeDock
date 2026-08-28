@@ -67,11 +67,13 @@ func (w *Worker) Submit(_ context.Context, runID string) error {
 	w.mu.Unlock()
 	select {
 	case w.jobs <- runID:
+		w.runtime.logger().Debug("worker submit", "run_id", runID)
 		return nil
 	default:
 		w.mu.Lock()
 		delete(w.queued, runID)
 		w.mu.Unlock()
+		w.runtime.logger().Error("worker queue full", "run_id", runID)
 		return cderr.Unavailable("worker queue full")
 	}
 }
@@ -90,6 +92,7 @@ func (w *Worker) Cancel(runID string) {
 	if ok && cancel != nil {
 		cancel()
 	}
+	w.runtime.logger().Info("worker cancel", "run_id", runID)
 }
 
 // CancelAndWait 取消并等待该 Run 的 Execute 结束。
@@ -117,6 +120,7 @@ func (w *Worker) execute(parent context.Context, runID string) {
 	w.done[runID] = done
 	w.mu.Unlock()
 
+	w.runtime.logger().Info("worker execute start", "run_id", runID)
 	defer func() {
 		cancel()
 		w.mu.Lock()
@@ -124,6 +128,7 @@ func (w *Worker) execute(parent context.Context, runID string) {
 		delete(w.done, runID)
 		w.mu.Unlock()
 		close(done)
+		w.runtime.logger().Info("worker execute done", "run_id", runID)
 		w.runtime.afterExecute(parent, runID)
 	}()
 
@@ -175,5 +180,6 @@ func (r *Runtime) TryDequeue(ctx context.Context, sessionID, finishedRunID strin
 	}); err != nil {
 		return wrapDB(err)
 	}
+	r.logger().Info("dequeue queued run", "session_id", sessionID, "finished_run_id", finishedRunID, "next_run_id", next.ID)
 	return r.worker.Submit(ctx, next.ID)
 }

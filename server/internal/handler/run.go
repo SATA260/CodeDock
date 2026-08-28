@@ -53,6 +53,7 @@ func (a *API) StartRun(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := a.start(r.Context(), sessionID, req)
 	if err != nil {
+		a.requestLog(r).Error("start run failed", "session_id", sessionID, "error", err)
 		writeError(w, err)
 		return
 	}
@@ -72,7 +73,9 @@ func (a *API) GetRun(w http.ResponseWriter, r *http.Request) {
 
 // ContinueRun 从恢复点继续 Run。
 func (a *API) ContinueRun(w http.ResponseWriter, r *http.Request) {
-	if err := a.continueRun(r.Context(), chi.URLParam(r, "run_id")); err != nil {
+	runID := chi.URLParam(r, "run_id")
+	if err := a.continueRun(r.Context(), runID); err != nil {
+		a.requestLog(r).Error("continue run failed", "run_id", runID, "error", err)
 		writeError(w, err)
 		return
 	}
@@ -81,7 +84,9 @@ func (a *API) ContinueRun(w http.ResponseWriter, r *http.Request) {
 
 // RetryRun 重试 Run。
 func (a *API) RetryRun(w http.ResponseWriter, r *http.Request) {
-	if err := a.continueRun(r.Context(), chi.URLParam(r, "run_id")); err != nil {
+	runID := chi.URLParam(r, "run_id")
+	if err := a.continueRun(r.Context(), runID); err != nil {
+		a.requestLog(r).Error("retry run failed", "run_id", runID, "error", err)
 		writeError(w, err)
 		return
 	}
@@ -90,7 +95,9 @@ func (a *API) RetryRun(w http.ResponseWriter, r *http.Request) {
 
 // CancelRun 请求停止 Run。
 func (a *API) CancelRun(w http.ResponseWriter, r *http.Request) {
-	if err := a.cancelRun(r.Context(), chi.URLParam(r, "run_id")); err != nil {
+	runID := chi.URLParam(r, "run_id")
+	if err := a.cancelRun(r.Context(), runID); err != nil {
+		a.requestLog(r).Error("cancel run failed", "run_id", runID, "error", err)
 		writeError(w, err)
 		return
 	}
@@ -207,6 +214,13 @@ func (a *API) start(ctx context.Context, sessionID string, req StartRunRequest) 
 			return StartRunResponse{}, err
 		}
 	}
+	path := "idle"
+	if req.InputMode == InputInterrupt {
+		path = "interrupt"
+	} else if !submit {
+		path = "queue"
+	}
+	a.logger().Info("run started", "session_id", sessionID, "run_id", runID, "input_mode", path)
 	return StartRunResponse{SessionID: sessionID, RunID: runID}, nil
 }
 
@@ -313,6 +327,7 @@ func (a *API) continueRun(ctx context.Context, runID string) error {
 	if pkgagent.IsTerminal(run.Status) && run.Status != pkgagent.RunFailed && run.Status != pkgagent.RunCancelled {
 		return cderr.Conflict("run is already complete")
 	}
+	a.logger().Info("continue run", "session_id", run.SessionID, "run_id", runID, "status", run.Status)
 	return a.runtime.Worker().Submit(ctx, runID)
 }
 
@@ -325,6 +340,7 @@ func (a *API) cancelRun(ctx context.Context, runID string) error {
 	if pkgagent.IsTerminal(run.Status) {
 		return nil
 	}
+	a.logger().Info("cancel run", "session_id", run.SessionID, "run_id", runID, "status", run.Status)
 	run.CancelRequested = true
 	if err := a.db.WithTx(ctx, func(ctx context.Context) error {
 		_, err := a.q(ctx).UpdateRun(ctx, sqlite.UpdateRunParams{

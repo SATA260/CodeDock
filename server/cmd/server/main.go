@@ -46,7 +46,7 @@ func main() {
 	bus := events.New()
 	registry := tool.NewRegistry()
 	_ = registry.Register(tool.Ping())
-	runtime := agent.New(client, queries, bus, registry)
+	runtime := agent.New(client, queries, bus, registry, logger.NewLogger("agent"))
 	runtime.Start(ctx)
 
 	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{
@@ -54,7 +54,7 @@ func main() {
 		Model:    cfg.LLMModel,
 		Options:  modelOptions(cfg),
 	})
-	api := handler.New(client, queries, runtime, bus, defaults)
+	api := handler.New(client, queries, runtime, bus, defaults, logger.NewLogger("handler"))
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"codedock/internal/agent"
 	cderr "codedock/internal/errors"
 	"codedock/internal/events"
+	"codedock/internal/logger"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/db"
 	"codedock/pkg/db/sqlite"
@@ -21,11 +23,28 @@ type API struct {
 	runtime  *agent.Runtime
 	bus      *events.Bus
 	defaults pkgagent.RunConfigSnapshot
+	log      *slog.Logger
 }
 
-// New 创建 Handler 入口。
-func New(client db.Client, queries *sqlite.Queries, runtime *agent.Runtime, bus *events.Bus, defaults pkgagent.RunConfigSnapshot) *API {
-	return &API{db: client, queries: queries, runtime: runtime, bus: bus, defaults: defaults}
+// New 创建 Handler 入口。log 为 nil 时回退到 slog.Default。
+func New(client db.Client, queries *sqlite.Queries, runtime *agent.Runtime, bus *events.Bus, defaults pkgagent.RunConfigSnapshot, log *slog.Logger) *API {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &API{db: client, queries: queries, runtime: runtime, bus: bus, defaults: defaults, log: log}
+}
+
+// logger 返回 Handler 日志；API 或字段为空时回退到 slog.Default。
+func (a *API) logger() *slog.Logger {
+	if a == nil || a.log == nil {
+		return slog.Default()
+	}
+	return a.log
+}
+
+// requestLog 返回带 request_id 的请求日志。
+func (a *API) requestLog(r *http.Request) *slog.Logger {
+	return a.logger().With(logger.RequestAttrs(r)...)
 }
 
 // q 返回当前上下文可用的 Queries；事务内自动切到 WithTx。

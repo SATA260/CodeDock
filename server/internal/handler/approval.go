@@ -7,17 +7,17 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	cderr "codedock/internal/errors"
+	"codedock/internal/util"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/db/sqlite"
-	"codedock/internal/util"
 )
 
 type DecideApprovalRequest struct {
-	ApprovalID string                 `json:"approval_id"`
+	ApprovalID string                  `json:"approval_id"`
 	Status     pkgagent.ApprovalStatus `json:"status"`
 	Scope      pkgagent.ApprovalScope  `json:"scope"`
-	ActorID    string                 `json:"actor_id"`
-	Reason     string                 `json:"reason"`
+	ActorID    string                  `json:"actor_id"`
+	Reason     string                  `json:"reason"`
 }
 
 type ApprovalResponse struct {
@@ -67,6 +67,7 @@ func (a *API) DecideApproval(w http.ResponseWriter, r *http.Request) {
 	req.ApprovalID = chi.URLParam(r, "approval_id")
 	approval, err := a.decide(r.Context(), req)
 	if err != nil {
+		a.requestLog(r).Error("decide approval failed", "approval_id", req.ApprovalID, "error", err)
 		writeError(w, err)
 		return
 	}
@@ -115,6 +116,7 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 	}); err != nil {
 		return pkgagent.Approval{}, err
 	}
+	a.logger().Info("approval decided", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID, "status", req.Status)
 	if req.Status == pkgagent.ApprovalApproved {
 		if err := a.runtime.Worker().Submit(ctx, approval.RunID); err != nil {
 			return pkgagent.Approval{}, err

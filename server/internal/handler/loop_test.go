@@ -31,12 +31,12 @@ type flakyTool struct {
 // Definition 返回会先失败再成功的测试工具定义。
 func (f *flakyTool) Definition() tool.Definition {
 	return tool.Definition{
-		Name:            "flaky",
-		Prompt:          "Fails a few times then returns ok.",
+		Name:             "flaky",
+		Prompt:           "Fails a few times then returns ok.",
 		ParametersSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-		Permission:      tool.Permission{Capabilities: []string{"ping"}, Risk: tool.RiskRead},
-		SupportsRetry:   true,
-		Version:         "1",
+		Permission:       tool.Permission{Capabilities: []string{"ping"}, Risk: tool.RiskRead},
+		SupportsRetry:    true,
+		Version:          "1",
 	}
 }
 
@@ -105,7 +105,7 @@ func newFixture(t *testing.T, extras ...tool.Tool) *fixture {
 	}
 	bus := events.New()
 	queries := db.SQLiteQueries(client)
-	runtime := agent.New(client, queries, bus, registry)
+	runtime := agent.New(client, queries, bus, registry, nil)
 	runtime.Start(ctx)
 
 	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
@@ -113,7 +113,7 @@ func newFixture(t *testing.T, extras ...tool.Tool) *fixture {
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "hello"}}}),
 	})
-	api := handler.New(client, queries, runtime, bus, defaults)
+	api := handler.New(client, queries, runtime, bus, defaults, nil)
 	return &fixture{api: api, router: testRouter(api), cancel: cancel}
 }
 
@@ -545,8 +545,8 @@ func TestRecoverQueuedRun(t *testing.T) {
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "recovered"}}}),
 	})
-	runtime := agent.New(client, queries, bus, registry)
-	api := handler.New(client, queries, runtime, bus, defaults)
+	runtime := agent.New(client, queries, bus, registry, nil)
+	api := handler.New(client, queries, runtime, bus, defaults, nil)
 	f := &fixture{api: api, router: testRouter(api), cancel: cancel}
 	sessionID := f.createSession(t)
 	runID := f.start(t, sessionID, handler.StartRunRequest{
