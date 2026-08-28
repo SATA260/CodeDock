@@ -27,10 +27,10 @@ type openaiChatRequest struct {
 }
 
 type openaiChatMessage struct {
-	Role       string              `json:"role"`
-	Content    string              `json:"content,omitempty"`
-	ToolCalls  []openaiToolCall    `json:"tool_calls,omitempty"`
-	ToolCallID string              `json:"tool_call_id,omitempty"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type openaiTool struct {
@@ -43,6 +43,7 @@ type openaiTool struct {
 }
 
 type openaiToolCall struct {
+	Index    int    `json:"index"`
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Function struct {
@@ -162,19 +163,19 @@ func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *s
 				}
 			}
 			for _, item := range choice.Delta.ToolCalls {
-				call := tool.Call{
-					ID:        item.ID,
-					Name:      item.Function.Name,
-					Arguments: json.RawMessage(item.Function.Arguments),
-					Attempt:   1,
+				before := len(calls)
+				var prevName string
+				if item.Index >= 0 && item.Index < len(calls) {
+					prevName = calls[item.Index].Name
 				}
-				if call.ID == "" {
-					call.ID = fmt.Sprintf("call_%s_%d", chat.TurnID, len(calls)+1)
+				calls = mergeToolDelta(calls, item, chat.TurnID)
+				if item.Index < 0 || item.Index >= len(calls) {
+					continue
 				}
-				if len(call.Arguments) == 0 {
-					call.Arguments = json.RawMessage("{}")
+				call := calls[item.Index]
+				if prevName != "" && item.ID == "" && len(calls) == before {
+					continue
 				}
-				calls = append(calls, call)
 				stream.events <- ModelStreamEvent{
 					Type:       ModelStreamToolDelta,
 					Delta:      MarshalPayload(call),
@@ -196,6 +197,14 @@ func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *s
 		usage.OutputTokens = CountTokens(text.String())
 		usage.TotalTokens = usage.OutputTokens + CountTokens(chat.SystemPrompt)
 		usage.Estimated = true
+	}
+	for i := range calls {
+		if len(calls[i].Arguments) == 0 {
+			calls[i].Arguments = json.RawMessage("{}")
+		}
+		if calls[i].ID == "" {
+			calls[i].ID = fmt.Sprintf("call_%s_%d", chat.TurnID, i+1)
+		}
 	}
 	stream.result = ModelStreamResult{
 		Message: Message{
@@ -264,4 +273,30 @@ func toOpenAITools(defs []tool.Definition) []openaiTool {
 		out = append(out, item)
 	}
 	return out
+}
+
+// mergeToolDelta 按 index 合并流式 tool_calls 增量，避免每段都当成新调用。
+func mergeToolDelta(calls []tool.Call, item openaiToolCall, turnID string) []tool.Call {
+	idx := item.Index
+	if idx < 0 {
+		idx = 0
+	}
+	for len(calls) <= idx {
+		calls = append(calls, tool.Call{Attempt: 1})
+	}
+	call := calls[idx]
+	if item.ID != "" {
+		call.ID = item.ID
+	}
+	if item.Function.Name != "" {
+		call.Name = item.Function.Name
+	}
+	if item.Function.Arguments != "" {
+		call.Arguments = append(append(json.RawMessage(nil), call.Arguments...), item.Function.Arguments...)
+	}
+	if call.ID == "" {
+		call.ID = fmt.Sprintf("call_%s_%d", turnID, idx+1)
+	}
+	calls[idx] = call
+	return calls
 }
