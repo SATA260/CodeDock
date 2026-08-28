@@ -9,7 +9,10 @@ import (
 	"syscall"
 	"time"
 
+	"codedock/internal/agent"
 	"codedock/internal/config"
+	"codedock/internal/events"
+	"codedock/internal/handler"
 	"codedock/internal/logger"
 )
 
@@ -20,9 +23,13 @@ func main() {
 	logger.Init(cfg.LogLevel)
 	log := logger.NewLogger("server")
 
+	bus := events.New()
+	runtime := agent.New(nil, bus)
+	api := handler.New(nil, runtime, bus)
+
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           newRouter(log),
+		Handler:           newRouter(log, api),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

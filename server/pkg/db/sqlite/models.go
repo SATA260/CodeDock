@@ -4,7 +4,123 @@
 
 package sqlite
 
+import (
+	"database/sql"
+)
+
+type AgentEvent struct {
+	EventID    string
+	SessionID  string
+	RunID      string
+	TurnID     sql.NullString
+	Seq        int64
+	Type       string
+	Version    int64
+	OccurredAt string
+	Payload    string
+}
+
+type Approval struct {
+	ID         string
+	SessionID  string
+	RunID      string
+	ToolCallID string
+	Scope      string
+	Status     string
+	ExpiresAt  string
+}
+
+type CompactionCheckpoint struct {
+	ID           string
+	SessionID    string
+	BaseEventSeq int64
+	Summary      string
+	CreatedByRun string
+	CreatedAt    string
+}
+
+type Message struct {
+	ID          string
+	SessionID   string
+	RunID       sql.NullString
+	TurnID      sql.NullString
+	Role        string
+	Content     string
+	Attachments sql.NullString
+	ToolCalls   sql.NullString
+	EventSeq    int64
+	CreatedAt   string
+}
+
+type Run struct {
+	ID               string
+	SessionID        string
+	TriggerMessageID string
+	Mode             string
+	Config           string
+	Status           string
+	CurrentTurnID    sql.NullString
+	StopReason       sql.NullString
+	CancelRequested  int64
+	StartedAt        sql.NullString
+	FinishedAt       sql.NullString
+}
+
 type SchemaMigration struct {
 	Version   string
 	AppliedAt string
+}
+
+type Session struct {
+	ID            string
+	TenantID      string
+	UserID        string
+	AgentID       string
+	Status        string
+	ActiveRunID   sql.NullString
+	LastEventSeq  int64
+	CompactionSeq int64
+	CreatedAt     string
+	UpdatedAt     string
+}
+
+type SessionLease struct {
+	SessionID    string
+	RunID        string
+	Owner        string
+	FencingToken int64
+	HeartbeatAt  string
+	ExpiresAt    string
+}
+
+type Turn struct {
+	ID             string
+	RunID          string
+	Number         int64
+	Status         string
+	FirstEventSeq  int64
+	LastEventSeq   int64
+	AssistantMsgID sql.NullString
+	UsageID        sql.NullString
+	StartedAt      sql.NullString
+	FinishedAt     sql.NullString
+}
+
+type UsageRecord struct {
+	ID                       string
+	SessionID                string
+	RunID                    string
+	TurnID                   string
+	RequestID                string
+	Provider                 string
+	Model                    string
+	UsageType                string
+	CacheCreationInputTokens int64
+	CacheReadInputTokens     int64
+	OutputTokens             int64
+	ReasoningTokens          int64
+	TotalTokens              int64
+	Estimated                int64
+	RawProviderUsage         sql.NullString
+	CreatedAt                string
 }

@@ -42,9 +42,18 @@ func (c *sqliteClient) DB() *sql.DB {
 	return c.db
 }
 
-// Queries 返回 SQLite 专属的 sqlc 查询对象，供后续 Store 使用。
+// Queries 返回 SQLite 专属的 sqlc 查询对象，供 Handler 与运行时直接使用。
 func (c *sqliteClient) Queries() *dbsqlite.Queries {
 	return c.queries
+}
+
+// SQLiteQueries 在引擎为 SQLite 时取出 sqlc Queries。
+func SQLiteQueries(client Client) *dbsqlite.Queries {
+	sqlite, ok := client.(*sqliteClient)
+	if !ok {
+		return nil
+	}
+	return sqlite.Queries()
 }
 
 func (c *sqliteClient) Close() error {
