@@ -178,11 +178,21 @@ func mapEvent(row sqlite.AgentEvent) pkgagent.AgentEvent {
 
 // mapApproval 把 sqlc Approval 行映射为领域对象。
 func mapApproval(row sqlite.Approval) pkgagent.Approval {
+	var calls []pkgagent.ApprovalToolCall
+	unmarshalJSON(row.ToolCalls, &calls)
+	if len(calls) == 0 && row.ToolCallID != "" {
+		calls = []pkgagent.ApprovalToolCall{{ID: row.ToolCallID}}
+	}
+	first := row.ToolCallID
+	if first == "" && len(calls) > 0 {
+		first = calls[0].ID
+	}
 	return pkgagent.Approval{
 		ID:         row.ID,
 		SessionID:  row.SessionID,
 		RunID:      row.RunID,
-		ToolCallID: row.ToolCallID,
+		ToolCallID: first,
+		ToolCalls:  calls,
 		Scope:      pkgagent.ApprovalScope(row.Scope),
 		Status:     pkgagent.ApprovalStatus(row.Status),
 		ExpiresAt:  parseTime(row.ExpiresAt),

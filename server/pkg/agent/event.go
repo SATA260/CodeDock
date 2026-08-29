@@ -56,13 +56,28 @@ type ToolCallPayload struct {
 	ApprovalID string          `json:"approval_id,omitempty"`
 }
 
-// ApprovalDecidedPayload 是 tool.approval_decided 的载荷。
-type ApprovalDecidedPayload struct {
-	ApprovalID string         `json:"approval_id"`
+// ApprovalRequiredPayload 是 tool.approval_required 的载荷。
+type ApprovalRequiredPayload struct {
+	ApprovalID string             `json:"approval_id"`
+	ToolCalls  []ApprovalToolCall `json:"tool_calls"`
+}
+
+// ApprovalDecision 是一次提交里对单条 Tool 的裁决。
+type ApprovalDecision struct {
 	ToolCallID string         `json:"tool_call_id"`
 	Status     ApprovalStatus `json:"status"`
-	Scope      ApprovalScope  `json:"scope"`
 	Reason     string         `json:"reason,omitempty"`
+}
+
+// ApprovalDecidedPayload 是 tool.approval_decided 的载荷。
+type ApprovalDecidedPayload struct {
+	ApprovalID string             `json:"approval_id"`
+	ToolCallID string             `json:"tool_call_id,omitempty"`
+	Status     ApprovalStatus     `json:"status"`
+	Scope      ApprovalScope      `json:"scope"`
+	Reason     string             `json:"reason,omitempty"`
+	Decisions  []ApprovalDecision `json:"decisions,omitempty"`
+	ToolCalls  []ApprovalToolCall `json:"tool_calls,omitempty"`
 }
 
 // UsageRecordedPayload 是 turn.usage_recorded 的载荷。

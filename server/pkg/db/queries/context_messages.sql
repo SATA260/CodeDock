@@ -4,18 +4,11 @@ INSERT INTO context_messages (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?
 )
+ON CONFLICT(id) DO UPDATE SET
+    workspace_id = excluded.workspace_id,
+    session_id = excluded.session_id,
+    run_id = excluded.run_id,
+    role = excluded.role,
+    content = excluded.content,
+    created_at = excluded.created_at
 RETURNING *;
-
--- name: SearchContextMessages :many
-SELECT
-    id,
-    workspace_id,
-    session_id,
-    run_id,
-    role,
-    content,
-    created_at
-FROM context_messages
-WHERE workspace_id = ?
-LIMIT ?;
--- TODO: 按 workspace_id 与 query 做 FTS5 MATCH。

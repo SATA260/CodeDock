@@ -9,6 +9,21 @@ import (
 	"context"
 )
 
+const deleteTextMemoriesByScope = `-- name: DeleteTextMemoriesByScope :exec
+DELETE FROM text_memories
+WHERE scope = ? AND scope_id = ?
+`
+
+type DeleteTextMemoriesByScopeParams struct {
+	Scope   string
+	ScopeID string
+}
+
+func (q *Queries) DeleteTextMemoriesByScope(ctx context.Context, arg DeleteTextMemoriesByScopeParams) error {
+	_, err := q.db.ExecContext(ctx, deleteTextMemoriesByScope, arg.Scope, arg.ScopeID)
+	return err
+}
+
 const deleteTextMemory = `-- name: DeleteTextMemory :exec
 DELETE FROM text_memories
 WHERE scope = ? AND scope_id = ? AND kind = ? AND name = ?

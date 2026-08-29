@@ -17,11 +17,14 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"codedock/internal/agent"
+	"codedock/internal/agent/memory"
+	agenttools "codedock/internal/agent/tools"
 	"codedock/internal/events"
 	"codedock/internal/handler"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db"
+	"codedock/pkg/db/sqlite"
 )
 
 type flakyTool struct {
@@ -34,7 +37,7 @@ func (f *flakyTool) Definition() tool.Definition {
 		Name:             "flaky",
 		Prompt:           "Fails a few times then returns ok.",
 		ParametersSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-		Permission:       tool.Permission{Capabilities: []string{"ping"}, Risk: tool.RiskRead},
+		Permission:       tool.Permission{},
 		SupportsRetry:    true,
 		Version:          "1",
 	}
@@ -56,7 +59,7 @@ func (slowTool) Definition() tool.Definition {
 		Name:             "slow",
 		Prompt:           "Sleeps until cancelled.",
 		ParametersSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-		Permission:       tool.Permission{Capabilities: []string{"ping"}, Risk: tool.RiskRead},
+		Permission:       tool.Permission{},
 		SupportsCancel:   true,
 		SupportsRetry:    false,
 		Version:          "1",
@@ -74,12 +77,14 @@ func (slowTool) Execute(ctx context.Context, input tool.Input) (tool.Result, err
 }
 
 type fixture struct {
-	api    *handler.API
-	router http.Handler
-	cancel context.CancelFunc
+	api     *handler.API
+	router  http.Handler
+	cancel  context.CancelFunc
+	queries *sqlite.Queries
+	runtime *agent.Runtime
 }
 
-// newFixture 打开内存 SQLite、注册 ping 与额外工具，并启动 Worker。
+// newFixture 打开内存 SQLite、装配 Runtime（默认工具由 New 注册），并启动 Worker。
 func newFixture(t *testing.T, extras ...tool.Tool) *fixture {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -99,13 +104,14 @@ func newFixture(t *testing.T, extras ...tool.Tool) *fixture {
 	}
 
 	registry := tool.NewRegistry()
-	_ = registry.Register(tool.Ping())
-	for _, extra := range extras {
-		_ = registry.Register(extra)
-	}
 	bus := events.New()
 	queries := db.SQLiteQueries(client)
-	runtime := agent.New(client, queries, bus, registry, nil)
+	runtime := agent.New(client, queries, bus, registry, nil, agenttools.Ports{})
+	for _, extra := range extras {
+		if err := registry.Register(extra); err != nil {
+			t.Fatal(err)
+		}
+	}
 	runtime.Start(ctx)
 
 	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
@@ -114,7 +120,7 @@ func newFixture(t *testing.T, extras ...tool.Tool) *fixture {
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "hello"}}}),
 	})
 	api := handler.New(client, queries, runtime, bus, defaults, nil)
-	return &fixture{api: api, router: testRouter(api), cancel: cancel}
+	return &fixture{api: api, router: testRouter(api), cancel: cancel, queries: queries, runtime: runtime}
 }
 
 // testRouter 注册验收测试用到的 HTTP 路由。
@@ -136,7 +142,21 @@ func testRouter(api *handler.API) http.Handler {
 	r.Post("/runs/{run_id}/cancel", api.CancelRun)
 	r.Get("/approvals/{approval_id}", api.GetApproval)
 	r.Post("/approvals/{approval_id}/decision", api.DecideApproval)
+	r.Get("/memories", api.ListTextMemories)
+	r.Get("/memories/{scope}/{scope_id}", api.GetTextMemory)
+	r.Delete("/memories/{scope}/{scope_id}", api.DeleteTextMemory)
 	return r
+}
+
+func decideAll(approval pkgagent.Approval, status pkgagent.ApprovalStatus) handler.DecideApprovalRequest {
+	if len(approval.ToolCalls) == 0 {
+		return handler.DecideApprovalRequest{Status: status}
+	}
+	decisions := make([]handler.ToolDecision, 0, len(approval.ToolCalls))
+	for _, call := range approval.ToolCalls {
+		decisions = append(decisions, handler.ToolDecision{ToolCallID: call.ID, Status: status})
+	}
+	return handler.DecideApprovalRequest{Decisions: decisions}
 }
 
 // mustJSON 把值编码成 JSON，失败则 panic。
@@ -319,17 +339,89 @@ func TestApprovalPauseAndResume(t *testing.T) {
 	if len(listed.Approvals) == 0 {
 		t.Fatal("expected approval")
 	}
-	dec := f.do(t, http.MethodPost, "/approvals/"+listed.Approvals[0].ID+"/decision", handler.DecideApprovalRequest{
-		Status: pkgagent.ApprovalApproved,
-	})
+	dec := f.do(t, http.MethodPost, "/approvals/"+listed.Approvals[0].ID+"/decision", decideAll(listed.Approvals[0], pkgagent.ApprovalApproved))
 	if dec.Code != http.StatusOK {
 		t.Fatalf("decide %d %s", dec.Code, dec.Body.String())
 	}
 	f.waitRun(t, runID, pkgagent.RunCompleted)
 }
 
-// TestApprovalDenied 验收拒绝审批后以 approval_denied 失败。
-func TestApprovalDenied(t *testing.T) {
+// TestApprovalBatchTwoPings 验收一轮两个 ping 合成一条审批，一次提交两条批准后完成。
+func TestApprovalBatchTwoPings(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{})
+	runID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "need pings",
+		Mode:    pkgagent.ModeAskForApproval,
+		Config: withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{
+			{ToolCalls: []pkgagent.FakeToolCall{{Name: "ping", Arguments: json.RawMessage(`{}`)}, {Name: "ping", Arguments: json.RawMessage(`{}`)}}},
+			{Text: "done"},
+		}}),
+	})
+	f.waitRun(t, runID, pkgagent.RunWaitingApproval)
+	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/approvals", nil)
+	var listed handler.ListApprovalsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &listed)
+	if len(listed.Approvals) != 1 || len(listed.Approvals[0].ToolCalls) != 2 {
+		t.Fatalf("approvals=%+v", listed.Approvals)
+	}
+	dec := f.do(t, http.MethodPost, "/approvals/"+listed.Approvals[0].ID+"/decision", decideAll(listed.Approvals[0], pkgagent.ApprovalApproved))
+	if dec.Code != http.StatusOK {
+		t.Fatalf("decide %d %s", dec.Code, dec.Body.String())
+	}
+	f.waitRun(t, runID, pkgagent.RunCompleted)
+}
+
+// TestApprovalPartialDecisionsRejected 验收未交齐全部裁决时不流转。
+func TestApprovalPartialDecisionsRejected(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{})
+	runID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "need pings",
+		Mode:    pkgagent.ModeAskForApproval,
+		Config: withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{
+			{ToolCalls: []pkgagent.FakeToolCall{{Name: "ping", Arguments: json.RawMessage(`{}`)}, {Name: "ping", Arguments: json.RawMessage(`{}`)}}},
+		}}),
+	})
+	f.waitRun(t, runID, pkgagent.RunWaitingApproval)
+	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/approvals", nil)
+	var listed handler.ListApprovalsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &listed)
+	partial := handler.DecideApprovalRequest{Decisions: []handler.ToolDecision{{
+		ToolCallID: listed.Approvals[0].ToolCalls[0].ID,
+		Status:     pkgagent.ApprovalApproved,
+	}}}
+	dec := f.do(t, http.MethodPost, "/approvals/"+listed.Approvals[0].ID+"/decision", partial)
+	if dec.Code != http.StatusBadRequest {
+		t.Fatalf("decide %d %s", dec.Code, dec.Body.String())
+	}
+	if got := f.waitRun(t, runID, pkgagent.RunWaitingApproval); got.Status != pkgagent.RunWaitingApproval {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+// TestPlanModeAllowsMemoryWrite 验收 plan 覆盖 memory 时可以调用 memory_write。
+func TestPlanModeAllowsMemoryWrite(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModePlan, pkgagent.ModelConfig{})
+	runID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "write memory",
+		Mode:    pkgagent.ModePlan,
+		Config: withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{
+			{ToolCalls: []pkgagent.FakeToolCall{{Name: "memory_write", Arguments: json.RawMessage(`{"scope":"user","name":"index","content":"x"}`)}}},
+			{Text: "saved"},
+		}}),
+	})
+	if got := f.waitRun(t, runID, pkgagent.RunCompleted); got.Status != pkgagent.RunCompleted {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+// TestApprovalDeniedContinuesRun 验收拒绝后把失败结果喂回模型，不打死 Run。
+func TestApprovalDeniedContinuesRun(t *testing.T) {
 	f := newFixture(t)
 	sessionID := f.createSession(t)
 	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{})
@@ -338,18 +430,53 @@ func TestApprovalDenied(t *testing.T) {
 		Mode:    pkgagent.ModeAskForApproval,
 		Config: withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{
 			{ToolCalls: []pkgagent.FakeToolCall{{Name: "ping", Arguments: json.RawMessage(`{}`)}}},
+			{Text: "denied"},
 		}}),
 	})
 	f.waitRun(t, runID, pkgagent.RunWaitingApproval)
 	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/approvals", nil)
 	var listed handler.ListApprovalsResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &listed)
-	_ = f.do(t, http.MethodPost, "/approvals/"+listed.Approvals[0].ID+"/decision", handler.DecideApprovalRequest{
-		Status: pkgagent.ApprovalDenied,
+	dec := f.do(t, http.MethodPost, "/approvals/"+listed.Approvals[0].ID+"/decision", decideAll(listed.Approvals[0], pkgagent.ApprovalDenied))
+	if dec.Code != http.StatusOK {
+		t.Fatalf("decide %d %s", dec.Code, dec.Body.String())
+	}
+	if got := f.waitRun(t, runID, pkgagent.RunCompleted); got.Status != pkgagent.RunCompleted {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+// TestApprovalMixedDecisions 验收一条批一条拒后 Run 继续。
+func TestApprovalMixedDecisions(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{})
+	runID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "need pings",
+		Mode:    pkgagent.ModeAskForApproval,
+		Config: withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{
+			{ToolCalls: []pkgagent.FakeToolCall{{Name: "ping", Arguments: json.RawMessage(`{}`)}, {Name: "ping", Arguments: json.RawMessage(`{}`)}}},
+			{Text: "partial"},
+		}}),
 	})
-	run := f.waitRun(t, runID, pkgagent.RunFailed)
-	if run.StopReason == nil || *run.StopReason != pkgagent.StopApprovalDenied {
-		t.Fatalf("reason = %v", run.StopReason)
+	f.waitRun(t, runID, pkgagent.RunWaitingApproval)
+	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/approvals", nil)
+	var listed handler.ListApprovalsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &listed)
+	if len(listed.Approvals[0].ToolCalls) != 2 {
+		t.Fatalf("tool_calls=%+v", listed.Approvals[0].ToolCalls)
+	}
+	dec := f.do(t, http.MethodPost, "/approvals/"+listed.Approvals[0].ID+"/decision", handler.DecideApprovalRequest{
+		Decisions: []handler.ToolDecision{
+			{ToolCallID: listed.Approvals[0].ToolCalls[0].ID, Status: pkgagent.ApprovalApproved},
+			{ToolCallID: listed.Approvals[0].ToolCalls[1].ID, Status: pkgagent.ApprovalDenied},
+		},
+	})
+	if dec.Code != http.StatusOK {
+		t.Fatalf("decide %d %s", dec.Code, dec.Body.String())
+	}
+	if got := f.waitRun(t, runID, pkgagent.RunCompleted); got.Status != pkgagent.RunCompleted {
+		t.Fatalf("status = %s", got.Status)
 	}
 }
 
@@ -540,13 +667,12 @@ func TestRecoverQueuedRun(t *testing.T) {
 	queries := db.SQLiteQueries(client)
 	bus := events.New()
 	registry := tool.NewRegistry()
-	_ = registry.Register(tool.Ping())
 	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
 		Provider: "fake",
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "recovered"}}}),
 	})
-	runtime := agent.New(client, queries, bus, registry, nil)
+	runtime := agent.New(client, queries, bus, registry, nil, agenttools.Ports{})
 	api := handler.New(client, queries, runtime, bus, defaults, nil)
 	f := &fixture{api: api, router: testRouter(api), cancel: cancel}
 	sessionID := f.createSession(t)
@@ -604,5 +730,109 @@ func TestSingleActiveRunQueueAndInterrupt(t *testing.T) {
 	_ = json.Unmarshal(session.Body.Bytes(), &sess)
 	if sess.Session.ActiveRunID != nil && *sess.Session.ActiveRunID == hanging {
 		t.Fatal("interrupted run should not remain active")
+	}
+}
+
+func TestMemoryHTTP(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := memory.Upsert(ctx, f.queries, memory.TextMemory{Scope: memory.ScopeUser, ScopeID: "u1", Name: memory.NameIndex, Content: "user index"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := memory.Upsert(ctx, f.queries, memory.TextMemory{Scope: memory.ScopeUser, ScopeID: "u1", Name: "debugging", Content: "topic"}); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.do(t, http.MethodGet, "/memories?user_id=u1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list %d %s", rec.Code, rec.Body.String())
+	}
+	var listed handler.ListTextMemoriesResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &listed)
+	if len(listed.Items) != 2 {
+		t.Fatalf("list items %+v", listed.Items)
+	}
+	rec = f.do(t, http.MethodGet, "/memories/user/u1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get index %d %s", rec.Code, rec.Body.String())
+	}
+	rec = f.do(t, http.MethodGet, "/memories/user/u1?name=debugging", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get topic %d %s", rec.Code, rec.Body.String())
+	}
+	rec = f.do(t, http.MethodDelete, "/memories/user/u1?name=debugging", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete topic %d %s", rec.Code, rec.Body.String())
+	}
+	rec = f.do(t, http.MethodDelete, "/memories/user/u1?all=1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete all %d %s", rec.Code, rec.Body.String())
+	}
+	listed = handler.ListTextMemoriesResponse{}
+	rec = f.do(t, http.MethodGet, "/memories?user_id=u1", nil)
+	_ = json.Unmarshal(rec.Body.Bytes(), &listed)
+	if len(listed.Items) != 0 {
+		t.Fatalf("expected empty list %+v", listed.Items)
+	}
+}
+
+func TestMemoryLoopIndexAndFreeze(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	sessionID := f.createSession(t)
+	if _, err := memory.Upsert(ctx, f.queries, memory.TextMemory{Scope: memory.ScopeUser, ScopeID: "u1", Name: memory.NameIndex, Content: "v1 pointers"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{})
+	runID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "hi memory",
+		Mode:    pkgagent.ModeAutoApprove,
+		Config:  withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "hello"}}}),
+	})
+	f.waitRun(t, runID, pkgagent.RunCompleted)
+	user, _, ok := f.runtime.FrozenMemoryIndexes(sessionID)
+	if !ok || user != "v1 pointers" {
+		t.Fatalf("frozen user %q ok=%v", user, ok)
+	}
+	if _, err := memory.Upsert(ctx, f.queries, memory.TextMemory{Scope: memory.ScopeUser, ScopeID: "u1", Name: memory.NameIndex, Content: "v2 pointers"}); err != nil {
+		t.Fatal(err)
+	}
+	runID = f.start(t, sessionID, handler.StartRunRequest{
+		Content: "second",
+		Mode:    pkgagent.ModeAutoApprove,
+		Config:  withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "again"}}}),
+	})
+	f.waitRun(t, runID, pkgagent.RunCompleted)
+	user, _, ok = f.runtime.FrozenMemoryIndexes(sessionID)
+	if !ok || user != "v1 pointers" {
+		t.Fatalf("freeze should stay v1, got %q", user)
+	}
+	hits, err := memory.SearchMessages(ctx, f.queries, memory.Search{WorkspaceID: "default", Query: "hi memory"})
+	if err != nil || len(hits) == 0 {
+		t.Fatalf("expected indexed user message: %v %+v", err, hits)
+	}
+}
+
+func TestMemoryIndexBackgroundCompact(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.runtime.SetModel(pkgagent.ModelConfig{
+		Provider: "fake",
+		Model:    "fake",
+		Options:  mustJSON(pkgagent.FakeOptions{IndexCompactSummary: "short index"}),
+	})
+	over := strings.Repeat("line\n", memory.IndexMaxLines) + "overflow"
+	item, err := memory.Upsert(ctx, f.queries, memory.TextMemory{Scope: memory.ScopeUser, ScopeID: "u1", Name: memory.NameIndex, Content: over})
+	if err != nil || !item.OverBudget {
+		t.Fatalf("seed %+v err=%v", item, err)
+	}
+	_ = f.createSession(t)
+	f.runtime.EnqueueIndexCompact(memory.TextMemoryKey{Scope: memory.ScopeUser, ScopeID: "u1", Kind: memory.KindIndex, Name: memory.NameIndex})
+	f.runtime.WaitIndexCompact()
+	got, err := memory.Get(ctx, f.queries, memory.TextMemoryKey{Scope: memory.ScopeUser, ScopeID: "u1", Name: memory.NameIndex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OverBudget || got.Content != "short index" {
+		t.Fatalf("compacted %+v", got)
 	}
 }

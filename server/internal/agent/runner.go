@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	agenttools "codedock/internal/agent/tools"
 	cderr "codedock/internal/errors"
 	"codedock/internal/events"
 	"codedock/internal/util"
@@ -14,30 +15,56 @@ import (
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db"
 	"codedock/pkg/db/sqlite"
+	"sync"
 )
 
 // Runtime 负责 Agent 运行时编排和数据库持久化。
 type Runtime struct {
-	db      db.Client
-	queries *sqlite.Queries
-	bus     *events.Bus
-	worker  *Worker
-	tools   tool.Registry
-	log     *slog.Logger
+	db        db.Client
+	queries   *sqlite.Queries
+	bus       *events.Bus
+	worker    *Worker
+	tools     tool.Registry
+	log       *slog.Logger
+	model     pkgagent.ModelConfig
+	freeze    sync.Map
+	compact   sync.Map
+	compactWG sync.WaitGroup
 }
 
-// New 创建运行时及其 Worker。log 为 nil 时回退到 slog.Default。
-func New(client db.Client, queries *sqlite.Queries, bus *events.Bus, tools tool.Registry, log *slog.Logger) *Runtime {
+// New 创建运行时及其 Worker。工具定义在 tools 包内注册，ports 只注入 Execute 用的外部实现。log 为 nil 时回退到 slog.Default。
+func New(client db.Client, queries *sqlite.Queries, bus *events.Bus, tools tool.Registry, log *slog.Logger, ports agenttools.Ports) *Runtime {
 	if tools == nil {
 		tools = tool.NewRegistry()
-		_ = tools.Register(tool.Ping())
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	runtime := &Runtime{db: client, queries: queries, bus: bus, tools: tools, log: log}
+	runtime := &Runtime{
+		db:      client,
+		queries: queries,
+		bus:     bus,
+		tools:   tools,
+		log:     log,
+		model:   pkgagent.ModelConfig{Provider: "fake", Model: "fake"},
+	}
+	agenttools.Register(tools, queries, runtime.EnqueueIndexCompact, ports)
 	runtime.worker = NewWorker(runtime)
 	return runtime
+}
+
+// SetModel 设置后台目录压缩使用的模型配置。
+func (r *Runtime) SetModel(model pkgagent.ModelConfig) {
+	if r == nil {
+		return
+	}
+	if model.Provider == "" {
+		model.Provider = "fake"
+	}
+	if model.Model == "" {
+		model.Model = "fake"
+	}
+	r.model = model
 }
 
 // logger 返回运行时日志；Runtime 或字段为空时回退到 slog.Default。
@@ -195,11 +222,6 @@ func (r *Runtime) Execute(ctx context.Context, runID string) error {
 			}
 		}
 
-		if resumeTools {
-			for _, call := range calls {
-				checkpoint.Completed = append(checkpoint.Completed, call.ID)
-			}
-		}
 		paused, err := r.runTools(ctx, run, turn, calls, checkpoint)
 		if err != nil {
 			return r.stopFromErr(ctx, run, err)
@@ -345,7 +367,6 @@ func (r *Runtime) runModelTurn(ctx context.Context, run *pkgagent.Run, turn *pkg
 
 // runTools 调度本轮工具调用。返回 true 表示已进入 waiting_approval，Execute 应退出。
 func (r *Runtime) runTools(ctx context.Context, run pkgagent.Run, turn pkgagent.Turn, calls []tool.Call, previous toolCheckpoint) (bool, error) {
-	approved := append([]string{}, previous.Completed...)
 	inv := tool.Invocation{
 		SessionID:        run.SessionID,
 		RunID:            run.ID,
@@ -358,7 +379,8 @@ func (r *Runtime) runTools(ctx context.Context, run pkgagent.Run, turn pkgagent.
 		ApprovalPolicy:   run.Config.ApprovalPolicy,
 		AgentMode:        string(run.Mode),
 		Registry:         r.tools,
-		ApprovedCallIDs:  approved,
+		ApprovedCallIDs:  append([]string{}, previous.Approved...),
+		DeniedCallIDs:    append([]string{}, previous.Denied...),
 		OnEvent: func(kind string, call tool.Call, attempt int, result *tool.Result) {
 			r.emitToolEvent(ctx, run, turn, kind, call, attempt, result, "")
 		},
@@ -368,19 +390,37 @@ func (r *Runtime) runTools(ctx context.Context, run pkgagent.Run, turn pkgagent.
 		return false, err
 	}
 	if out.WaitingApproval {
-		for _, call := range out.PendingCalls {
-			approval, aerr := r.insertApproval(ctx, pkgagent.Approval{
-				SessionID:  run.SessionID,
-				RunID:      run.ID,
-				ToolCallID: call.ID,
-				Scope:      pkgagent.ApprovalOnce,
-				Status:     pkgagent.ApprovalPending,
-				ExpiresAt:  util.Now().Add(run.Config.ApprovalPolicy.DefaultExpiry),
+		items := make([]pkgagent.ApprovalToolCall, 0, len(out.ApprovalCalls))
+		for _, call := range out.ApprovalCalls {
+			items = append(items, pkgagent.ApprovalToolCall{
+				ID:        call.ID,
+				Name:      call.Name,
+				Arguments: call.Arguments,
+				Status:    pkgagent.ApprovalPending,
 			})
-			if aerr != nil {
-				return false, aerr
-			}
-			r.emitToolEvent(ctx, run, turn, "approval_required", call, call.Attempt, nil, approval.ID)
+		}
+		approval, aerr := r.insertApproval(ctx, pkgagent.Approval{
+			SessionID:  run.SessionID,
+			RunID:      run.ID,
+			ToolCalls:  items,
+			Scope:      pkgagent.ApprovalOnce,
+			Status:     pkgagent.ApprovalPending,
+			ExpiresAt:  util.Now().Add(run.Config.ApprovalPolicy.DefaultExpiry),
+		})
+		if aerr != nil {
+			return false, aerr
+		}
+		if _, err := r.AppendEvent(ctx, pkgagent.AgentEvent{
+			SessionID: run.SessionID,
+			RunID:     run.ID,
+			TurnID:    &turn.ID,
+			Type:      pkgagent.EventApprovalRequired,
+			Payload: pkgagent.MarshalPayload(pkgagent.ApprovalRequiredPayload{
+				ApprovalID: approval.ID,
+				ToolCalls:  approval.ToolCalls,
+			}),
+		}); err != nil {
+			return false, err
 		}
 		completed := previous.Completed
 		for _, result := range out.Results {
@@ -388,7 +428,15 @@ func (r *Runtime) runTools(ctx context.Context, run pkgagent.Run, turn pkgagent.
 				completed = append(completed, result.CallID)
 			}
 		}
-		if err := r.saveToolCheckpoint(ctx, run.ID, turn.ID, completed, out.PendingCalls, append(previous.Results, out.Results...)); err != nil {
+		if err := r.saveToolCheckpoint(ctx, toolCheckpoint{
+			RunID:     run.ID,
+			TurnID:    turn.ID,
+			Completed: completed,
+			Approved:  previous.Approved,
+			Denied:    previous.Denied,
+			Pending:   out.PendingCalls,
+			Results:   append(previous.Results, out.Results...),
+		}); err != nil {
 			return false, err
 		}
 		if err := r.PersistTransition(ctx, run.ID, pkgagent.RunWaitingApproval, "approval required"); err != nil {
@@ -497,14 +545,30 @@ func (r *Runtime) loadSnapshot(ctx context.Context, run pkgagent.Run, turn pkgag
 	for _, item := range rows {
 		messages = append(messages, mapMessage(item))
 	}
-	return pkgagent.Load(ctx, pkgagent.History{
+	session, err := r.getSession(ctx, run.SessionID)
+	if err != nil {
+		return pkgagent.ContextSnapshot{}, err
+	}
+	indexes := r.loadMemoryIndexes(ctx, session)
+	r.indexLoadedMessages(ctx, session, messages)
+	snapshot, err := pkgagent.Load(ctx, pkgagent.History{
 		Run:        run,
 		Turn:       turn,
 		Checkpoint: checkpoint,
 		Messages:   messages,
-		Tools:      tool.Definitions(r.tools),
+		Tools: tool.VisibleDefinitions(
+			tool.Definitions(r.tools),
+			run.Config.Profile.Tools.Names,
+			tool.ModeCapabilities(string(run.Mode)),
+		),
 		Prompt:     run.Config.Profile.Prompt.Inline,
 	})
+	if err != nil {
+		return pkgagent.ContextSnapshot{}, err
+	}
+	snapshot.MemoryIndexes = indexes
+	snapshot.EstimatedTokens = pkgagent.EstimateTokens(snapshot)
+	return snapshot, nil
 }
 
 // compactIfNeeded 按 Context 重试策略调用 pkg.CompactIfNeeded。

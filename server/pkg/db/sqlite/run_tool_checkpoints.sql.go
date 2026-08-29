@@ -20,7 +20,7 @@ func (q *Queries) DeleteRunToolCheckpoint(ctx context.Context, runID string) err
 }
 
 const getRunToolCheckpoint = `-- name: GetRunToolCheckpoint :one
-SELECT run_id, turn_id, completed_calls, pending_calls, results, updated_at FROM run_tool_checkpoints
+SELECT run_id, turn_id, completed_calls, pending_calls, results, updated_at, approved_calls, denied_calls FROM run_tool_checkpoints
 WHERE run_id = ?
 `
 
@@ -34,23 +34,27 @@ func (q *Queries) GetRunToolCheckpoint(ctx context.Context, runID string) (RunTo
 		&i.PendingCalls,
 		&i.Results,
 		&i.UpdatedAt,
+		&i.ApprovedCalls,
+		&i.DeniedCalls,
 	)
 	return i, err
 }
 
 const upsertRunToolCheckpoint = `-- name: UpsertRunToolCheckpoint :one
 INSERT INTO run_tool_checkpoints (
-    run_id, turn_id, completed_calls, pending_calls, results, updated_at
+    run_id, turn_id, completed_calls, pending_calls, results, approved_calls, denied_calls, updated_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT(run_id) DO UPDATE SET
     turn_id = excluded.turn_id,
     completed_calls = excluded.completed_calls,
     pending_calls = excluded.pending_calls,
     results = excluded.results,
+    approved_calls = excluded.approved_calls,
+    denied_calls = excluded.denied_calls,
     updated_at = excluded.updated_at
-RETURNING run_id, turn_id, completed_calls, pending_calls, results, updated_at
+RETURNING run_id, turn_id, completed_calls, pending_calls, results, updated_at, approved_calls, denied_calls
 `
 
 type UpsertRunToolCheckpointParams struct {
@@ -59,6 +63,8 @@ type UpsertRunToolCheckpointParams struct {
 	CompletedCalls string
 	PendingCalls   string
 	Results        string
+	ApprovedCalls  string
+	DeniedCalls    string
 	UpdatedAt      string
 }
 
@@ -69,6 +75,8 @@ func (q *Queries) UpsertRunToolCheckpoint(ctx context.Context, arg UpsertRunTool
 		arg.CompletedCalls,
 		arg.PendingCalls,
 		arg.Results,
+		arg.ApprovedCalls,
+		arg.DeniedCalls,
 		arg.UpdatedAt,
 	)
 	var i RunToolCheckpoint
@@ -79,6 +87,8 @@ func (q *Queries) UpsertRunToolCheckpoint(ctx context.Context, arg UpsertRunTool
 		&i.PendingCalls,
 		&i.Results,
 		&i.UpdatedAt,
+		&i.ApprovedCalls,
+		&i.DeniedCalls,
 	)
 	return i, err
 }

@@ -22,3 +22,7 @@ RETURNING *;
 -- name: DeleteTextMemory :exec
 DELETE FROM text_memories
 WHERE scope = ? AND scope_id = ? AND kind = ? AND name = ?;
+
+-- name: DeleteTextMemoriesByScope :exec
+DELETE FROM text_memories
+WHERE scope = ? AND scope_id = ?;

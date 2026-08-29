@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"codedock/internal/agent"
+	agenttools "codedock/internal/agent/tools"
 	"codedock/internal/config"
 	"codedock/internal/events"
 	"codedock/internal/handler"
 	"codedock/internal/logger"
 	pkgagent "codedock/pkg/agent"
-	"codedock/pkg/agent/tool"
 	"codedock/pkg/db"
 )
 
@@ -50,16 +50,16 @@ func main() {
 
 	queries := db.SQLiteQueries(client)
 	bus := events.New()
-	registry := tool.NewRegistry()
-	_ = registry.Register(tool.Ping())
-	runtime := agent.New(client, queries, bus, registry, logger.NewLogger("agent"))
-	runtime.Start(ctx)
-
-	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{
+	model := pkgagent.ModelConfig{
 		Provider: cfg.LLMProvider,
 		Model:    cfg.LLMModel,
 		Options:  modelOptions(cfg),
-	})
+	}
+	runtime := agent.New(client, queries, bus, nil, logger.NewLogger("agent"), agenttools.Ports{})
+	runtime.SetModel(model)
+	runtime.Start(ctx)
+
+	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, model)
 	api := handler.New(client, queries, runtime, bus, defaults, logger.NewLogger("handler"))
 
 	server := &http.Server{

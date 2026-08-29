@@ -15,6 +15,13 @@ INSERT INTO context_messages (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?
 )
+ON CONFLICT(id) DO UPDATE SET
+    workspace_id = excluded.workspace_id,
+    session_id = excluded.session_id,
+    run_id = excluded.run_id,
+    role = excluded.role,
+    content = excluded.content,
+    created_at = excluded.created_at
 RETURNING id, workspace_id, session_id, run_id, role, content, created_at
 `
 
@@ -49,54 +56,4 @@ func (q *Queries) InsertContextMessage(ctx context.Context, arg InsertContextMes
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const searchContextMessages = `-- name: SearchContextMessages :many
-SELECT
-    id,
-    workspace_id,
-    session_id,
-    run_id,
-    role,
-    content,
-    created_at
-FROM context_messages
-WHERE workspace_id = ?
-LIMIT ?
-`
-
-type SearchContextMessagesParams struct {
-	WorkspaceID string
-	Limit       int64
-}
-
-func (q *Queries) SearchContextMessages(ctx context.Context, arg SearchContextMessagesParams) ([]ContextMessage, error) {
-	rows, err := q.db.QueryContext(ctx, searchContextMessages, arg.WorkspaceID, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ContextMessage
-	for rows.Next() {
-		var i ContextMessage
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.SessionID,
-			&i.RunID,
-			&i.Role,
-			&i.Content,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }

@@ -72,7 +72,7 @@ LIMIT ? OFFSET ?
 `
 
 const listSessionApprovals = `
-SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at
+SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls
 FROM approvals
 WHERE session_id = ?
 ORDER BY
@@ -198,6 +198,7 @@ func (q *Queries) ListSessionApprovals(ctx context.Context, arg ListSessionAppro
 			&i.Scope,
 			&i.Status,
 			&i.ExpiresAt,
+			&i.ToolCalls,
 		); err != nil {
 			return nil, err
 		}

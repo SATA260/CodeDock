@@ -4,8 +4,8 @@ import (
 	"context"
 
 	cderr "codedock/internal/errors"
-	pkgagent "codedock/pkg/agent"
 	"codedock/internal/util"
+	pkgagent "codedock/pkg/agent"
 )
 
 // Transition 消费模型流，把增量先落库再发到事件总线，并返回最终结果。

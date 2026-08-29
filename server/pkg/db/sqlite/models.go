@@ -28,6 +28,7 @@ type Approval struct {
 	Scope      string
 	Status     string
 	ExpiresAt  string
+	ToolCalls  string
 }
 
 type CompactionCheckpoint struct {
@@ -88,6 +89,8 @@ type RunToolCheckpoint struct {
 	PendingCalls   string
 	Results        string
 	UpdatedAt      string
+	ApprovedCalls  string
+	DeniedCalls    string
 }
 
 type SchemaMigration struct {
