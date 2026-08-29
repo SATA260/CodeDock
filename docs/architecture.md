@@ -7,7 +7,15 @@ Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runt
 ## 总体架构
 
 ```text
-Web 客户端
+apps/web  (路由 + NEXT_PUBLIC_* + AgentClient / AgentProvider)
+    |
+    v
+packages/views  (Chat 壳 / hooks，无 next/*)
+    |         \
+    v          v
+packages/core   packages/ui
+(HTTP / SSE /   (primitives / AI Elements / tokens，无业务)
+ Timeline reducer，无 React)
     |
     | HTTP / SSE
     v
@@ -38,8 +46,11 @@ server/pkg/agent
 ```text
 CodeDock/
 ├── apps/
-│   └── web/
-│       └── app/
+│   └── web/                     # Next.js 路由与平台装配；不解析 SSE
+├── packages/
+│   ├── core/                    # 无头业务；按业务域拆（现有 chat/），不要 src/
+│   ├── ui/                      # 无业务语义；components / lib / styles，不要 src/
+│   └── views/                   # 组合层；按业务域拆（现有 chat/），不要 src/
 ├── docs/
 ├── server/
 │   ├── cmd/server/              # 服务启动、配置、Router 和依赖装配
@@ -100,6 +111,30 @@ pkg/agent
   不依赖 handler、internal、sqlc
   不持有包级状态，不查库
   Tool 包只含接口、Registry、Dispatch，不含具体工具定义
+
+packages/core
+  不依赖 React、Next、DOM、process.env、AI SDK
+  按业务域拆目录（chat、以后的 auth / memory），不要 src/
+  文件直接落在 packages/core/<domain>/
+  baseUrl / userId 由调用方注入
+
+packages/ui
+  不依赖 core，不知道 Session / Run / TimelineItem
+  只提供通用组件与 token：components / lib / styles
+  不要 src/，不按业务域拆
+
+packages/views
+  -> packages/core
+  -> packages/ui
+  不 import next/*
+  按业务域拆目录，与 core 对齐（现有 chat）
+  AgentProvider 在包根注入 client + userId；导航用回调
+
+apps/web
+  -> packages/views
+  -> packages/core          # 创建 AgentClient
+  -> packages/ui            # 引入 tokens.css
+  不直接解析 SSE 或 event type
 ```
 
 ## 分层职责
@@ -108,7 +143,7 @@ pkg/agent
 
 承担大部分接口逻辑：
 
-- Session / Message / Usage / Approval 的增删改查
+- Session / Message / Usage / Approval 的增删改查。`sessions.summary` 在首次用户消息写入，列表与详情返回
 - 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引；List 用 user_id / workspace_id，Get/Delete 用 name 默认目录）
 - SSE：先按 `afterSeq` / `Last-Event-ID` 回放已落库事件，再 `SubscribeAll` 并按 Session 过滤；客户端断开不取消 Run
 - Run 的 Start / Continue / Retry / Cancel 和审批裁决直接在 Handler 中处理，需要执行时再交给 Worker
@@ -170,6 +205,28 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。
 
 进程内同步发布订阅总线。`Subscribe` / `SubscribeAll` 返回 unsubscribe，避免 SSE 泄漏监听器。流式事件是通知，重连必须按 `event_seq` 回放已落库事件。
 
+### `packages/core`
+
+跨端无头业务，无 UI。按业务域拆目录，文件直接放在 `packages/core/<domain>/`，不要 `src/`。现有 `chat/`：Session / Message / Run / 审批的 HTTP、SSE、Timeline reducer。有鉴权再加 `auth/`，有记忆再加 `memory/`，不预建空目录。`baseUrl` / `userId` 由调用方注入。不依赖 React。第一版 thinking 用 Run 状态（`queued` / `loading_context` / `running_llm`），不是模型 reasoning token。
+
+### `packages/ui`
+
+无业务语义。不要 `src/`，也不按业务域拆：
+
+- `components/ui/`：Button、Collapsible
+- `components/`：Conversation、Message（`MessageResponse` 用 Streamdown 渲染 Markdown）、Reasoning、Tool、Confirmation、PromptInput
+- `lib/`、`styles/`：`cn`、JSON 展示、zinc token
+
+不依赖 core，不知道 Session / Run / TimelineItem。
+
+### `packages/views`
+
+组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage`、侧栏、瀑布、审批、prompt。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` 与 `onOpenSession`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
+
+### `apps/web`
+
+路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient`、包 `AgentProvider`、`router.push`。本机 Web 直连 `:8080`（CORS）。
+
 ## 组装关系
 
 ```text
@@ -191,5 +248,7 @@ Worker
 ## 配置
 
 `LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
+
+HTTP 出站领域对象使用 snake_case JSON。Router 对带 Origin 的请求回显 CORS，便于本机 Web 直连 `:8080`。Web 用 `NEXT_PUBLIC_API_BASE`（默认 `http://localhost:8080`）和 `NEXT_PUBLIC_USER_ID`（默认 `local`）。
 
 修改 Agent 能力或跨端协议时，需要检查契约、取消与终态、流式事件语义以及敏感信息处理。

@@ -15,7 +15,11 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 进程内事件总线放在 `server/internal/events`。
 - 数据库入口和 sqlc 生成代码放在 `server/pkg/db`。
 - 数据库结构演进放在 `server/migrations`。
-- Web 路由和页面入口放在 `apps/web`。
+- 无头业务放在 `packages/core`（`@codedock/core`）：按业务域拆（现有 `chat/`，以后 `auth/`、`memory/`），文件直接在域目录下，不要 `src/`。不依赖 React、Next、DOM、`process.env`。`baseUrl` / `userId` 由调用方注入。
+- 无业务 UI 放在 `packages/ui`（`@codedock/ui`）：`components/`、`lib/`、`styles/`，不要 `src/`，不按业务域拆。不依赖 core，不知道 Session / Run / TimelineItem。
+- 组合层放在 `packages/views`（`@codedock/views`）：按业务域拆，与 core 对齐（现有 `chat/`）。包根 `provider.tsx` 注入 client。不 import `next/*`；导航用回调。不要 `src/`，不预建空业务域。
+- Web 路由和平台装配放在 `apps/web`：读 `NEXT_PUBLIC_*`、创建 `AgentClient`、包 `AgentProvider`、`router.push`。不解析 SSE。
+- 依赖方向：`apps/web` → `packages/views` → `packages/core`；`packages/views` → `packages/ui`。`ui` 不依赖 `core`。未来 CLI 只依赖 `core`。
 - 不要创建 `server/pkg/ai`。大模型调用属于 `pkg/agent`。
 
 ## 边界规则
@@ -31,5 +35,7 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 流式事件是通知，不是真实数据源；重连时应按 `event_seq` 回放。
 - 不要预先创建 Issue、Task、Review、Workspace 或其他具体业务域目录。
 - 不要把产品工作流放入 `server/pkg`。
+- 前端三层不得反依赖：`core` 不依赖 React / Next / DOM / `process.env`；`ui` 不依赖 `core`；`views` 不 import `next/*`；`apps/web` 只做路由与平台装配。
+- 前端按业务域拆模块，不要 `src/`：`core` / `views` 用同名域目录（现有 `chat`）；`ui` 只用 `components` / `lib` / `styles`。新业务再建目录，不预建空文件夹。
 
 当需求变更没有明显的代码归属时，先依据 `docs/architecture.md` 对其分类，再开始编写代码。

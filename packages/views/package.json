@@ -1,0 +1,24 @@
+{
+  "name": "@codedock/views",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./chat": "./chat/index.ts"
+  },
+  "dependencies": {
+    "@codedock/core": "workspace:*",
+    "@codedock/ui": "workspace:*",
+    "lucide-react": "^0.544.0"
+  },
+  "peerDependencies": {
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  }
+}

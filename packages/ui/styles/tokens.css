@@ -1,0 +1,34 @@
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-background: var(--color-zinc-950);
+  --color-foreground: var(--color-zinc-100);
+  --color-card: var(--color-zinc-950);
+  --color-card-foreground: var(--color-zinc-100);
+  --color-muted: var(--color-zinc-800);
+  --color-muted-foreground: var(--color-zinc-400);
+  --color-accent: var(--color-zinc-900);
+  --color-accent-foreground: var(--color-zinc-200);
+  --color-border: var(--color-zinc-800);
+  --color-input: var(--color-zinc-800);
+  --color-primary: var(--color-zinc-100);
+  --color-primary-foreground: var(--color-zinc-950);
+  --color-destructive: var(--color-red-500);
+  --color-ring: var(--color-zinc-600);
+}
+
+/* Streamdown / AI Elements 用 shadcn 变量名，对齐现有 zinc 主题。 */
+:root,
+.dark {
+  --background: var(--color-zinc-950);
+  --foreground: var(--color-zinc-100);
+  --card: var(--color-zinc-950);
+  --card-foreground: var(--color-zinc-100);
+  --muted: var(--color-zinc-800);
+  --muted-foreground: var(--color-zinc-400);
+  --border: var(--color-zinc-800);
+  --input: var(--color-zinc-800);
+  --primary: var(--color-zinc-100);
+  --primary-foreground: var(--color-zinc-950);
+  --radius: 0.625rem;
+}
