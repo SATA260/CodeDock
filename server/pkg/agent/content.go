@@ -28,7 +28,7 @@ func DecodeText(content json.RawMessage) string {
 		return ""
 	}
 	var payload TextContent
-	if err := json.Unmarshal(content, &payload); err == nil && payload.Text != "" {
+	if err := json.Unmarshal(content, &payload); err == nil {
 		return payload.Text
 	}
 	var raw string
