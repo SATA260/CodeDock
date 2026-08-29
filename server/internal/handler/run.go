@@ -158,6 +158,24 @@ func (a *API) start(ctx context.Context, sessionID string, req StartRunRequest) 
 	var submit bool
 	err = a.db.WithTx(ctx, func(ctx context.Context) error {
 		if session.ActiveRunID != nil {
+			active, aerr := a.q(ctx).GetRun(ctx, *session.ActiveRunID)
+			if aerr != nil {
+				if !cderr.IsNotFound(wrapHandlerDB(aerr)) {
+					return wrapHandlerDB(aerr)
+				}
+				session.ActiveRunID = nil
+			} else if pkgagent.IsTerminal(mapRun(active).Status) {
+				if err := a.q(ctx).ClearActiveRun(ctx, sqlite.ClearActiveRunParams{
+					UpdatedAt:   util.FormatTime(util.Now()),
+					ID:          session.ID,
+					ActiveRunID: nullString(*session.ActiveRunID),
+				}); err != nil {
+					return wrapHandlerDB(err)
+				}
+				session.ActiveRunID = nil
+			}
+		}
+		if session.ActiveRunID != nil {
 			if req.InputMode == InputQueue {
 				run, ev, err := a.insertQueued(ctx, session, req.Content, config)
 				if err != nil {

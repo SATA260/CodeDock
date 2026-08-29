@@ -28,7 +28,7 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 模型由 `pkg/agent` 在 `Stream` / `CompactIfNeeded` 内按 `ModelConfig` 创建：`provider=fake` 走脚本化假模型（测试用），`provider=openai` 走 OpenAI 兼容 HTTP。不由 Runtime 注入模型实例。
 - Handler 直接使用 `*sqlite.Queries` 做 CRUD、SSE 回放、Run 的 Start / Continue / Cancel 和审批裁决；领取后的 Loop 才进入 `internal/agent`。
 - `internal/agent` 负责把 pkg 的计算结果持久化为 Run、Turn、消息、用量和事件。`AgentEvent` 必须先同事务写入并递增 `sessions.last_event_seq`，提交后再 `events.Bus.Publish`。
-- 示例 Tool 为 `ping`，另注册记忆工具；定义都在 `internal/agent/tools`。外部模块只实现 `Ports` 上的接口，由 `cmd/server` 在初始化时注入。Agent 绑定 `Profile.Tools.Names`；运行模式提供 `read` / `write` / `memory`，须覆盖工具全部能力才可调用。记忆工具声明 `memory`。审批由工具声明，模式决定是否暂停。一次模型回复的待批 Tool 合成一条审批，一次提交审完再流转；拒绝不打死 Run。业务 Tool（文件 / Shell / Git）本阶段不实现。
+- 示例 Tool 为 `ping`，另注册记忆工具；定义都在 `internal/agent/tools`。外部模块只实现 `Ports` 上的接口，由 `cmd/server` 在初始化时注入。Agent 绑定 `Profile.Tools.Names`；运行模式提供 `read` / `write` / `memory`，须覆盖工具全部能力才可调用。记忆工具声明 `memory`。审批由工具声明，模式决定是否暂停。一次模型回复的待批 Tool 合成一条审批，一次提交审完再流转；拒绝或单个工具失败不打死 Run。业务 Tool（文件 / Shell / Git）本阶段不实现。
 - `internal/agent/memory` 负责 TextMemory 的 Get / Upsert / Delete / List、`SearchMessages` 和 `IndexMessage`；用户侧只看/删目录与专题。不负责 Prompt / Context Packet / 对话压缩，不自动建专题，不定义 Tool。Loop 在新 Session / 对话压缩后装冻结目录；写 message 时 `IndexMessage`。超限目录由 Runtime 后台 `CompactIndex` 改短盖写，不改当前 Session 冻结前缀。
 - 不要使用 Store 接口包装 sqlc。
 - Agent 契约不得依赖 React、UI 包或路由框架。

@@ -31,7 +31,7 @@ func Build(_ context.Context, req Prompt) (Chat, error) {
 			Content: EncodeText("Conversation summary:\n" + req.Context.Summary.Content),
 		})
 	}
-	messages := append(prefix, req.Context.Messages...)
+	messages := CompleteToolResults(append(prefix, req.Context.Messages...))
 	return Chat{
 		SessionID:       req.Context.SessionID,
 		RunID:           req.Run.ID,

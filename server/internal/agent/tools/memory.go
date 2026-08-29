@@ -127,11 +127,11 @@ func (t readTool) Execute(ctx context.Context, input tool.Input) (tool.Result, e
 	}
 	args, err := unmarshalArgs[memoryReadInput](input.Call.Arguments)
 	if err != nil {
-		return failResult(input, t.Definition().Name, err), err
+		return failResult(input, t.Definition().Name, err), nil
 	}
 	scopeID, err := scopeIDFromSession(ctx, t.q, input.SessionID, memory.TextMemoryScope(args.Scope))
 	if err != nil {
-		return failResult(input, t.Definition().Name, err), err
+		return failResult(input, t.Definition().Name, err), nil
 	}
 	item, err := memory.Get(ctx, t.q, memory.TextMemoryKey{
 		Scope:   memory.TextMemoryScope(args.Scope),
@@ -139,7 +139,7 @@ func (t readTool) Execute(ctx context.Context, input tool.Input) (tool.Result, e
 		Name:    args.Name,
 	})
 	if err != nil {
-		return failResult(input, t.Definition().Name, err), err
+		return failResult(input, t.Definition().Name, err), nil
 	}
 	return okResult(input, t.Definition().Name, memoryItemOutput{
 		Scope:      string(item.Scope),
@@ -157,12 +157,12 @@ func (t writeTool) Execute(ctx context.Context, input tool.Input) (tool.Result, 
 	}
 	args, err := unmarshalArgs[memoryWriteInput](input.Call.Arguments)
 	if err != nil {
-		return failResult(input, t.Definition().Name, err), err
+		return failResult(input, t.Definition().Name, err), nil
 	}
 	scope := memory.TextMemoryScope(args.Scope)
 	scopeID, err := scopeIDFromSession(ctx, t.q, input.SessionID, scope)
 	if err != nil {
-		return failResult(input, t.Definition().Name, err), err
+		return failResult(input, t.Definition().Name, err), nil
 	}
 	item, err := memory.Upsert(ctx, t.q, memory.TextMemory{
 		Scope:   scope,
@@ -172,7 +172,7 @@ func (t writeTool) Execute(ctx context.Context, input tool.Input) (tool.Result, 
 		Content: args.Content,
 	})
 	if err != nil {
-		return failResult(input, t.Definition().Name, err), err
+		return failResult(input, t.Definition().Name, err), nil
 	}
 	result, err := okResult(input, t.Definition().Name, memoryItemOutput{
 		Scope:      string(item.Scope),
@@ -194,11 +194,11 @@ func (t searchTool) Execute(ctx context.Context, input tool.Input) (tool.Result,
 	}
 	args, err := unmarshalArgs[memorySearchInput](input.Call.Arguments)
 	if err != nil {
-		return failResult(input, t.Definition().Name, err), err
+		return failResult(input, t.Definition().Name, err), nil
 	}
 	session, err := t.q.GetSession(ctx, input.SessionID)
 	if err != nil {
-		return failResult(input, t.Definition().Name, wrapSessionErr(err)), err
+		return failResult(input, t.Definition().Name, wrapSessionErr(err)), nil
 	}
 	workspaceID := session.WorkspaceID
 	if workspaceID == "" {
@@ -206,7 +206,7 @@ func (t searchTool) Execute(ctx context.Context, input tool.Input) (tool.Result,
 	}
 	hits, err := memory.SearchMessages(ctx, t.q, memory.Search{WorkspaceID: workspaceID, Query: args.Query})
 	if err != nil {
-		return failResult(input, t.Definition().Name, err), err
+		return failResult(input, t.Definition().Name, err), nil
 	}
 	out := memorySearchOutput{Hits: make([]memorySearchHit, 0, len(hits))}
 	for _, hit := range hits {
@@ -279,7 +279,7 @@ func failResult(input tool.Input, name string, err error) tool.Result {
 func okResult(input tool.Input, name string, body any) (tool.Result, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return failResult(input, name, err), err
+		return failResult(input, name, err), nil
 	}
 	return tool.Result{CallID: input.Call.ID, Name: name, Success: true, Output: raw}, nil
 }

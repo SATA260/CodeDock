@@ -15,6 +15,7 @@ const (
 )
 
 // FailurePolicy 定义某个工具调用失败后整组调用的处理方式。
+// 失败本身是 Result，不是 error；fail_fast 只表示不再执行后续调用。
 type FailurePolicy string
 
 const (
@@ -107,6 +108,7 @@ type Result struct {
 }
 
 // Tool 是所有业务工具和兼容层必须实现的统一抽象。
+// Execute 的业务失败必须返回 Result{Success:false} 且 error 为 nil；error 只表示取消或超时。
 type Tool interface {
 	Definition() Definition
 	Execute(ctx context.Context, input Input) (Result, error)

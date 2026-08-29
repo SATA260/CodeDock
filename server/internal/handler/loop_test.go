@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,7 +48,7 @@ func (f *flakyTool) Definition() tool.Definition {
 // Execute 前几次返回失败，之后返回 ok，用于验证工具重试。
 func (f *flakyTool) Execute(ctx context.Context, input tool.Input) (tool.Result, error) {
 	if f.fails.Add(-1) >= 0 {
-		return tool.Result{CallID: input.Call.ID, Name: "flaky", Success: false, Error: "flaky"}, fmt.Errorf("flaky")
+		return tool.Result{CallID: input.Call.ID, Name: "flaky", Success: false, Error: "flaky"}, nil
 	}
 	return tool.Result{CallID: input.Call.ID, Name: "flaky", Output: json.RawMessage(`{"ok":true}`), Success: true}, nil
 }
@@ -813,6 +814,64 @@ func TestCompactionCheckpoint(t *testing.T) {
 	}
 }
 
+// TestToolFailureContinuesRun 验收单个工具失败不打死 Run，后续消息仍可完成。
+func TestToolFailureContinuesRun(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{})
+	runID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "broken tool",
+		Mode:    pkgagent.ModeAutoApprove,
+		Config: withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{
+			{ToolCalls: []pkgagent.FakeToolCall{
+				{Name: "missing_tool", Arguments: json.RawMessage(`{}`)},
+				{Name: "ping", Arguments: json.RawMessage(`{}`)},
+			}},
+			{Text: "recovered"},
+		}}),
+	})
+	run := f.waitRun(t, runID, pkgagent.RunCompleted)
+	if run.StopReason != nil && *run.StopReason == pkgagent.StopModelError {
+		t.Fatalf("tool failure should not be model_error, got %v", run.StopReason)
+	}
+	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/messages", nil)
+	var msgs handler.ListMessagesResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &msgs)
+	toolMsgs := 0
+	for _, msg := range msgs.Messages {
+		if msg.Role == pkgagent.RoleTool {
+			toolMsgs++
+		}
+	}
+	if toolMsgs < 2 {
+		t.Fatalf("expected persisted tool results, got %d in %+v", toolMsgs, msgs.Messages)
+	}
+	evRec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/event-log", nil)
+	var evs handler.ListEventsResponse
+	_ = json.Unmarshal(evRec.Body.Bytes(), &evs)
+	gotResultEvent := false
+	for _, ev := range evs.Events {
+		if ev.Type == pkgagent.EventToolExecutionResult {
+			gotResultEvent = true
+			break
+		}
+	}
+	if !gotResultEvent {
+		t.Fatal("expected tool.execution_result event for frontend")
+	}
+
+	runID = f.start(t, sessionID, handler.StartRunRequest{
+		Content:   "follow up",
+		InputMode: handler.InputQueue,
+		Mode:      pkgagent.ModeAutoApprove,
+		Config:    withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "still ok"}}}),
+	})
+	follow := f.waitRun(t, runID, pkgagent.RunCompleted)
+	if follow.Status != pkgagent.RunCompleted {
+		t.Fatalf("follow-up status = %s reason=%v", follow.Status, follow.StopReason)
+	}
+}
+
 // TestRetries 验收 Context / Model / Tool 三类重试，达上限停止。
 func TestRetries(t *testing.T) {
 	flaky := &flakyTool{}
@@ -954,6 +1013,36 @@ func TestSingleActiveRunQueueAndInterrupt(t *testing.T) {
 	_ = json.Unmarshal(session.Body.Bytes(), &sess)
 	if sess.Session.ActiveRunID != nil && *sess.Session.ActiveRunID == hanging {
 		t.Fatal("interrupted run should not remain active")
+	}
+}
+
+// TestStartBehindTerminalActiveRun 验收 ActiveRun 已终态时 queue 仍会领取新 Run。
+func TestStartBehindTerminalActiveRun(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{})
+	done := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "done",
+		Mode:    pkgagent.ModeAutoApprove,
+		Config:  withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "done"}}}),
+	})
+	f.waitRun(t, done, pkgagent.RunCompleted)
+	if _, err := f.queries.ClaimActiveRun(context.Background(), sqlite.ClaimActiveRunParams{
+		ActiveRunID: sql.NullString{String: done, Valid: true},
+		UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+		ID:          sessionID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	next := f.start(t, sessionID, handler.StartRunRequest{
+		Content:   "next",
+		InputMode: handler.InputQueue,
+		Mode:      pkgagent.ModeAutoApprove,
+		Config:    withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "next ok"}}}),
+	})
+	follow := f.waitRun(t, next, pkgagent.RunCompleted)
+	if follow.Status != pkgagent.RunCompleted {
+		t.Fatalf("follow-up status = %s reason=%v", follow.Status, follow.StopReason)
 	}
 }
 

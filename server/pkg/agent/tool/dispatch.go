@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -10,7 +11,8 @@ import (
 
 // Dispatch 按权限与审批策略调度工具调用。
 // 先整批复检；任一待批则整批不执行并返回 PendingCalls。
-// 通过后按串行或并行执行，失败策略为 fail_fast / collect_all / best_effort。
+// 通过后按串行或并行执行。业务失败只写入 Result，不返回 error。
+// fail_fast 表示不再执行后续调用，未执行的补失败 Result。
 func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 	if inv.Registry == nil {
 		return DispatchResult{}, fmt.Errorf("tool registry is required")
@@ -19,7 +21,7 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 		inv.Mode = ExecutionSerial
 	}
 	if inv.FailurePolicy == "" {
-		inv.FailurePolicy = FailureFast
+		inv.FailurePolicy = FailureBestEffort
 	}
 	if inv.MaxParallel <= 0 {
 		inv.MaxParallel = 1
@@ -36,7 +38,7 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 
 	prepared := make([]preparedCall, 0, len(inv.Calls))
 	var approvalCalls []Call
-	for _, call := range inv.Calls {
+	for i, call := range inv.Calls {
 		if _, ok := denied[call.ID]; ok {
 			prepared = append(prepared, preparedCall{
 				call:     call,
@@ -46,19 +48,16 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 			})
 			continue
 		}
-		item, result, wait, err := prepareCall(inv, call, approved)
-		if err != nil {
-			if inv.FailurePolicy == FailureFast {
-				return DispatchResult{Results: []Result{result}}, err
-			}
-			prepared = append(prepared, preparedCall{call: call, result: result, skip: true})
-			continue
-		}
+		item, wait := prepareCall(inv, call, approved)
 		if wait {
 			approvalCalls = append(approvalCalls, call)
 			continue
 		}
 		prepared = append(prepared, item)
+		if inv.FailurePolicy == FailureFast && item.skip && !item.result.Success && !item.softFail {
+			prepared = append(prepared, skippedRemaining(inv.Calls[i+1:])...)
+			break
+		}
 	}
 	if len(approvalCalls) > 0 {
 		emit(inv, "approval_required", approvalCalls[0], max(1, approvalCalls[0].Attempt), nil)
@@ -84,92 +83,90 @@ type preparedCall struct {
 }
 
 // prepareCall 查找工具并做参数、权限、审批校验；wait=true 表示需先审批。
-func prepareCall(inv Invocation, call Call, approved map[string]struct{}) (preparedCall, Result, bool, error) {
+// 查不到、参数错、权限不足都写成失败 Result，不返回 error。
+func prepareCall(inv Invocation, call Call, approved map[string]struct{}) (preparedCall, bool) {
 	emit(inv, "call_started", call, max(1, call.Attempt), nil)
 	item, err := inv.Registry.Get(Reference{Name: call.Name})
 	if err != nil {
-		result := failResult(call, err.Error())
-		return preparedCall{}, result, false, fmt.Errorf("%w: %s", errNonRetryable, err.Error())
+		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
 	}
 	def := item.Definition()
 	if err := validateArguments(def, call.Arguments); err != nil {
-		result := failResult(call, err.Error())
-		return preparedCall{}, result, false, err
+		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
 	}
 	if err := checkPermission(inv.PermissionPolicy, inv.AgentMode, def); err != nil {
-		result := failResult(call, err.Error())
-		return preparedCall{}, result, false, err
+		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
 	}
 	if requiresApproval(inv.AgentMode, inv.ApprovalPolicy, def, call.ID, approved) {
-		return preparedCall{}, Result{}, true, nil
+		return preparedCall{}, true
 	}
-	return preparedCall{call: call, tool: item}, Result{}, false, nil
+	return preparedCall{call: call, tool: item}, false
 }
 
-// runSerial 按调用顺序执行工具；fail_fast 遇错即停。
+// runSerial 按调用顺序执行工具；fail_fast 遇失败 Result 后不再跑后续调用。
 func runSerial(ctx context.Context, inv Invocation, items []preparedCall) (DispatchResult, error) {
 	results := make([]Result, 0, len(items))
-	for _, item := range items {
+	for i, item := range items {
 		if item.skip {
 			results = append(results, item.result)
 			if inv.FailurePolicy == FailureFast && !item.result.Success && !item.softFail {
-				return DispatchResult{Results: results}, fmt.Errorf("%s", item.result.Error)
+				return DispatchResult{Results: appendSkippedResults(results, items[i+1:])}, nil
 			}
 			continue
 		}
 		result, err := executeOne(ctx, inv, item)
 		results = append(results, result)
-		if err != nil && inv.FailurePolicy == FailureFast {
-			return DispatchResult{Results: results}, err
+		if isInterrupt(err) {
+			return DispatchResult{Results: appendSkippedResults(results, items[i+1:])}, err
+		}
+		if inv.FailurePolicy == FailureFast && !result.Success {
+			return DispatchResult{Results: appendSkippedResults(results, items[i+1:])}, nil
 		}
 	}
 	return DispatchResult{Results: results}, nil
 }
 
-// runParallel 在 MaxParallel 限制下并发执行；fail_fast 会取消其余任务。
+// runParallel 在 MaxParallel 限制下并发执行。业务失败只写入 Result；取消/超时才返回 error。
 func runParallel(ctx context.Context, inv Invocation, items []preparedCall) (DispatchResult, error) {
 	results := make([]Result, len(items))
 	group, ctx := withLimit(ctx, inv.MaxParallel)
-	var firstErr error
+	var interrupt error
 	var mu sync.Mutex
 	for i, item := range items {
 		i, item := i, item
 		group.go_(func() error {
 			if item.skip {
 				results[i] = item.result
-				if inv.FailurePolicy == FailureFast && !item.result.Success && !item.softFail {
-					return fmt.Errorf("%s", item.result.Error)
-				}
 				return nil
 			}
 			result, err := executeOne(ctx, inv, item)
 			results[i] = result
-			if err != nil {
+			if isInterrupt(err) {
 				mu.Lock()
-				if firstErr == nil {
-					firstErr = err
+				if interrupt == nil {
+					interrupt = err
 				}
 				mu.Unlock()
-				if inv.FailurePolicy == FailureFast {
-					return err
-				}
+				return err
 			}
 			return nil
 		})
 	}
-	err := group.wait()
-	if err != nil && inv.FailurePolicy == FailureFast {
-		return DispatchResult{Results: results}, err
+	_ = group.wait()
+	for i, item := range items {
+		if results[i].CallID == "" && results[i].Name == "" && results[i].Error == "" {
+			results[i] = failResult(item.call, "tool did not execute")
+		}
 	}
-	return DispatchResult{Results: results}, firstErr
+	return DispatchResult{Results: results}, interrupt
 }
 
-// executeOne 执行单个工具，按 SupportsRetry 与可重试错误做有限次退避重试。
+// executeOne 执行单个工具，按 SupportsRetry 做有限次退避重试。
+// 业务失败只返回 Result{Success:false}；error 仅表示取消或超时。
 func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result, error) {
 	def := item.tool.Definition()
 	attempt := max(1, item.call.Attempt)
 	var last Result
-	var lastErr error
 	for {
 		if err := ctx.Err(); err != nil {
 			return failResult(item.call, err.Error()), err
@@ -185,22 +182,32 @@ func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result,
 		if result.Name == "" {
 			result.Name = item.call.Name
 		}
-		last = result
-		lastErr = err
-		if err == nil && result.Success {
-			emit(inv, "execution_result", item.call, attempt, &result)
-			return result, nil
-		}
-		if err == nil && !result.Success {
-			lastErr = fmt.Errorf("%s", result.Error)
-		}
-		if !def.SupportsRetry || !retryableTool(lastErr) || attempt >= maxAttempts(inv) {
-			if last.Error == "" && lastErr != nil {
-				last.Error = lastErr.Error()
+		if isInterrupt(err) {
+			if result.Error == "" {
+				result.Error = err.Error()
 			}
-			last.Success = false
+			result.Success = false
+			emit(inv, "execution_result", item.call, attempt, &result)
+			return result, err
+		}
+		if err != nil {
+			result.Success = false
+			if result.Error == "" {
+				result.Error = err.Error()
+			}
+		}
+		last = result
+		if last.Success {
 			emit(inv, "execution_result", item.call, attempt, &last)
-			return last, lastErr
+			return last, nil
+		}
+		retryErr := fmt.Errorf("%s", last.Error)
+		if last.Error == "" {
+			retryErr = fmt.Errorf("tool failed")
+		}
+		if !def.SupportsRetry || !retryableTool(retryErr) || attempt >= maxAttempts(inv) {
+			emit(inv, "execution_result", item.call, attempt, &last)
+			return last, nil
 		}
 		attempt++
 		item.call.Attempt = attempt
@@ -218,15 +225,43 @@ func maxAttempts(inv Invocation) int {
 	return 3
 }
 
-// retryableTool 判断工具错误是否可重试；取消与超时不重试。
+// retryableTool 判断失败结果是否可重试；取消与超时不重试。
 func retryableTool(err error) bool {
 	if err == nil {
 		return false
 	}
-	if err == context.Canceled || err == context.DeadlineExceeded {
+	if isInterrupt(err) {
 		return false
 	}
 	return true
+}
+
+func isInterrupt(err error) bool {
+	return err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded))
+}
+
+func skippedRemaining(calls []Call) []preparedCall {
+	out := make([]preparedCall, 0, len(calls))
+	for _, call := range calls {
+		out = append(out, preparedCall{
+			call:     call,
+			result:   failResult(call, "tool did not execute"),
+			skip:     true,
+			softFail: true,
+		})
+	}
+	return out
+}
+
+func appendSkippedResults(results []Result, rest []preparedCall) []Result {
+	for _, item := range rest {
+		if item.skip {
+			results = append(results, item.result)
+			continue
+		}
+		results = append(results, failResult(item.call, "tool did not execute"))
+	}
+	return results
 }
 
 // validateArguments 检查参数是否为对象，并补齐 schema 声明的 required 字段。
@@ -310,7 +345,6 @@ func max(a, b int) int {
 }
 
 var (
-	errNonRetryable     = fmt.Errorf("non-retryable")
 	errPermissionDenied = fmt.Errorf("permission denied")
 	errInvalidArguments = fmt.Errorf("invalid arguments")
 )

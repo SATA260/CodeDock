@@ -83,7 +83,7 @@ func DefaultRunConfig(mode AgentMode, model ModelConfig) RunConfigSnapshot {
 			MaxParallelTools: 4,
 		},
 		ToolExecutionMode: tool.ExecutionSerial,
-		ToolFailurePolicy: tool.FailureFast,
+		ToolFailurePolicy: tool.FailureBestEffort,
 		Profile: profile.Config{
 			ID:      "default",
 			Version: "1",
