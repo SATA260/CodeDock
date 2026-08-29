@@ -13,6 +13,32 @@ import (
 	"codedock/pkg/db/sqlite"
 )
 
+type ListEventsResponse struct {
+	Events []pkgagent.AgentEvent `json:"events"`
+}
+
+// ListEvents 按 seq 回放已落库事件，供客户端一次 hydrate。
+func (a *API) ListEvents(w http.ResponseWriter, r *http.Request) {
+	session, err := a.loadSession(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	rows, err := a.q(r.Context()).ListSessionEventsAfter(r.Context(), sqlite.ListSessionEventsAfterParams{
+		SessionID: session.ID,
+		Seq:       parseAfterSeq(r),
+	})
+	if err != nil {
+		writeError(w, wrapHandlerDB(err))
+		return
+	}
+	events := make([]pkgagent.AgentEvent, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, mapEvent(row))
+	}
+	writeJSON(w, http.StatusOK, ListEventsResponse{Events: events})
+}
+
 // SubscribeEvents 先回放持久化事件，再订阅进程内总线。
 // 用 after / Last-Event-ID 定位；直播帧按 seq 去重。客户端断开不取消 Run。
 func (a *API) SubscribeEvents(w http.ResponseWriter, r *http.Request) {

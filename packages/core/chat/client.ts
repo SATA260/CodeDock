@@ -1,4 +1,5 @@
 import type {
+  AgentEvent,
   AgentMode,
   Approval,
   CreateSessionRequest,
@@ -72,7 +73,7 @@ export class AgentClient {
     return body.session;
   }
 
-  async listMessages(sessionId: string): Promise<Message[]> {
+  async listMessages(sessionId: string, signal?: AbortSignal): Promise<Message[]> {
     const messages: Message[] = [];
     let page = 1;
     let total = Number.POSITIVE_INFINITY;
@@ -85,6 +86,7 @@ export class AgentClient {
       });
       const body = await this.request<{ messages: Message[] } & PageInfo>(
         `/sessions/${sessionId}/messages?${query}`,
+        { signal },
       );
       messages.push(...(body.messages ?? []));
       total = body.total ?? messages.length;
@@ -94,6 +96,15 @@ export class AgentClient {
       page += 1;
     }
     return messages;
+  }
+
+  async listEvents(sessionId: string, after = 0, signal?: AbortSignal): Promise<AgentEvent[]> {
+    const query = new URLSearchParams({ after: String(after) });
+    const body = await this.request<{ events: AgentEvent[] }>(
+      `/sessions/${sessionId}/event-log?${query}`,
+      { signal },
+    );
+    return body.events ?? [];
   }
 
   async startRun(sessionId: string, req: StartRunRequest): Promise<StartRunResponse> {

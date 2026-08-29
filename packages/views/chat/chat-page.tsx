@@ -15,9 +15,15 @@ export type ChatPageProps = {
   sessionId?: string;
   onOpenSession: (id: string) => void;
   onNewConversation: () => void;
+  brandSrc?: string;
 };
 
-export function ChatPage({ sessionId, onOpenSession, onNewConversation }: ChatPageProps) {
+export function ChatPage({
+  sessionId,
+  onOpenSession,
+  onNewConversation,
+  brandSrc,
+}: ChatPageProps) {
   const { client } = useAgent();
   const list = useSessionList();
   const timeline = useSessionTimeline(sessionId);
@@ -59,6 +65,7 @@ export function ChatPage({ sessionId, onOpenSession, onNewConversation }: ChatPa
         error={list.error}
         onCreate={onNewConversation}
         onSelect={onOpenSession}
+        brandSrc={brandSrc}
       />
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 items-center border-b border-border px-4 text-sm text-muted-foreground">
@@ -69,7 +76,11 @@ export function ChatPage({ sessionId, onOpenSession, onNewConversation }: ChatPa
             {timeline.error ?? composerError}
           </div>
         ) : null}
-        <ConversationTimeline state={timeline.state} />
+        <ConversationTimeline
+          state={timeline.state}
+          loading={timeline.loading}
+          scrollKey={sessionId}
+        />
         <ApprovalDock item={pendingApproval} onDecide={timeline.decide} />
         <PromptBar
           running={timeline.running}

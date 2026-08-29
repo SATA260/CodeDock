@@ -3,7 +3,7 @@
 import { ArrowDownIcon, MessageSquare } from "lucide-react";
 import {
   useCallback,
-  useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type HTMLAttributes,
@@ -24,11 +24,18 @@ export function Conversation({ className, children, ...props }: HTMLAttributes<H
 export function ConversationContent({
   className,
   children,
+  scrollKey,
   ...props
-}: HTMLAttributes<HTMLDivElement>) {
+}: HTMLAttributes<HTMLDivElement> & { scrollKey?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
+  const seenKey = useRef(scrollKey);
   const [showJump, setShowJump] = useState(false);
+
+  if (seenKey.current !== scrollKey) {
+    seenKey.current = scrollKey;
+    nearBottom.current = true;
+  }
 
   const onScroll = useCallback(() => {
     const el = ref.current;
@@ -40,10 +47,13 @@ export function ConversationContent({
     setShowJump(!nearBottom.current);
   }, []);
 
-  useEffect(() => {
-    if (nearBottom.current) {
-      ref.current?.scrollTo({ top: ref.current.scrollHeight });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !nearBottom.current) {
+      return;
     }
+    el.scrollTop = el.scrollHeight;
+    setShowJump(false);
   });
 
   return (

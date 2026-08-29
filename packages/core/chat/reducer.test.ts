@@ -90,6 +90,93 @@ test("hydrate fills user text from messages and folds events in order", () => {
   assert.deepEqual(kinds(state.items), ["user", "assistant", "terminal"]);
 });
 
+test("hydrate interleaves turns instead of grouping users then assistants", () => {
+  const messages: Message[] = [
+    {
+      id: "m1",
+      session_id: "s1",
+      run_id: "r1",
+      role: "user",
+      content: { text: "first" },
+      event_seq: 1,
+      created_at: "2026-01-01T00:00:00Z",
+    },
+    {
+      id: "m2",
+      session_id: "s1",
+      run_id: "r2",
+      role: "user",
+      content: { text: "second" },
+      event_seq: 10,
+      created_at: "2026-01-01T00:01:00Z",
+    },
+  ];
+  const events: AgentEvent[] = [
+    ev({
+      seq: 2,
+      run_id: "r1",
+      type: "run.created",
+      payload: { trigger_message_id: "m1", mode: "yolo", status: "queued" },
+    }),
+    ev({
+      seq: 3,
+      run_id: "r1",
+      type: "assistant.started",
+      payload: { message_id: "a1" },
+    }),
+    ev({
+      seq: 4,
+      run_id: "r1",
+      type: "assistant.completed",
+      payload: { message_id: "a1", text: "reply1" },
+    }),
+    ev({
+      seq: 5,
+      run_id: "r1",
+      type: "run.completed",
+      payload: { status: "completed" },
+    }),
+    ev({
+      seq: 11,
+      run_id: "r2",
+      type: "run.created",
+      payload: { trigger_message_id: "m2", mode: "yolo", status: "queued" },
+    }),
+    ev({
+      seq: 12,
+      run_id: "r2",
+      type: "assistant.started",
+      payload: { message_id: "a2" },
+    }),
+    ev({
+      seq: 13,
+      run_id: "r2",
+      type: "assistant.completed",
+      payload: { message_id: "a2", text: "reply2" },
+    }),
+    ev({
+      seq: 14,
+      run_id: "r2",
+      type: "run.completed",
+      payload: { status: "completed" },
+    }),
+  ];
+
+  const state = hydrate(messages, events);
+  const spoken = state.items
+    .filter((item) => item.kind === "user" || item.kind === "assistant")
+    .map((item) => (item.kind === "user" || item.kind === "assistant" ? item.text : ""));
+  assert.deepEqual(spoken, ["first", "reply1", "second", "reply2"]);
+  assert.deepEqual(kinds(state.items), [
+    "user",
+    "assistant",
+    "terminal",
+    "user",
+    "assistant",
+    "terminal",
+  ]);
+});
+
 test("applyEvent skips duplicate seq on reconnect", () => {
   let state = emptyState();
   const created = ev({

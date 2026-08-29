@@ -42,16 +42,6 @@ export function indexMessages(messages: Message[]): Record<string, Message> {
 
 export function hydrate(messages: Message[], events: AgentEvent[]): SessionState {
   let state = emptyState(indexMessages(messages));
-  for (const message of messages) {
-    if (message.role === "user") {
-      state = upsertUser(state, {
-        messageId: message.id,
-        runId: message.run_id ?? "",
-        text: decodeText(message.content),
-        seq: message.event_seq,
-      });
-    }
-  }
   for (const event of events) {
     state = applyEvent(state, event);
   }

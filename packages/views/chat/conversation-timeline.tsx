@@ -24,7 +24,15 @@ const thinkingCopy: Record<ThinkingPhase, string> = {
   running_llm: "正在思考",
 };
 
-export function ConversationTimeline({ state }: { state: SessionState }) {
+export function ConversationTimeline({
+  state,
+  loading = false,
+  scrollKey,
+}: {
+  state: SessionState;
+  loading?: boolean;
+  scrollKey?: string;
+}) {
   const items = state.items.filter(
     (item) =>
       !(item.kind === "approval" && item.status === "pending") &&
@@ -32,6 +40,13 @@ export function ConversationTimeline({ state }: { state: SessionState }) {
       !(item.kind === "assistant" && !item.text.trim() && !item.streaming),
   );
   if (items.length === 0) {
+    if (loading) {
+      return (
+        <Conversation>
+          <ConversationContent scrollKey={scrollKey} />
+        </Conversation>
+      );
+    }
     return (
       <Conversation>
         <ConversationEmptyState />
@@ -40,7 +55,7 @@ export function ConversationTimeline({ state }: { state: SessionState }) {
   }
   return (
     <Conversation>
-      <ConversationContent>
+      <ConversationContent scrollKey={scrollKey}>
         {items.map((item) => (
           <TimelineRow key={item.id} item={item} />
         ))}

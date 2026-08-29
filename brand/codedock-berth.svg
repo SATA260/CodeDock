@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="CodeDock">
+  <rect width="1024" height="1024" fill="#09090b"/>
+  <g fill="#f4f4f5" transform="translate(192 192) scale(20)">
+    <path d="M6 4h13a4 4 0 0 1 4 4v2.25h-6.25V9.25H8.75v13.5h8V21.5H23V24a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4z"/>
+    <rect x="15.25" y="11.25" width="14.5" height="9.5" rx="2"/>
+  </g>
+</svg>

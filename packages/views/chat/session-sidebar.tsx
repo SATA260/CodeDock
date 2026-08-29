@@ -13,6 +13,7 @@ export function SessionSidebar({
   error,
   onCreate,
   onSelect,
+  brandSrc,
 }: {
   sessions: Session[];
   currentId?: string;
@@ -20,11 +21,17 @@ export function SessionSidebar({
   error: string | null;
   onCreate: () => void;
   onSelect: (id: string) => void;
+  brandSrc?: string;
 }) {
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-background">
-      <div className="flex items-center justify-between px-3 py-3">
-        <div className="text-sm font-semibold tracking-tight">CodeDock</div>
+      <div className="flex items-center justify-between gap-2 px-3 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          {brandSrc ? (
+            <img src={brandSrc} alt="" className="size-6 shrink-0" />
+          ) : null}
+          <div className="truncate text-sm font-semibold tracking-tight">CodeDock</div>
+        </div>
         <Button size="sm" variant="secondary" disabled={busy} onClick={onCreate}>
           <PlusIcon className="size-3.5" />
           新对话
