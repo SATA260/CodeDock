@@ -14,13 +14,14 @@ const workerQueueSize = 64
 
 // Worker 用 channel 接收 Run，并用 goroutine 执行。
 type Worker struct {
-	runtime *Runtime
-	jobs    chan string
-	mu      sync.Mutex
-	cancels map[string]context.CancelFunc
-	done    map[string]chan struct{}
-	skipped map[string]struct{}
-	queued  map[string]struct{}
+	runtime   *Runtime
+	jobs      chan string
+	mu        sync.Mutex
+	cancels   map[string]context.CancelFunc
+	done      map[string]chan struct{}
+	skipped   map[string]struct{}
+	queued    map[string]struct{}
+	submitErr error
 }
 
 // NewWorker 创建 Worker。
@@ -49,12 +50,27 @@ func (w *Worker) Start(ctx context.Context) {
 	}()
 }
 
+// InjectSubmitError 让下一次 Submit 返回 err，之后恢复正常。测试用来模拟排队失败。
+func (w *Worker) InjectSubmitError(err error) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.submitErr = err
+	w.mu.Unlock()
+}
+
 // Submit 提交 Run ID。已在执行或排队中则去重；缓冲满时立即返回错误。
 func (w *Worker) Submit(_ context.Context, runID string) error {
 	if w == nil || runID == "" {
 		return cderr.Invalid("run id is required")
 	}
 	w.mu.Lock()
+	if err := w.submitErr; err != nil {
+		w.submitErr = nil
+		w.mu.Unlock()
+		return err
+	}
 	if _, running := w.cancels[runID]; running {
 		w.mu.Unlock()
 		return nil

@@ -315,14 +315,20 @@ func (a *API) cancelInTx(ctx context.Context, run pkgagent.Run) error {
 	return err
 }
 
-// continueRun 把可恢复 Run 重新交给 Worker；waiting_approval 必须先审批。
+// continueRun 把可恢复 Run 重新交给 Worker；未裁定的 waiting_approval 拒绝，审完待领取的允许补投。
 func (a *API) continueRun(ctx context.Context, runID string) error {
 	run, err := a.runtime.GetRun(ctx, runID)
 	if err != nil {
 		return err
 	}
 	if run.Status == pkgagent.RunWaitingApproval {
-		return cderr.Conflict("run is waiting for approval")
+		decided, err := a.runtime.HasRecordedToolDecisions(ctx, runID)
+		if err != nil {
+			return err
+		}
+		if !decided {
+			return cderr.Conflict("run is waiting for approval")
+		}
 	}
 	if pkgagent.IsTerminal(run.Status) && run.Status != pkgagent.RunFailed && run.Status != pkgagent.RunCancelled {
 		return cderr.Conflict("run is already complete")

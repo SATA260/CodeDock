@@ -344,6 +344,15 @@ type toolCheckpoint struct {
 	Results   []tool.Result
 }
 
+// HasRecordedToolDecisions 表示 checkpoint 已写入批准或拒绝，审完待领取。
+func (r *Runtime) HasRecordedToolDecisions(ctx context.Context, runID string) (bool, error) {
+	cp, ok, err := r.loadToolCheckpoint(ctx, runID)
+	if err != nil || !ok {
+		return false, err
+	}
+	return len(cp.Approved) > 0 || len(cp.Denied) > 0, nil
+}
+
 // RecordToolDecisions 把一批审批裁决写入 checkpoint，恢复时不再猜测。
 func (r *Runtime) RecordToolDecisions(ctx context.Context, runID string, approved, denied []string) error {
 	cp, ok, err := r.loadToolCheckpoint(ctx, runID)

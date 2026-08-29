@@ -124,7 +124,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。
 - 调用 `pkg.Load` / `CompactIfNeeded` / `Build` / `Stream` / `Dispatch`
 - 同事务递增 `sessions.last_event_seq` 并插入 `AgentEvent`，提交后再 `Bus.Publish`
 - `Transition` 消费模型流，把增量先落库再发到事件总线
-- Worker 用带缓冲 channel 领取 Run；启动时恢复非 `waiting_approval` 且 lease 空/过期的 Run
+- Worker 用带缓冲 channel 领取 Run；启动时恢复非 `waiting_approval`、以及 checkpoint 已写入裁决的 `waiting_approval`
 - 一次模型回复里的待批 Tool 合成一条审批；前端一次提交对每条批/拒，全部裁定后才从 `waiting_approval` 恢复。被拒的当工具失败结果喂回模型，不打死 Run。checkpoint 分开记录已执行 / 已批准 / 已拒绝
 
 不实现提示词、压缩算法或模型适配。

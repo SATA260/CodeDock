@@ -19,6 +19,7 @@ import (
 	"codedock/internal/agent"
 	"codedock/internal/agent/memory"
 	agenttools "codedock/internal/agent/tools"
+	cderr "codedock/internal/errors"
 	"codedock/internal/events"
 	"codedock/internal/handler"
 	pkgagent "codedock/pkg/agent"
@@ -146,6 +147,48 @@ func testRouter(api *handler.API) http.Handler {
 	r.Get("/memories/{scope}/{scope_id}", api.GetTextMemory)
 	r.Delete("/memories/{scope}/{scope_id}", api.DeleteTextMemory)
 	return r
+}
+
+func (f *fixture) startAskPing(t *testing.T) (sessionID, runID string, approval pkgagent.Approval) {
+	t.Helper()
+	sessionID = f.createSession(t)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{})
+	runID = f.start(t, sessionID, handler.StartRunRequest{
+		Content: "need ping",
+		Mode:    pkgagent.ModeAskForApproval,
+		Config: withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{
+			{ToolCalls: []pkgagent.FakeToolCall{{Name: "ping", Arguments: json.RawMessage(`{}`)}}},
+			{Text: "approved"},
+		}}),
+	})
+	f.waitRun(t, runID, pkgagent.RunWaitingApproval)
+	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/approvals", nil)
+	var listed handler.ListApprovalsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Approvals) == 0 {
+		t.Fatal("expected approval")
+	}
+	return sessionID, runID, listed.Approvals[0]
+}
+
+func (f *fixture) countEventType(t *testing.T, sessionID string, typ pkgagent.EventType) int {
+	t.Helper()
+	rows, err := f.queries.ListSessionEventsAfter(context.Background(), sqlite.ListSessionEventsAfterParams{
+		SessionID: sessionID,
+		Seq:       0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, row := range rows {
+		if row.Type == string(typ) {
+			n++
+		}
+	}
+	return n
 }
 
 func decideAll(approval pkgagent.Approval, status pkgagent.ApprovalStatus) handler.DecideApprovalRequest {
@@ -476,6 +519,140 @@ func TestApprovalMixedDecisions(t *testing.T) {
 		t.Fatalf("decide %d %s", dec.Code, dec.Body.String())
 	}
 	if got := f.waitRun(t, runID, pkgagent.RunCompleted); got.Status != pkgagent.RunCompleted {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+// TestApprovalDecideRollbackKeepsPending 验收裁决事务失败时审批保持 pending，补回 checkpoint 后可重试。
+func TestApprovalDecideRollbackKeepsPending(t *testing.T) {
+	f := newFixture(t)
+	sessionID, runID, approval := f.startAskPing(t)
+	ctx := context.Background()
+	cp, err := f.queries.GetRunToolCheckpoint(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.queries.DeleteRunToolCheckpoint(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	dec := f.do(t, http.MethodPost, "/approvals/"+approval.ID+"/decision", decideAll(approval, pkgagent.ApprovalApproved))
+	if dec.Code != http.StatusNotFound {
+		t.Fatalf("decide %d %s", dec.Code, dec.Body.String())
+	}
+	got := f.do(t, http.MethodGet, "/approvals/"+approval.ID, nil)
+	var resp handler.ApprovalResponse
+	if err := json.Unmarshal(got.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Approval.Status != pkgagent.ApprovalPending {
+		t.Fatalf("status = %s", resp.Approval.Status)
+	}
+	if n := f.countEventType(t, sessionID, pkgagent.EventApprovalDecided); n != 0 {
+		t.Fatalf("approval_decided events = %d", n)
+	}
+	if _, err := f.queries.UpsertRunToolCheckpoint(ctx, sqlite.UpsertRunToolCheckpointParams{
+		RunID:          cp.RunID,
+		TurnID:         cp.TurnID,
+		CompletedCalls: cp.CompletedCalls,
+		PendingCalls:   cp.PendingCalls,
+		Results:        cp.Results,
+		ApprovedCalls:  cp.ApprovedCalls,
+		DeniedCalls:    cp.DeniedCalls,
+		UpdatedAt:      cp.UpdatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dec = f.do(t, http.MethodPost, "/approvals/"+approval.ID+"/decision", decideAll(approval, pkgagent.ApprovalApproved))
+	if dec.Code != http.StatusOK {
+		t.Fatalf("retry decide %d %s", dec.Code, dec.Body.String())
+	}
+	if got := f.waitRun(t, runID, pkgagent.RunCompleted); got.Status != pkgagent.RunCompleted {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+// TestApprovalDecideIdempotentResubmit 验收 Submit 失败后同一 decision 可补投且不重写事件。
+func TestApprovalDecideIdempotentResubmit(t *testing.T) {
+	f := newFixture(t)
+	sessionID, runID, approval := f.startAskPing(t)
+	f.runtime.Worker().InjectSubmitError(cderr.Unavailable("worker queue full"))
+	dec := f.do(t, http.MethodPost, "/approvals/"+approval.ID+"/decision", decideAll(approval, pkgagent.ApprovalApproved))
+	if dec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("decide %d %s", dec.Code, dec.Body.String())
+	}
+	got := f.do(t, http.MethodGet, "/approvals/"+approval.ID, nil)
+	var resp handler.ApprovalResponse
+	if err := json.Unmarshal(got.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Approval.Status != pkgagent.ApprovalApproved {
+		t.Fatalf("status = %s", resp.Approval.Status)
+	}
+	if run := f.waitRun(t, runID, pkgagent.RunWaitingApproval); run.Status != pkgagent.RunWaitingApproval {
+		t.Fatalf("run status = %s", run.Status)
+	}
+	if n := f.countEventType(t, sessionID, pkgagent.EventApprovalDecided); n != 1 {
+		t.Fatalf("approval_decided events = %d", n)
+	}
+	dec = f.do(t, http.MethodPost, "/approvals/"+approval.ID+"/decision", decideAll(approval, pkgagent.ApprovalApproved))
+	if dec.Code != http.StatusOK {
+		t.Fatalf("retry decide %d %s", dec.Code, dec.Body.String())
+	}
+	if n := f.countEventType(t, sessionID, pkgagent.EventApprovalDecided); n != 1 {
+		t.Fatalf("approval_decided events after retry = %d", n)
+	}
+	if got := f.waitRun(t, runID, pkgagent.RunCompleted); got.Status != pkgagent.RunCompleted {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+// TestContinueRunAfterApprovalPersisted 验收审完待领取时 Continue 可补投；未审完仍 409。
+func TestContinueRunAfterApprovalPersisted(t *testing.T) {
+	f := newFixture(t)
+	_, runID, approval := f.startAskPing(t)
+	pending := f.do(t, http.MethodPost, "/runs/"+runID+"/continue", nil)
+	if pending.Code != http.StatusConflict {
+		t.Fatalf("continue pending %d %s", pending.Code, pending.Body.String())
+	}
+	f.runtime.Worker().InjectSubmitError(cderr.Unavailable("worker queue full"))
+	dec := f.do(t, http.MethodPost, "/approvals/"+approval.ID+"/decision", decideAll(approval, pkgagent.ApprovalApproved))
+	if dec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("decide %d %s", dec.Code, dec.Body.String())
+	}
+	cont := f.do(t, http.MethodPost, "/runs/"+runID+"/continue", nil)
+	if cont.Code != http.StatusOK {
+		t.Fatalf("continue decided %d %s", cont.Code, cont.Body.String())
+	}
+	if got := f.waitRun(t, runID, pkgagent.RunCompleted); got.Status != pkgagent.RunCompleted {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+// TestRecoverDecidedWaitingApproval 验收进程重启会补领已写入裁决的 waiting_approval。
+func TestRecoverDecidedWaitingApproval(t *testing.T) {
+	f := newFixture(t)
+	_, runID, approval := f.startAskPing(t)
+	f.runtime.Worker().InjectSubmitError(cderr.Unavailable("worker queue full"))
+	dec := f.do(t, http.MethodPost, "/approvals/"+approval.ID+"/decision", decideAll(approval, pkgagent.ApprovalApproved))
+	if dec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("decide %d %s", dec.Code, dec.Body.String())
+	}
+	if run := f.waitRun(t, runID, pkgagent.RunWaitingApproval); run.Status != pkgagent.RunWaitingApproval {
+		t.Fatalf("run status = %s", run.Status)
+	}
+	f.runtime.Start(context.Background())
+	if got := f.waitRun(t, runID, pkgagent.RunCompleted); got.Status != pkgagent.RunCompleted {
+		t.Fatalf("status = %s", got.Status)
+	}
+}
+
+// TestRecoverPendingWaitingApproval 验收未裁定的 waiting_approval 重启后不自动恢复。
+func TestRecoverPendingWaitingApproval(t *testing.T) {
+	f := newFixture(t)
+	_, runID, _ := f.startAskPing(t)
+	f.runtime.Start(context.Background())
+	time.Sleep(80 * time.Millisecond)
+	if got := f.waitRun(t, runID, pkgagent.RunWaitingApproval); got.Status != pkgagent.RunWaitingApproval {
 		t.Fatalf("status = %s", got.Status)
 	}
 }

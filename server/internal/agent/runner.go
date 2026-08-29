@@ -91,7 +91,7 @@ func (r *Runtime) Tools() tool.Registry {
 	return r.tools
 }
 
-// Start 启动 Worker 并恢复可继续的 Run。waiting_approval 不会自动恢复。
+// Start 启动 Worker 并恢复可继续的 Run。未裁定的 waiting_approval 不自动恢复；checkpoint 已有裁决的会补领。
 func (r *Runtime) Start(ctx context.Context) {
 	if r.worker != nil {
 		r.worker.Start(ctx)
@@ -103,6 +103,21 @@ func (r *Runtime) Start(ctx context.Context) {
 	if err != nil {
 		r.logger().Error("list recoverable runs failed", "error", err)
 		return
+	}
+	waiting, err := r.q(ctx).ListWaitingApprovalRuns(ctx)
+	if err != nil {
+		r.logger().Error("list waiting approval runs failed", "error", err)
+	} else {
+		for _, row := range waiting {
+			decided, err := r.HasRecordedToolDecisions(ctx, row.ID)
+			if err != nil {
+				r.logger().Error("check approval checkpoint failed", "run_id", row.ID, "error", err)
+				continue
+			}
+			if decided {
+				rows = append(rows, row)
+			}
+		}
 	}
 	r.logger().Info("recovering runs", "count", len(rows))
 	for _, row := range rows {
@@ -400,12 +415,12 @@ func (r *Runtime) runTools(ctx context.Context, run pkgagent.Run, turn pkgagent.
 			})
 		}
 		approval, aerr := r.insertApproval(ctx, pkgagent.Approval{
-			SessionID:  run.SessionID,
-			RunID:      run.ID,
-			ToolCalls:  items,
-			Scope:      pkgagent.ApprovalOnce,
-			Status:     pkgagent.ApprovalPending,
-			ExpiresAt:  util.Now().Add(run.Config.ApprovalPolicy.DefaultExpiry),
+			SessionID: run.SessionID,
+			RunID:     run.ID,
+			ToolCalls: items,
+			Scope:     pkgagent.ApprovalOnce,
+			Status:    pkgagent.ApprovalPending,
+			ExpiresAt: util.Now().Add(run.Config.ApprovalPolicy.DefaultExpiry),
 		})
 		if aerr != nil {
 			return false, aerr
@@ -561,7 +576,7 @@ func (r *Runtime) loadSnapshot(ctx context.Context, run pkgagent.Run, turn pkgag
 			run.Config.Profile.Tools.Names,
 			tool.ModeCapabilities(string(run.Mode)),
 		),
-		Prompt:     run.Config.Profile.Prompt.Inline,
+		Prompt: run.Config.Profile.Prompt.Inline,
 	})
 	if err != nil {
 		return pkgagent.ContextSnapshot{}, err
