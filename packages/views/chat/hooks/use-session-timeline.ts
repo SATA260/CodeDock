@@ -54,7 +54,12 @@ export function useSessionTimeline(sessionId: string | undefined) {
   );
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [loading, setLoading] = useState(() => Boolean(sessionId) && !timelineCache.has(sessionId));
+  const [loading, setLoading] = useState(() => {
+    if (!sessionId) {
+      return false;
+    }
+    return !timelineCache.has(sessionId);
+  });
   const stateRef = useRef(state);
   const sessionRef = useRef(sessionId);
   stateRef.current = state;

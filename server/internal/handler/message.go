@@ -10,9 +10,9 @@ import (
 )
 
 type CreateMessageRequest struct {
-	Content   string                     `json:"content"`
-	InputMode InputMode                  `json:"input_mode"`
-	Mode      pkgagent.AgentMode         `json:"mode"`
+	Content   string                      `json:"content"`
+	InputMode InputMode                   `json:"input_mode"`
+	Mode      pkgagent.AgentMode          `json:"mode"`
 	Config    *pkgagent.RunConfigSnapshot `json:"config,omitempty"`
 }
 
