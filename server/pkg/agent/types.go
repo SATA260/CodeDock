@@ -123,147 +123,148 @@ const (
 
 // ModelConfig 冻结 Run 使用的供应商无关模型配置。
 type ModelConfig struct {
-	Provider string
-	Model    string
-	Options  json.RawMessage // 供应商特有参数，核心运行时不解析
+	Provider string          `json:"provider"`
+	Model    string          `json:"model"`
+	Options  json.RawMessage `json:"options,omitempty"` // 供应商特有参数，核心运行时不解析
 }
 
 // RetryConfig 配置一类可独立重试的操作。
 type RetryConfig struct {
-	MaxAttempts    int
-	InitialBackoff time.Duration
-	MaxBackoff     time.Duration
-	Multiplier     float64
-	Jitter         float64
+	MaxAttempts    int           `json:"max_attempts"`
+	InitialBackoff time.Duration `json:"initial_backoff"`
+	MaxBackoff     time.Duration `json:"max_backoff"`
+	Multiplier     float64       `json:"multiplier"`
+	Jitter         float64       `json:"jitter"`
 }
 
 // RetryPolicy 分别冻结上下文、模型和工具的重试设置。
 type RetryPolicy struct {
-	Context RetryConfig
-	Model   RetryConfig
-	Tool    RetryConfig
+	Context RetryConfig `json:"context"`
+	Model   RetryConfig `json:"model"`
+	Tool    RetryConfig `json:"tool"`
 }
 
 // RunLimits 是一次 Run 的不可变执行预算。
 type RunLimits struct {
-	MaxWallTime      time.Duration
-	MaxTurns         int
-	MaxToolCalls     int
-	MaxInputTokens   int64
-	MaxOutputTokens  int64
-	MaxParallelTools int
+	MaxWallTime      time.Duration `json:"max_wall_time"`
+	MaxTurns         int           `json:"max_turns"`
+	MaxToolCalls     int           `json:"max_tool_calls"`
+	MaxInputTokens   int64         `json:"max_input_tokens"`
+	MaxOutputTokens  int64         `json:"max_output_tokens"`
+	MaxParallelTools int           `json:"max_parallel_tools"`
 }
 
 // RunConfigSnapshot 是 Run 启动时保存的不可变配置。
 type RunConfigSnapshot struct {
-	Mode              AgentMode
-	SystemPromptHash  string
-	Model             ModelConfig
-	ToolSetVersion    string
-	PermissionPolicy  tool.PermissionPolicy
-	ApprovalPolicy    tool.ApprovalPolicy
-	RetryPolicy       RetryPolicy
-	Limits            RunLimits
-	ToolExecutionMode tool.ExecutionMode
-	ToolFailurePolicy tool.FailurePolicy
-	Profile           profile.Config
+	Mode              AgentMode             `json:"mode"`
+	SystemPromptHash  string                `json:"system_prompt_hash"`
+	Model             ModelConfig           `json:"model"`
+	ToolSetVersion    string                `json:"tool_set_version"`
+	PermissionPolicy  tool.PermissionPolicy `json:"permission_policy"`
+	ApprovalPolicy    tool.ApprovalPolicy   `json:"approval_policy"`
+	RetryPolicy       RetryPolicy           `json:"retry_policy"`
+	Limits            RunLimits             `json:"limits"`
+	ToolExecutionMode tool.ExecutionMode    `json:"tool_execution_mode"`
+	ToolFailurePolicy tool.FailurePolicy    `json:"tool_failure_policy"`
+	Profile           profile.Config        `json:"profile"`
 }
 
 // Session 是长期存在的对话容器。
 type Session struct {
-	ID            string
-	TenantID      string
-	UserID        string
-	AgentID       string
-	WorkspaceID   string
-	Status        SessionStatus
-	ActiveRunID   *string
-	LastEventSeq  int64
-	CompactionSeq int64
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID            string        `json:"id"`
+	TenantID      string        `json:"tenant_id"`
+	UserID        string        `json:"user_id"`
+	AgentID       string        `json:"agent_id"`
+	WorkspaceID   string        `json:"workspace_id"`
+	Status        SessionStatus `json:"status"`
+	ActiveRunID   *string       `json:"active_run_id,omitempty"`
+	LastEventSeq  int64         `json:"last_event_seq"`
+	CompactionSeq int64         `json:"compaction_seq"`
+	Summary       string        `json:"summary"`
+	CreatedAt     time.Time     `json:"created_at"`
+	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
 // Run 是 Session 内由用户触发的一次 Agent 执行。
 type Run struct {
-	ID               string
-	SessionID        string
-	TriggerMessageID string
-	Mode             AgentMode
-	Config           RunConfigSnapshot
-	Status           RunStatus
-	CurrentTurnID    *string
-	StopReason       *StopReason
-	CancelRequested  bool
-	StartedAt        *time.Time
-	FinishedAt       *time.Time
+	ID               string            `json:"id"`
+	SessionID        string            `json:"session_id"`
+	TriggerMessageID string            `json:"trigger_message_id"`
+	Mode             AgentMode         `json:"mode"`
+	Config           RunConfigSnapshot `json:"config"`
+	Status           RunStatus         `json:"status"`
+	CurrentTurnID    *string           `json:"current_turn_id,omitempty"`
+	StopReason       *StopReason       `json:"stop_reason,omitempty"`
+	CancelRequested  bool              `json:"cancel_requested"`
+	StartedAt        *time.Time        `json:"started_at,omitempty"`
+	FinishedAt       *time.Time        `json:"finished_at,omitempty"`
 }
 
 // Turn 是 Run 内的一次模型调用。
 type Turn struct {
-	ID             string
-	RunID          string
-	Number         int
-	Status         TurnStatus
-	FirstEventSeq  int64
-	LastEventSeq   int64
-	AssistantMsgID *string
-	UsageID        *string
-	StartedAt      *time.Time
-	FinishedAt     *time.Time
+	ID             string     `json:"id"`
+	RunID          string     `json:"run_id"`
+	Number         int        `json:"number"`
+	Status         TurnStatus `json:"status"`
+	FirstEventSeq  int64      `json:"first_event_seq"`
+	LastEventSeq   int64      `json:"last_event_seq"`
+	AssistantMsgID *string    `json:"assistant_msg_id,omitempty"`
+	UsageID        *string    `json:"usage_id,omitempty"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
 }
 
 // Attachment 描述与消息关联的用户输入附件。
 type Attachment struct {
-	ID        string
-	Name      string
-	MediaType string
-	URI       string
-	Size      int64
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	MediaType string `json:"media_type"`
+	URI       string `json:"uri"`
+	Size      int64  `json:"size"`
 }
 
 // Message 是持久化的用户、助手、工具或系统消息。
 type Message struct {
-	ID          string
-	SessionID   string
-	RunID       *string
-	TurnID      *string
-	Role        MessageRole
-	Content     json.RawMessage
-	Attachments []Attachment
-	ToolCalls   []tool.Call
-	EventSeq    int64
-	CreatedAt   time.Time
+	ID          string          `json:"id"`
+	SessionID   string          `json:"session_id"`
+	RunID       *string         `json:"run_id,omitempty"`
+	TurnID      *string         `json:"turn_id,omitempty"`
+	Role        MessageRole     `json:"role"`
+	Content     json.RawMessage `json:"content"`
+	Attachments []Attachment    `json:"attachments,omitempty"`
+	ToolCalls   []tool.Call     `json:"tool_calls,omitempty"`
+	EventSeq    int64           `json:"event_seq"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 // CompactionSummary 是上下文快照引用的结构化摘要。
 type CompactionSummary struct {
-	CheckpointID string
-	Content      string
-	BaseEventSeq int64
+	CheckpointID string `json:"checkpoint_id"`
+	Content      string `json:"content"`
+	BaseEventSeq int64  `json:"base_event_seq"`
 }
 
 // ContextSnapshot 是为一次 Turn 装配的上下文。
 type ContextSnapshot struct {
-	SessionID       string
-	BaseEventSeq    int64
-	Summary         *CompactionSummary
-	Messages        []Message
-	Tools           []tool.Definition
-	SystemPrompt    string
-	MemoryIndexes   []string
-	EstimatedTokens int64
-	Version         int64
+	SessionID       string             `json:"session_id"`
+	BaseEventSeq    int64              `json:"base_event_seq"`
+	Summary         *CompactionSummary `json:"summary,omitempty"`
+	Messages        []Message          `json:"messages"`
+	Tools           []tool.Definition  `json:"tools"`
+	SystemPrompt    string             `json:"system_prompt"`
+	MemoryIndexes   []string           `json:"memory_indexes,omitempty"`
+	EstimatedTokens int64              `json:"estimated_tokens"`
+	Version         int64              `json:"version"`
 }
 
 // CompactionCheckpoint 记录持久化的上下文摘要边界。
 type CompactionCheckpoint struct {
-	ID           string
-	SessionID    string
-	BaseEventSeq int64
-	Summary      string
-	CreatedByRun string
-	CreatedAt    time.Time
+	ID           string    `json:"id"`
+	SessionID    string    `json:"session_id"`
+	BaseEventSeq int64     `json:"base_event_seq"`
+	Summary      string    `json:"summary"`
+	CreatedByRun string    `json:"created_by_run"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // ApprovalToolCall 是一条审批里的单个工具调用及其裁决。
@@ -277,45 +278,45 @@ type ApprovalToolCall struct {
 
 // Approval 记录等待用户裁决的一批工具调用。
 type Approval struct {
-	ID         string
-	SessionID  string
-	RunID      string
-	ToolCallID string
-	ToolCalls  []ApprovalToolCall
-	Scope      ApprovalScope
-	Status     ApprovalStatus
-	ExpiresAt  time.Time
+	ID         string             `json:"id"`
+	SessionID  string             `json:"session_id"`
+	RunID      string             `json:"run_id"`
+	ToolCallID string             `json:"tool_call_id"`
+	ToolCalls  []ApprovalToolCall `json:"tool_calls"`
+	Scope      ApprovalScope      `json:"scope"`
+	Status     ApprovalStatus     `json:"status"`
+	ExpiresAt  time.Time          `json:"expires_at"`
 }
 
 // AgentEvent 是 Agent 运行时产生的持久化有序事实。
 type AgentEvent struct {
-	EventID    string
-	SessionID  string
-	RunID      string
-	TurnID     *string
-	Seq        int64
-	Type       EventType
-	Version    int
-	OccurredAt time.Time
-	Payload    json.RawMessage
+	EventID    string          `json:"event_id"`
+	SessionID  string          `json:"session_id"`
+	RunID      string          `json:"run_id"`
+	TurnID     *string         `json:"turn_id,omitempty"`
+	Seq        int64           `json:"seq"`
+	Type       EventType       `json:"type"`
+	Version    int             `json:"version"`
+	OccurredAt time.Time       `json:"occurred_at"`
+	Payload    json.RawMessage `json:"payload"`
 }
 
 // UsageRecord 保存单次请求的归一化用量与供应商原始用量。
 type UsageRecord struct {
-	ID                       string
-	SessionID                string
-	RunID                    string
-	TurnID                   string
-	RequestID                string
-	Provider                 string
-	Model                    string
-	UsageType                string
-	CacheCreationInputTokens int64
-	CacheReadInputTokens     int64
-	OutputTokens             int64
-	ReasoningTokens          int64
-	TotalTokens              int64
-	Estimated                bool
-	RawProviderUsage         json.RawMessage
-	CreatedAt                time.Time
+	ID                       string          `json:"id"`
+	SessionID                string          `json:"session_id"`
+	RunID                    string          `json:"run_id"`
+	TurnID                   string          `json:"turn_id"`
+	RequestID                string          `json:"request_id"`
+	Provider                 string          `json:"provider"`
+	Model                    string          `json:"model"`
+	UsageType                string          `json:"usage_type"`
+	CacheCreationInputTokens int64           `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64           `json:"cache_read_input_tokens"`
+	OutputTokens             int64           `json:"output_tokens"`
+	ReasoningTokens          int64           `json:"reasoning_tokens"`
+	TotalTokens              int64           `json:"total_tokens"`
+	Estimated                bool            `json:"estimated"`
+	RawProviderUsage         json.RawMessage `json:"raw_provider_usage,omitempty"`
+	CreatedAt                time.Time       `json:"created_at"`
 }

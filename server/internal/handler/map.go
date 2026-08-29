@@ -69,6 +69,7 @@ func mapSession(row sqlite.Session) pkgagent.Session {
 		ActiveRunID:   ptrString(row.ActiveRunID),
 		LastEventSeq:  row.LastEventSeq,
 		CompactionSeq: row.CompactionSeq,
+		Summary:       row.Summary,
 		CreatedAt:     parseTime(row.CreatedAt),
 		UpdatedAt:     parseTime(row.UpdatedAt),
 	}

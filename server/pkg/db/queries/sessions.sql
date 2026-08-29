@@ -45,3 +45,8 @@ RETURNING last_event_seq;
 UPDATE sessions
 SET compaction_seq = ?, updated_at = ?
 WHERE id = ?;
+
+-- name: SetSessionSummary :exec
+UPDATE sessions
+SET summary = ?, updated_at = ?
+WHERE id = ? AND summary = '';

@@ -247,6 +247,17 @@ func (a *API) insertQueued(ctx context.Context, session pkgagent.Session, conten
 	}); err != nil {
 		return pkgagent.Run{}, pkgagent.AgentEvent{}, wrapHandlerDB(err)
 	}
+	if session.Summary == "" {
+		if summary := firstUserSummary(content); summary != "" {
+			if err := a.q(ctx).SetSessionSummary(ctx, sqlite.SetSessionSummaryParams{
+				Summary:   summary,
+				UpdatedAt: util.FormatTime(now),
+				ID:        session.ID,
+			}); err != nil {
+				return pkgagent.Run{}, pkgagent.AgentEvent{}, wrapHandlerDB(err)
+			}
+		}
+	}
 	cfg, _ := json.Marshal(config)
 	row, err := a.q(ctx).InsertRun(ctx, sqlite.InsertRunParams{
 		ID:               runID,

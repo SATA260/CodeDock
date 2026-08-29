@@ -294,6 +294,52 @@ func withFake(cfg pkgagent.RunConfigSnapshot, opts pkgagent.FakeOptions) *pkgage
 }
 
 // TestPlainTextRun 验收纯文本 Run：完整 Run / Turn / 助手消息 / usage。
+func TestSessionSummaryKeepsFirstUserText(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{})
+	f.start(t, sessionID, handler.StartRunRequest{
+		Content: "first line\nmore",
+		Mode:    pkgagent.ModeAutoApprove,
+		Config:  withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
+	})
+	var sess handler.SessionResponse
+	if err := json.Unmarshal(f.do(t, http.MethodGet, "/sessions/"+sessionID, nil).Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+	if sess.Session.Summary != "first line" {
+		t.Fatalf("summary = %q", sess.Session.Summary)
+	}
+	f.start(t, sessionID, handler.StartRunRequest{
+		Content:   "second",
+		InputMode: handler.InputQueue,
+		Mode:      pkgagent.ModeAutoApprove,
+		Config:    withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok2"}}}),
+	})
+	if err := json.Unmarshal(f.do(t, http.MethodGet, "/sessions/"+sessionID, nil).Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+	if sess.Session.Summary != "first line" {
+		t.Fatalf("summary changed to %q", sess.Session.Summary)
+	}
+	var listed handler.ListSessionsResponse
+	if err := json.Unmarshal(f.do(t, http.MethodGet, "/sessions", nil).Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range listed.Sessions {
+		if item.ID == sessionID {
+			found = true
+			if item.Summary != "first line" {
+				t.Fatalf("list summary = %q", item.Summary)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("session missing from list")
+	}
+}
+
 func TestPlainTextRun(t *testing.T) {
 	f := newFixture(t)
 	sessionID := f.createSession(t)
