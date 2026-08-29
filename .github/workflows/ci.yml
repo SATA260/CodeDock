@@ -26,6 +26,11 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
 
+      - name: Lint
+        run: |
+          test -z "$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
+          go vet ./...
+
       - name: Test
         run: go test ./...
 
@@ -69,6 +74,9 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint:web
 
       - name: Test
         run: pnpm test:client

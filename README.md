@@ -34,9 +34,12 @@ pnpm dev:web
 ## 测试
 
 ```bash
-cd server && go test ./...
+cd server && go test ./... && go vet ./...
 pnpm test:client
+pnpm lint:web
 ```
+
+Go 源文件用 `gofmt` 格式化（`gofmt -w .`）。CI 会检查未格式化的文件。
 
 ## 参与
 
