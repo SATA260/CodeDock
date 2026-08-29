@@ -7,5 +7,8 @@
     "test:client": "pnpm --filter @codedock/core test",
     "lint:web": "pnpm --filter web lint"
   },
-  "packageManager": "pnpm@11.17.0"
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=22.13.0"
+  }
 }

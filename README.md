@@ -6,7 +6,7 @@
 
 ## 本地运行
 
-需要 [Go](https://go.dev/dl/) 1.26.5、[Node.js](https://nodejs.org/) 20+、[pnpm](https://pnpm.io/) 11.17.0。默认 `LLM_PROVIDER=fake`，不必配置模型 Key。
+需要 [Go](https://go.dev/dl/) 1.26.5、[Node.js](https://nodejs.org/) 22.13+、[pnpm](https://pnpm.io/) 11.17.0。默认 `LLM_PROVIDER=fake`，不必配置模型 Key。
 
 ```bash
 cp .env.example .env
