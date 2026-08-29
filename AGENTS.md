@@ -2,15 +2,16 @@
 
 修改 CodeDock 代码前，先阅读 [`docs/architecture.md`](docs/architecture.md)。该文档是当前目录归属和模块边界的依据。
 
-Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。当前只注册示例 Tool `ping`（返回 `{"ok":true}`），不实现文件 / Shell / Git。
+Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping` 与记忆工具 `memory_read` / `memory_write` / `memory_search`，不实现文件 / Shell / Git。
 
 ## 目录放置规则
 
 - 服务启动、配置读取、Router 和依赖装配放在 `server/cmd/server`。
 - 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，以及用户侧记忆查看/删除。
 - Agent 运行时编排和 sqlc 持久化放在 `server/internal/agent`。
-- Markdown 记忆与 context message 索引放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`。
-- Agent 通用无状态逻辑放在 `server/pkg/agent`：类型、token 统计、提示词、上下文、Tool、Agent 配置、模型调用。
+- Markdown 记忆（热层目录+专题）与 context message 索引（冷层按工作区 FTS）放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`，不定义 Tool。
+- 具体工具定义放在 `server/internal/agent/tools`。工具名、入参/出参、schema、权限和编排都在本包；Execute 若要调外部能力，只通过 `Ports` 里的接口。Runtime `New` 时由 `cmd/server` 注入 `Ports` 的具体实现，再 `Register`。每个工具只定义入参/出参结构体，执行用 `encoding/json`，schema 从类型推断。`tools` 可 import `memory`，不 import 父包 `internal/agent`。
+- Agent 通用无状态逻辑放在 `server/pkg/agent`：类型、token 统计、提示词、上下文、Tool 抽象（不含具体工具定义）、Agent 配置、模型调用。
 - 进程内事件总线放在 `server/internal/events`。
 - 数据库入口和 sqlc 生成代码放在 `server/pkg/db`。
 - 数据库结构演进放在 `server/migrations`。
@@ -23,8 +24,8 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 模型由 `pkg/agent` 在 `Stream` / `CompactIfNeeded` 内按 `ModelConfig` 创建：`provider=fake` 走脚本化假模型（测试用），`provider=openai` 走 OpenAI 兼容 HTTP。不由 Runtime 注入模型实例。
 - Handler 直接使用 `*sqlite.Queries` 做 CRUD、SSE 回放、Run 的 Start / Continue / Cancel 和审批裁决；领取后的 Loop 才进入 `internal/agent`。
 - `internal/agent` 负责把 pkg 的计算结果持久化为 Run、Turn、消息、用量和事件。`AgentEvent` 必须先同事务写入并递增 `sessions.last_event_seq`，提交后再 `events.Bus.Publish`。
-- 示例 Tool 只有 `ping`。业务 Tool（文件 / Shell / Git）本阶段不实现。
-- `internal/agent/memory` 负责 TextMemory 读写、`SearchMessages` 和 `IndexMessage`；用户侧只看/删 Markdown 记忆。不负责 Prompt / Context Packet / 压缩。`IndexMessage` 仍留后期接入，本阶段 Loop 不调用。
+- 示例 Tool 为 `ping`，另注册记忆工具；定义都在 `internal/agent/tools`。外部模块只实现 `Ports` 上的接口，由 `cmd/server` 在初始化时注入。Agent 绑定 `Profile.Tools.Names`；运行模式提供 `read` / `write` / `memory`，须覆盖工具全部能力才可调用。记忆工具声明 `memory`。审批由工具声明，模式决定是否暂停。一次模型回复的待批 Tool 合成一条审批，一次提交审完再流转；拒绝不打死 Run。业务 Tool（文件 / Shell / Git）本阶段不实现。
+- `internal/agent/memory` 负责 TextMemory 的 Get / Upsert / Delete / List、`SearchMessages` 和 `IndexMessage`；用户侧只看/删目录与专题。不负责 Prompt / Context Packet / 对话压缩，不自动建专题，不定义 Tool。Loop 在新 Session / 对话压缩后装冻结目录；写 message 时 `IndexMessage`。超限目录由 Runtime 后台 `CompactIndex` 改短盖写，不改当前 Session 冻结前缀。
 - 不要使用 Store 接口包装 sqlc。
 - Agent 契约不得依赖 React、UI 包或路由框架。
 - 流式事件是通知，不是真实数据源；重连时应按 `event_seq` 回放。

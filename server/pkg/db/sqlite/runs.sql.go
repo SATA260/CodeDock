@@ -212,6 +212,47 @@ func (q *Queries) ListSessionRuns(ctx context.Context, sessionID string) ([]Run,
 	return items, nil
 }
 
+const listWaitingApprovalRuns = `-- name: ListWaitingApprovalRuns :many
+SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at FROM runs
+WHERE status = 'waiting_approval'
+ORDER BY id
+`
+
+func (q *Queries) ListWaitingApprovalRuns(ctx context.Context) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, listWaitingApprovalRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.TriggerMessageID,
+			&i.Mode,
+			&i.Config,
+			&i.Status,
+			&i.CurrentTurnID,
+			&i.StopReason,
+			&i.CancelRequested,
+			&i.StartedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateRun = `-- name: UpdateRun :one
 UPDATE runs
 SET status = ?, current_turn_id = ?, stop_reason = ?, cancel_requested = ?, started_at = ?, finished_at = ?

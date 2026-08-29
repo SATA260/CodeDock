@@ -9,7 +9,7 @@ import (
 )
 
 // Dispatch 按权限与审批策略调度工具调用。
-// 先逐条校验/鉴权/判断审批；任一待批则立即返回 PendingCalls。
+// 先整批复检；任一待批则整批不执行并返回 PendingCalls。
 // 通过后按串行或并行执行，失败策略为 fail_fast / collect_all / best_effort。
 func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 	if inv.Registry == nil {
@@ -29,9 +29,23 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 	for _, id := range inv.ApprovedCallIDs {
 		approved[id] = struct{}{}
 	}
+	denied := make(map[string]struct{}, len(inv.DeniedCallIDs))
+	for _, id := range inv.DeniedCallIDs {
+		denied[id] = struct{}{}
+	}
 
 	prepared := make([]preparedCall, 0, len(inv.Calls))
+	var approvalCalls []Call
 	for _, call := range inv.Calls {
+		if _, ok := denied[call.ID]; ok {
+			prepared = append(prepared, preparedCall{
+				call:     call,
+				result:   failResult(call, "approval denied"),
+				skip:     true,
+				softFail: true,
+			})
+			continue
+		}
 		item, result, wait, err := prepareCall(inv, call, approved)
 		if err != nil {
 			if inv.FailurePolicy == FailureFast {
@@ -41,14 +55,18 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 			continue
 		}
 		if wait {
-			emit(inv, "approval_required", call, call.Attempt, nil)
-			return DispatchResult{
-				Results:         collectPrepared(prepared),
-				WaitingApproval: true,
-				PendingCalls:    remainingCalls(inv.Calls, call),
-			}, nil
+			approvalCalls = append(approvalCalls, call)
+			continue
 		}
 		prepared = append(prepared, item)
+	}
+	if len(approvalCalls) > 0 {
+		emit(inv, "approval_required", approvalCalls[0], max(1, approvalCalls[0].Attempt), nil)
+		return DispatchResult{
+			WaitingApproval: true,
+			PendingCalls:    append([]Call(nil), inv.Calls...),
+			ApprovalCalls:   approvalCalls,
+		}, nil
 	}
 
 	if inv.Mode == ExecutionParallel && inv.MaxParallel > 1 {
@@ -58,10 +76,11 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 }
 
 type preparedCall struct {
-	call   Call
-	tool   Tool
-	result Result
-	skip   bool
+	call     Call
+	tool     Tool
+	result   Result
+	skip     bool
+	softFail bool
 }
 
 // prepareCall 查找工具并做参数、权限、审批校验；wait=true 表示需先审批。
@@ -81,7 +100,7 @@ func prepareCall(inv Invocation, call Call, approved map[string]struct{}) (prepa
 		result := failResult(call, err.Error())
 		return preparedCall{}, result, false, err
 	}
-	if requiresApproval(inv.AgentMode, inv.ApprovalPolicy, def.Name, call.ID, approved) {
+	if requiresApproval(inv.AgentMode, inv.ApprovalPolicy, def, call.ID, approved) {
 		return preparedCall{}, Result{}, true, nil
 	}
 	return preparedCall{call: call, tool: item}, Result{}, false, nil
@@ -93,7 +112,7 @@ func runSerial(ctx context.Context, inv Invocation, items []preparedCall) (Dispa
 	for _, item := range items {
 		if item.skip {
 			results = append(results, item.result)
-			if inv.FailurePolicy == FailureFast && !item.result.Success {
+			if inv.FailurePolicy == FailureFast && !item.result.Success && !item.softFail {
 				return DispatchResult{Results: results}, fmt.Errorf("%s", item.result.Error)
 			}
 			continue
@@ -118,7 +137,7 @@ func runParallel(ctx context.Context, inv Invocation, items []preparedCall) (Dis
 		group.go_(func() error {
 			if item.skip {
 				results[i] = item.result
-				if inv.FailurePolicy == FailureFast && !item.result.Success {
+				if inv.FailurePolicy == FailureFast && !item.result.Success && !item.softFail {
 					return fmt.Errorf("%s", item.result.Error)
 				}
 				return nil
@@ -239,37 +258,21 @@ func validateArguments(def Definition, raw json.RawMessage) error {
 	return nil
 }
 
-// checkPermission 按 DeniedTools、AllowedCapabilities 与 ask/plan 禁写规则鉴权。
+// checkPermission 按 DeniedTools 与模式能力覆盖鉴权。
 func checkPermission(policy PermissionPolicy, mode string, def Definition) error {
 	for _, denied := range policy.DeniedTools {
 		if denied == def.Name {
 			return fmt.Errorf("%w: tool %q is denied", errPermissionDenied, def.Name)
 		}
 	}
-	if len(policy.AllowedCapabilities) > 0 && len(def.Permission.Capabilities) > 0 {
-		allowed := make(map[string]struct{}, len(policy.AllowedCapabilities))
-		for _, cap := range policy.AllowedCapabilities {
-			allowed[cap] = struct{}{}
-		}
-		ok := false
-		for _, cap := range def.Permission.Capabilities {
-			if _, exists := allowed[cap]; exists {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return fmt.Errorf("%w: tool %q capabilities not allowed", errPermissionDenied, def.Name)
-		}
-	}
-	if (mode == "ask" || mode == "plan") && (def.Permission.Risk == RiskWrite || def.Permission.Risk == RiskAdmin) {
-		return fmt.Errorf("%w: mode %s forbids %s tools", errPermissionDenied, mode, def.Permission.Risk)
+	if !Covers(ModeCapabilities(mode), def.Permission.Capabilities) {
+		return fmt.Errorf("%w: tool %q capabilities not covered by mode %s", errPermissionDenied, def.Name, mode)
 	}
 	return nil
 }
 
-// requiresApproval 判断该调用是否还要等人审；已批准或 auto/yolo/ask/plan 直接放行。
-func requiresApproval(mode string, policy ApprovalPolicy, name, callID string, approved map[string]struct{}) bool {
+// requiresApproval 判断该调用是否还要等人审；已批准、自动放行模式或工具声明无需审批则放行。
+func requiresApproval(mode string, policy ApprovalPolicy, def Definition, callID string, approved map[string]struct{}) bool {
 	if _, ok := approved[callID]; ok {
 		return false
 	}
@@ -278,45 +281,11 @@ func requiresApproval(mode string, policy ApprovalPolicy, name, callID string, a
 		return false
 	}
 	for _, item := range policy.AutoApprovedTools {
-		if item == name {
+		if item == def.Name {
 			return false
 		}
 	}
-	if len(policy.ApprovalRequiredFor) == 0 {
-		return true
-	}
-	for _, item := range policy.ApprovalRequiredFor {
-		if item == name {
-			return true
-		}
-	}
-	return false
-}
-
-// remainingCalls 返回从当前调用起（含自身）尚未执行的工具调用。
-func remainingCalls(calls []Call, current Call) []Call {
-	out := make([]Call, 0)
-	seen := false
-	for _, call := range calls {
-		if call.ID == current.ID {
-			seen = true
-		}
-		if seen {
-			out = append(out, call)
-		}
-	}
-	return out
-}
-
-// collectPrepared 收集准备阶段已失败并跳过的结果。
-func collectPrepared(items []preparedCall) []Result {
-	out := make([]Result, 0, len(items))
-	for _, item := range items {
-		if item.skip {
-			out = append(out, item.result)
-		}
-	}
-	return out
+	return def.Permission.RequiresApproval
 }
 
 // failResult 构造一条失败的工具结果。

@@ -16,7 +16,7 @@ const (
 	SessionArchived SessionStatus = "archived"
 )
 
-// AgentMode 控制 Run 可使用的工具与审批行为。
+// AgentMode 控制 Run 提供的能力（从而决定可调用哪些工具）以及审批行为。
 type AgentMode string
 
 const (
@@ -175,6 +175,7 @@ type Session struct {
 	TenantID      string
 	UserID        string
 	AgentID       string
+	WorkspaceID   string
 	Status        SessionStatus
 	ActiveRunID   *string
 	LastEventSeq  int64
@@ -250,6 +251,7 @@ type ContextSnapshot struct {
 	Messages        []Message
 	Tools           []tool.Definition
 	SystemPrompt    string
+	MemoryIndexes   []string
 	EstimatedTokens int64
 	Version         int64
 }
@@ -264,12 +266,22 @@ type CompactionCheckpoint struct {
 	CreatedAt    time.Time
 }
 
-// Approval 记录等待用户裁决的工具调用。
+// ApprovalToolCall 是一条审批里的单个工具调用及其裁决。
+type ApprovalToolCall struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Status    ApprovalStatus  `json:"status,omitempty"`
+	Reason    string          `json:"reason,omitempty"`
+}
+
+// Approval 记录等待用户裁决的一批工具调用。
 type Approval struct {
 	ID         string
 	SessionID  string
 	RunID      string
 	ToolCallID string
+	ToolCalls  []ApprovalToolCall
 	Scope      ApprovalScope
 	Status     ApprovalStatus
 	ExpiresAt  time.Time

@@ -23,36 +23,35 @@ const (
 	FailureBestEffort FailurePolicy = "best_effort"
 )
 
-// RiskLevel 描述工具能力声明的风险级别。
-type RiskLevel string
+// Capability 是工具声明的动作能力；运行模式提供能力，须覆盖工具的全部能力才可调用。
+type Capability string
 
 const (
-	RiskRead  RiskLevel = "read"
-	RiskWrite RiskLevel = "write"
-	RiskAdmin RiskLevel = "admin"
+	CapabilityRead   Capability = "read"
+	CapabilityWrite  Capability = "write"
+	CapabilityMemory Capability = "memory"
 )
 
-// Permission 描述工具所需的能力与资源范围。
+// Permission 描述工具所需的能力；审批与否由工具自己声明。
 type Permission struct {
-	Capabilities []string
-	Risk         RiskLevel
-	Resource     string
+	Capabilities     []Capability
+	RequiresApproval bool
+	Resource         string
 }
 
 // PermissionPolicy 是 Run 创建时冻结的工具授权策略。
 type PermissionPolicy struct {
 	Version             string
-	AllowedCapabilities []string
+	AllowedCapabilities []Capability
 	DeniedTools         []string
 	ResourceScopes      []string
 }
 
 // ApprovalPolicy 是 Run 创建时冻结的用户审批策略。
 type ApprovalPolicy struct {
-	Version             string
-	AutoApprovedTools   []string
-	ApprovalRequiredFor []string
-	DefaultExpiry       time.Duration
+	Version           string
+	AutoApprovedTools []string
+	DefaultExpiry     time.Duration
 }
 
 // Definition 是模型可见的统一工具描述。
@@ -138,6 +137,7 @@ type Invocation struct {
 	AgentMode        string
 	Registry         Registry
 	ApprovedCallIDs  []string
+	DeniedCallIDs    []string
 	OnEvent          DispatchHook
 }
 
@@ -147,4 +147,5 @@ type DispatchResult struct {
 	WaitingApproval bool
 	ApprovalIDs     []string
 	PendingCalls    []Call
+	ApprovalCalls   []Call
 }

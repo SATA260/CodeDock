@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"time"
 
+	"codedock/internal/util"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db/sqlite"
-	"codedock/internal/util"
 )
 
 // nullString 把空字符串转成无效的 sql.NullString。
@@ -87,6 +87,7 @@ func mapSession(row sqlite.Session) pkgagent.Session {
 		TenantID:      row.TenantID,
 		UserID:        row.UserID,
 		AgentID:       row.AgentID,
+		WorkspaceID:   row.WorkspaceID,
 		Status:        pkgagent.SessionStatus(row.Status),
 		ActiveRunID:   ptrString(row.ActiveRunID),
 		LastEventSeq:  row.LastEventSeq,
@@ -177,11 +178,21 @@ func mapEvent(row sqlite.AgentEvent) pkgagent.AgentEvent {
 
 // mapApproval 把 sqlc Approval 行映射为领域对象。
 func mapApproval(row sqlite.Approval) pkgagent.Approval {
+	var calls []pkgagent.ApprovalToolCall
+	unmarshalJSON(row.ToolCalls, &calls)
+	if len(calls) == 0 && row.ToolCallID != "" {
+		calls = []pkgagent.ApprovalToolCall{{ID: row.ToolCallID}}
+	}
+	first := row.ToolCallID
+	if first == "" && len(calls) > 0 {
+		first = calls[0].ID
+	}
 	return pkgagent.Approval{
 		ID:         row.ID,
 		SessionID:  row.SessionID,
 		RunID:      row.RunID,
-		ToolCallID: row.ToolCallID,
+		ToolCallID: first,
+		ToolCalls:  calls,
 		Scope:      pkgagent.ApprovalScope(row.Scope),
 		Status:     pkgagent.ApprovalStatus(row.Status),
 		ExpiresAt:  parseTime(row.ExpiresAt),

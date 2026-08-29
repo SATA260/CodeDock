@@ -47,7 +47,7 @@ type ListUsageBySessionParams struct {
 }
 
 const listSessions = `
-SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at
+SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id
 FROM sessions
 ORDER BY
   CASE WHEN ? = 'updated_at' AND ? = 'asc' THEN updated_at END ASC,
@@ -72,7 +72,7 @@ LIMIT ? OFFSET ?
 `
 
 const listSessionApprovals = `
-SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at
+SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls
 FROM approvals
 WHERE session_id = ?
 ORDER BY
@@ -142,6 +142,7 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 			&i.CompactionSeq,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.WorkspaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -197,6 +198,7 @@ func (q *Queries) ListSessionApprovals(ctx context.Context, arg ListSessionAppro
 			&i.Scope,
 			&i.Status,
 			&i.ExpiresAt,
+			&i.ToolCalls,
 		); err != nil {
 			return nil, err
 		}

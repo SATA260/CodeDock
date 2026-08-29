@@ -223,7 +223,11 @@ func (r *Runtime) insertMessage(ctx context.Context, msg pkgagent.Message) (pkga
 	if err != nil {
 		return pkgagent.Message{}, wrapDB(err)
 	}
-	return mapMessage(row), nil
+	saved := mapMessage(row)
+	if session, serr := r.getSession(ctx, saved.SessionID); serr == nil {
+		r.indexPersistedMessage(ctx, session, saved)
+	}
+	return saved, nil
 }
 
 // insertUsage 插入一条用量记录。
@@ -267,11 +271,16 @@ func (r *Runtime) insertApproval(ctx context.Context, item pkgagent.Approval) (p
 	if item.ID == "" {
 		item.ID = util.NewID()
 	}
+	firstID := item.ToolCallID
+	if firstID == "" && len(item.ToolCalls) > 0 {
+		firstID = item.ToolCalls[0].ID
+	}
 	row, err := r.q(ctx).InsertApproval(ctx, sqlite.InsertApprovalParams{
 		ID:         item.ID,
 		SessionID:  item.SessionID,
 		RunID:      item.RunID,
-		ToolCallID: item.ToolCallID,
+		ToolCallID: firstID,
+		ToolCalls:  marshalJSON(item.ToolCalls),
 		Scope:      string(item.Scope),
 		Status:     string(item.Status),
 		ExpiresAt:  util.FormatTime(item.ExpiresAt),
@@ -311,23 +320,51 @@ func (r *Runtime) clearActive(ctx context.Context, sessionID, runID string) erro
 }
 
 // saveToolCheckpoint 保存本 Turn 已完成与待执行的工具调用，供审批恢复。
-func (r *Runtime) saveToolCheckpoint(ctx context.Context, runID, turnID string, completed []string, pending []tool.Call, results []tool.Result) error {
+func (r *Runtime) saveToolCheckpoint(ctx context.Context, cp toolCheckpoint) error {
 	_, err := r.q(ctx).UpsertRunToolCheckpoint(ctx, sqlite.UpsertRunToolCheckpointParams{
-		RunID:          runID,
-		TurnID:         turnID,
-		CompletedCalls: marshalJSON(completed),
-		PendingCalls:   marshalJSON(pending),
-		Results:        marshalJSON(results),
+		RunID:          cp.RunID,
+		TurnID:         cp.TurnID,
+		CompletedCalls: marshalJSON(cp.Completed),
+		PendingCalls:   marshalJSON(cp.Pending),
+		Results:        marshalJSON(cp.Results),
+		ApprovedCalls:  marshalJSON(cp.Approved),
+		DeniedCalls:    marshalJSON(cp.Denied),
 		UpdatedAt:      util.FormatTime(util.Now()),
 	})
 	return wrapDB(err)
 }
 
 type toolCheckpoint struct {
+	RunID     string
 	TurnID    string
 	Completed []string
+	Approved  []string
+	Denied    []string
 	Pending   []tool.Call
 	Results   []tool.Result
+}
+
+// HasRecordedToolDecisions 表示 checkpoint 已写入批准或拒绝，审完待领取。
+func (r *Runtime) HasRecordedToolDecisions(ctx context.Context, runID string) (bool, error) {
+	cp, ok, err := r.loadToolCheckpoint(ctx, runID)
+	if err != nil || !ok {
+		return false, err
+	}
+	return len(cp.Approved) > 0 || len(cp.Denied) > 0, nil
+}
+
+// RecordToolDecisions 把一批审批裁决写入 checkpoint，恢复时不再猜测。
+func (r *Runtime) RecordToolDecisions(ctx context.Context, runID string, approved, denied []string) error {
+	cp, ok, err := r.loadToolCheckpoint(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return cderr.NotFound("tool checkpoint not found")
+	}
+	cp.Approved = approved
+	cp.Denied = denied
+	return r.saveToolCheckpoint(ctx, cp)
 }
 
 // loadToolCheckpoint 读取审批恢复用的工具 checkpoint；不存在时 ok=false。
@@ -340,10 +377,13 @@ func (r *Runtime) loadToolCheckpoint(ctx context.Context, runID string) (toolChe
 		return toolCheckpoint{}, false, wrapDB(err)
 	}
 	var out toolCheckpoint
+	out.RunID = row.RunID
 	out.TurnID = row.TurnID
 	unmarshalJSON(row.CompletedCalls, &out.Completed)
 	unmarshalJSON(row.PendingCalls, &out.Pending)
 	unmarshalJSON(row.Results, &out.Results)
+	unmarshalJSON(row.ApprovedCalls, &out.Approved)
+	unmarshalJSON(row.DeniedCalls, &out.Denied)
 	return out, true, nil
 }
 

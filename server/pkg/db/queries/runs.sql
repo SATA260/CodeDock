@@ -31,3 +31,8 @@ LIMIT 1;
 SELECT * FROM runs
 WHERE status IN ('queued', 'loading_context', 'running_llm', 'executing_tools')
 ORDER BY id;
+
+-- name: ListWaitingApprovalRuns :many
+SELECT * FROM runs
+WHERE status = 'waiting_approval'
+ORDER BY id;

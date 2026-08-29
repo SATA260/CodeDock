@@ -6,15 +6,16 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	cderr "codedock/internal/errors"
+	"codedock/internal/util"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/db/sqlite"
-	"codedock/internal/util"
 )
 
 type CreateSessionRequest struct {
-	TenantID string `json:"tenant_id"`
-	UserID   string `json:"user_id"`
-	AgentID  string `json:"agent_id"`
+	TenantID    string `json:"tenant_id"`
+	UserID      string `json:"user_id"`
+	AgentID     string `json:"agent_id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
 type UpdateSessionRequest struct {
@@ -48,15 +49,19 @@ func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.AgentID == "" {
 		req.AgentID = "default"
 	}
+	if req.WorkspaceID == "" {
+		req.WorkspaceID = "default"
+	}
 	now := util.FormatTime(util.Now())
 	row, err := a.q(r.Context()).InsertSession(r.Context(), sqlite.InsertSessionParams{
-		ID:            util.NewID(),
-		TenantID:      req.TenantID,
-		UserID:        req.UserID,
-		AgentID:       req.AgentID,
-		Status:        string(pkgagent.SessionActive),
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:          util.NewID(),
+		TenantID:    req.TenantID,
+		UserID:      req.UserID,
+		AgentID:     req.AgentID,
+		WorkspaceID: req.WorkspaceID,
+		Status:      string(pkgagent.SessionActive),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	})
 	if err != nil {
 		writeError(w, err)

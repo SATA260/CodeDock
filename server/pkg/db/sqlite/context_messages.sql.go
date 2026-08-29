@@ -11,29 +11,34 @@ import (
 
 const insertContextMessage = `-- name: InsertContextMessage :one
 INSERT INTO context_messages (
-    id, project_id, group_id, session_id, run_id, role, content, created_at
+    id, workspace_id, session_id, run_id, role, content, created_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, project_id, group_id, session_id, run_id, role, content, created_at
+ON CONFLICT(id) DO UPDATE SET
+    workspace_id = excluded.workspace_id,
+    session_id = excluded.session_id,
+    run_id = excluded.run_id,
+    role = excluded.role,
+    content = excluded.content,
+    created_at = excluded.created_at
+RETURNING id, workspace_id, session_id, run_id, role, content, created_at
 `
 
 type InsertContextMessageParams struct {
-	ID        string
-	ProjectID string
-	GroupID   string
-	SessionID string
-	RunID     string
-	Role      string
-	Content   string
-	CreatedAt string
+	ID          string
+	WorkspaceID string
+	SessionID   string
+	RunID       string
+	Role        string
+	Content     string
+	CreatedAt   string
 }
 
 func (q *Queries) InsertContextMessage(ctx context.Context, arg InsertContextMessageParams) (ContextMessage, error) {
 	row := q.db.QueryRowContext(ctx, insertContextMessage,
 		arg.ID,
-		arg.ProjectID,
-		arg.GroupID,
+		arg.WorkspaceID,
 		arg.SessionID,
 		arg.RunID,
 		arg.Role,
@@ -43,8 +48,7 @@ func (q *Queries) InsertContextMessage(ctx context.Context, arg InsertContextMes
 	var i ContextMessage
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
-		&i.GroupID,
+		&i.WorkspaceID,
 		&i.SessionID,
 		&i.RunID,
 		&i.Role,
@@ -52,56 +56,4 @@ func (q *Queries) InsertContextMessage(ctx context.Context, arg InsertContextMes
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const searchContextMessages = `-- name: SearchContextMessages :many
-SELECT
-    id,
-    project_id,
-    group_id,
-    session_id,
-    run_id,
-    role,
-    content,
-    created_at
-FROM context_messages
-WHERE project_id = ?
-LIMIT ?
-`
-
-type SearchContextMessagesParams struct {
-	ProjectID string
-	Limit     int64
-}
-
-func (q *Queries) SearchContextMessages(ctx context.Context, arg SearchContextMessagesParams) ([]ContextMessage, error) {
-	rows, err := q.db.QueryContext(ctx, searchContextMessages, arg.ProjectID, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ContextMessage
-	for rows.Next() {
-		var i ContextMessage
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProjectID,
-			&i.GroupID,
-			&i.SessionID,
-			&i.RunID,
-			&i.Role,
-			&i.Content,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }

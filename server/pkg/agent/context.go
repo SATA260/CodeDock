@@ -80,6 +80,9 @@ func CompactIfNeeded(ctx context.Context, req Compaction) (ContextSnapshot, erro
 // EstimateTokens 估算快照的 token 数。
 func EstimateTokens(snapshot ContextSnapshot) int64 {
 	total := CountTokens(snapshot.SystemPrompt)
+	for _, index := range snapshot.MemoryIndexes {
+		total += CountTokens(index)
+	}
 	if snapshot.Summary != nil {
 		total += CountTokens(snapshot.Summary.Content)
 	}
@@ -153,4 +156,33 @@ func compactWithModel(ctx context.Context, req Compaction) (string, error) {
 		return "", err
 	}
 	return DecodeText(result.Message.Content), nil
+}
+
+const indexCompactPrompt = "Rewrite this memory index so it stays within 200 lines or 25KB. Keep it as a Markdown directory of pointers to topic files. Do not include topic body. Reply with the rewritten index only."
+
+// CompactIndex 用模型把超限目录改短。fake 读 IndexCompactSummary；空则返回空串由调用方裁剪。
+func CompactIndex(ctx context.Context, model ModelConfig, content string) (string, error) {
+	if strings.TrimSpace(content) == "" {
+		return "", nil
+	}
+	opts := ParseFakeOptions(model.Options)
+	if strings.EqualFold(model.Provider, "openai") {
+		chat := Chat{
+			Model:        model,
+			SystemPrompt: indexCompactPrompt,
+			Messages:     []Message{{Role: RoleUser, Content: EncodeText(content)}},
+			Attempt:      1,
+		}
+		stream, err := Stream(ctx, chat)
+		if err != nil {
+			return "", err
+		}
+		defer stream.Close()
+		result, err := stream.Result(ctx)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(DecodeText(result.Message.Content)), nil
+	}
+	return strings.TrimSpace(opts.IndexCompactSummary), nil
 }

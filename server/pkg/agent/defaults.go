@@ -9,16 +9,17 @@ import (
 )
 
 const (
-	DefaultSystemPrompt = "You are CodeDock assistant. You may call the ping tool when you need a health check. It returns ok."
-	DefaultToolSet      = "ping-1"
+	DefaultSystemPrompt = "You are CodeDock assistant. You may call ping for a health check. Use memory_read, memory_write, and memory_search for durable user and workspace memory."
+	DefaultToolSet      = "ping-memory-1"
 )
 
 // FakeOptions 控制 fake 模型的确定性输出，供测试与离线闭环使用。
 type FakeOptions struct {
-	Turns          []FakeTurn `json:"turns"`
-	FailTimes      int        `json:"fail_times"`
-	Hang           bool       `json:"hang"`
-	CompactSummary string     `json:"compact_summary"`
+	Turns               []FakeTurn `json:"turns"`
+	FailTimes           int        `json:"fail_times"`
+	Hang                bool       `json:"hang"`
+	CompactSummary      string     `json:"compact_summary"`
+	IndexCompactSummary string     `json:"index_compact_summary"`
 }
 
 // FakeTurn 是 fake 模型一轮输出。
@@ -62,13 +63,11 @@ func DefaultRunConfig(mode AgentMode, model ModelConfig) RunConfigSnapshot {
 		Model:            model,
 		ToolSetVersion:   DefaultToolSet,
 		PermissionPolicy: tool.PermissionPolicy{
-			Version:             "1",
-			AllowedCapabilities: []string{"ping"},
+			Version: "1",
 		},
 		ApprovalPolicy: tool.ApprovalPolicy{
-			Version:             "1",
-			ApprovalRequiredFor: []string{"ping"},
-			DefaultExpiry:       time.Hour,
+			Version:       "1",
+			DefaultExpiry: time.Hour,
 		},
 		RetryPolicy: RetryPolicy{
 			Context: retry,
@@ -96,10 +95,10 @@ func DefaultRunConfig(mode AgentMode, model ModelConfig) RunConfigSnapshot {
 				Reference: "default",
 			},
 			Tools: profile.ToolConfig{
-				Names:            []string{"ping"},
+				Names:            []string{"ping", "memory_read", "memory_write", "memory_search"},
 				Version:          DefaultToolSet,
-				PermissionPolicy: tool.PermissionPolicy{Version: "1", AllowedCapabilities: []string{"ping"}},
-				ApprovalPolicy:   tool.ApprovalPolicy{Version: "1", ApprovalRequiredFor: []string{"ping"}, DefaultExpiry: time.Hour},
+				PermissionPolicy: tool.PermissionPolicy{Version: "1"},
+				ApprovalPolicy:   tool.ApprovalPolicy{Version: "1", DefaultExpiry: time.Hour},
 			},
 		},
 	}

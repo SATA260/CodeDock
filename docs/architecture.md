@@ -2,7 +2,7 @@
 
 本文档定义 CodeDock 当前的技术骨架。目录按能力拆分；Issue、Task、Review、Workspace 等业务目录不属于本项目的基础结构。
 
-Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。当前只注册示例 Tool `ping`。
+Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。默认注册 `ping` 与记忆工具。
 
 ## 总体架构
 
@@ -24,7 +24,8 @@ server/internal/agent
     |-- sqlc 读写 Run / Turn / 事件 / 用量 / checkpoint
     |-- 调用 pkg/agent 无状态方法
     |-- 先持久化 AgentEvent，再发布 internal/events.Bus
-    |-- memory：Markdown 记忆与 message 索引（后期 Loop 单向调用）
+    |-- memory：热层目录+专题，冷层按工作区 FTS；Loop 装目录并 IndexMessage
+    |-- tools：工具定义在本包；New 注入 Ports（Execute 用的外部实现）后 Register
     |
     v
 server/pkg/agent
@@ -45,14 +46,15 @@ CodeDock/
 │   ├── internal/
 │   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel、记忆查看/删除
 │   │   ├── agent/               # 运行时编排 + sqlc 持久化
-│   │   │   └── memory/          # Markdown 记忆与 context message 索引
+│   │   │   ├── memory/          # 热层目录+专题，冷层工作区 FTS 索引
+│   │   │   └── tools/           # 具体工具定义：ping、memory_*
 │   │   ├── events/              # 进程内事件总线
 │   │   ├── config/
 │   │   ├── logger/
 │   │   ├── errors/
 │   │   └── util/
 │   ├── pkg/
-│   │   ├── agent/               # 全部通用无状态逻辑，含模型调用与 Tool
+│   │   ├── agent/               # 全部通用无状态逻辑，含模型调用与 Tool 抽象
 │   │   └── db/                  # Client 与 sqlc 生成代码
 │   ├── migrations/
 │   ├── go.mod
@@ -79,16 +81,25 @@ internal/agent
   -> pkg/db/sqlite.Queries
   -> pkg/agent
   -> internal/events
-  -> internal/agent/memory  # 后期 Loop 单向调用
+  -> internal/agent/memory
+  -> internal/agent/tools
 
 internal/agent/memory
   -> pkg/db/sqlite.Queries
   不 import 父包 internal/agent
+  不定义 Tool
   不负责 Prompt / Context Packet / 压缩
+
+internal/agent/tools
+  -> pkg/agent/tool
+  -> internal/agent/memory
+  -> pkg/db/sqlite.Queries
+  不 import 父包 internal/agent
 
 pkg/agent
   不依赖 handler、internal、sqlc
   不持有包级状态，不查库
+  Tool 包只含接口、Registry、Dispatch，不含具体工具定义
 ```
 
 ## 分层职责
@@ -98,7 +109,7 @@ pkg/agent
 承担大部分接口逻辑：
 
 - Session / Message / Usage / Approval 的增删改查
-- 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引）
+- 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引；List 用 user_id / workspace_id，Get/Delete 用 name 默认目录）
 - SSE：先按 `afterSeq` / `Last-Event-ID` 回放已落库事件，再 `SubscribeAll` 并按 Session 过滤；客户端断开不取消 Run
 - Run 的 Start / Continue / Retry / Cancel 和审批裁决直接在 Handler 中处理，需要执行时再交给 Worker
 - 同一 Session 只有一个 active Run：`interrupt` 先取消再开新 Run；`queue` 只落库，当前结束后自动领取
@@ -113,21 +124,30 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。
 - 调用 `pkg.Load` / `CompactIfNeeded` / `Build` / `Stream` / `Dispatch`
 - 同事务递增 `sessions.last_event_seq` 并插入 `AgentEvent`，提交后再 `Bus.Publish`
 - `Transition` 消费模型流，把增量先落库再发到事件总线
-- Worker 用带缓冲 channel 领取 Run；启动时恢复非 `waiting_approval` 且 lease 空/过期的 Run
-- 审批暂停时写入 `run_tool_checkpoints`，批准后从 checkpoint 继续，不重跑已完成工具
+- Worker 用带缓冲 channel 领取 Run；启动时恢复非 `waiting_approval`、以及 checkpoint 已写入裁决的 `waiting_approval`
+- 一次模型回复里的待批 Tool 合成一条审批；前端一次提交对每条批/拒，全部裁定后才从 `waiting_approval` 恢复。被拒的当工具失败结果喂回模型，不打死 Run。checkpoint 分开记录已执行 / 已批准 / 已拒绝
 
 不实现提示词、压缩算法或模型适配。
 
 ### `internal/agent/memory`
 
-Markdown 记忆与 context message 索引，与 Loop 独立：
+热层是每个 scope 一篇目录（`kind=index`，`name` 固定 `index`）加多篇专题（`kind=topic`）。scope 只有 `user` / `workspace`。冷层是同一 `workspace_id` 下的 context message FTS。与 Loop 独立：
 
-- 类型与 `ByteLen`
-- Agent 侧 TextMemory 的 Create / Get / Update / Delete
-- `SearchMessages` 只查不写
-- `IndexMessage` 供 Loop 后期写 message 时调用，不暴露给 Handler 或 Agent 工具
+- 类型、`ByteLen`、`IndexOverBudget`、`ClipIndex`（200 行 / 25KB）
+- Agent 侧 TextMemory 的 Get / Upsert / Delete / List
+- `SearchMessages` 只查不写；`IndexMessage` 由 Loop 写 message 时调用
 
-不 import 父包；不解析 Markdown；不负责 Prompt / Context Packet / 压缩。不放在 `pkg`。本阶段 Loop 不调用 `IndexMessage`。
+不 import 父包；不解析 Markdown；不负责 Prompt / Context Packet / 对话压缩；不定义 Tool。不放在 `pkg`。不新建 Workspace 业务包，只持有 `workspace_id` 字段。Loop 在新 Session / 对话压缩后装冻结目录（独立 system 消息，不拼进静态 prompt，不入库）。超限目录立刻写入，由 Runtime 后台 `pkg.CompactIndex` 改短盖写，不自动建专题，不改当前 Session 冻结前缀。
+
+### `internal/agent/tools`
+
+工具定义全部在本包。Runtime `New` 接收 `Ports`（Execute 要调用的外部实现），再 `Register`：
+
+- 本包写工具名、入参/出参、schema、权限和编排。`ping`，以及 `memory_read` / `memory_write` / `memory_search`（依赖 `memory` 与 Session）
+- Execute 若依赖外部能力，只通过 `Ports` 上的接口调用；由 `cmd/server` 在初始化时注入具体实现。未注入的字段不注册对应工具
+- 本阶段没有外部 Port（不实现文件 / Shell / Git）
+
+每个工具只定义入参/出参结构体；执行用 `encoding/json`，给模型的 schema 由 `jsonschema.For` 从类型推断。Agent 通过 `Profile.Tools.Names` 绑定工具。运行模式提供 `read` / `write` / `memory` 能力，只有模式覆盖了工具声明的全部能力时该工具才对模型可见且可 Dispatch。记忆工具声明 `memory`。审批仍由工具声明 `RequiresApproval`，`ask_for_approval` 暂停、`auto_approve` / `yolo` 自动过。一批待批工具对应一条审批，一次提交审完再流转。不 import 父包 `internal/agent`。测试用 Tool 可留在测试文件。
 
 ### `pkg/agent`
 
@@ -136,7 +156,7 @@ Markdown 记忆与 context message 索引，与 Loop 独立：
 - 领域类型、状态机 `CanTransition`、用量 `CountTokens`（UTF-8 字节 / 4）
 - 提示词 `Build`
 - 上下文 `Load` / `NeedsCompaction` / `CompactIfNeeded`
-- Tool 抽象、内存 `Registry`、示例 `ping`，以及无状态 `Dispatch`
+- Tool 抽象、内存 `Registry`、无状态 `Dispatch`（不含具体工具定义）
 - Agent 配置抽象 `profile.Config` 与 `RunConfigSnapshot`
 - 模型调用 `Stream` / 压缩：在函数内按 `ModelConfig.Provider` 创建
   - `fake`：读 `Model.Options` 脚本（多段 text / tool_calls、失败次数、可取消挂起），测试不打外网
@@ -165,7 +185,7 @@ Worker
        -> pkg.Build
        -> pkg.Stream          # 按 ModelConfig 在 pkg 内创建 fake 或 openai
        -> Transition：先落库再 Bus
-       -> pkg.Dispatch        # ping 及测试用 Tool
+       -> pkg.Dispatch        # ping、memory_* 及测试用 Tool
 ```
 
 ## 配置

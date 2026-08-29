@@ -12,8 +12,15 @@ import (
 	"codedock/pkg/db/sqlite"
 )
 
+type ToolDecision struct {
+	ToolCallID string                  `json:"tool_call_id"`
+	Status     pkgagent.ApprovalStatus `json:"status"`
+	Reason     string                  `json:"reason"`
+}
+
 type DecideApprovalRequest struct {
 	ApprovalID string                  `json:"approval_id"`
+	Decisions  []ToolDecision          `json:"decisions"`
 	Status     pkgagent.ApprovalStatus `json:"status"`
 	Scope      pkgagent.ApprovalScope  `json:"scope"`
 	ActorID    string                  `json:"actor_id"`
@@ -75,7 +82,7 @@ func (a *API) GetApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ApprovalResponse{Approval: mapApproval(row)})
 }
 
-// DecideApproval 持久化裁决并恢复或结束 Run。
+// DecideApproval 持久化一批裁决并恢复 Run。
 func (a *API) DecideApproval(w http.ResponseWriter, r *http.Request) {
 	var req DecideApprovalRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -92,7 +99,7 @@ func (a *API) DecideApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ApprovalResponse{Approval: approval})
 }
 
-// decide 校验 pending/过期后落裁决；批准则 Continue，拒绝或过期则 failed。
+// decide 校验 pending/过期后同事务落齐裁决，提交后再 Submit 恢复。
 func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.Approval, error) {
 	row, err := a.q(ctx).GetApproval(ctx, req.ApprovalID)
 	if err != nil {
@@ -100,49 +107,148 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 	}
 	approval := mapApproval(row)
 	if approval.Status != pkgagent.ApprovalPending {
-		return pkgagent.Approval{}, cderr.Conflict("approval already decided")
-	}
-	if !approval.ExpiresAt.IsZero() && util.Now().After(approval.ExpiresAt) {
-		req.Status = pkgagent.ApprovalExpired
-	}
-	if req.Status != pkgagent.ApprovalApproved && req.Status != pkgagent.ApprovalDenied && req.Status != pkgagent.ApprovalExpired {
-		return pkgagent.Approval{}, cderr.Invalid("invalid approval status")
+		return a.resubmitDecidedApproval(ctx, approval)
 	}
 	if req.Scope != "" {
 		approval.Scope = req.Scope
 	}
-	updated, err := a.q(ctx).UpdateApproval(ctx, sqlite.UpdateApprovalParams{
-		Scope:  string(approval.Scope),
-		Status: string(req.Status),
-		ID:     approval.ID,
-	})
-	if err != nil {
-		return pkgagent.Approval{}, wrapHandlerDB(err)
-	}
-	approval = mapApproval(updated)
-	if _, err := a.runtime.AppendEvent(ctx, pkgagent.AgentEvent{
-		SessionID: approval.SessionID,
-		RunID:     approval.RunID,
-		Type:      pkgagent.EventApprovalDecided,
-		Payload: pkgagent.MarshalPayload(pkgagent.ApprovalDecidedPayload{
-			ApprovalID: approval.ID,
-			ToolCallID: approval.ToolCallID,
-			Status:     approval.Status,
-			Scope:      approval.Scope,
-			Reason:     req.Reason,
-		}),
-	}); err != nil {
-		return pkgagent.Approval{}, err
-	}
-	a.logger().Info("approval decided", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID, "status", req.Status)
-	if req.Status == pkgagent.ApprovalApproved {
-		if err := a.runtime.Worker().Submit(ctx, approval.RunID); err != nil {
+
+	expired := !approval.ExpiresAt.IsZero() && util.Now().After(approval.ExpiresAt)
+	var approved, denied []string
+	if expired {
+		for i := range approval.ToolCalls {
+			approval.ToolCalls[i].Status = pkgagent.ApprovalExpired
+			denied = append(denied, approval.ToolCalls[i].ID)
+		}
+		approval.Status = pkgagent.ApprovalExpired
+	} else {
+		decisions, err := normalizeDecisions(req, approval.ToolCalls)
+		if err != nil {
 			return pkgagent.Approval{}, err
 		}
-		return approval, nil
+		byID := make(map[string]ToolDecision, len(decisions))
+		for _, item := range decisions {
+			byID[item.ToolCallID] = item
+		}
+		allDenied := true
+		for i, call := range approval.ToolCalls {
+			item := byID[call.ID]
+			approval.ToolCalls[i].Status = item.Status
+			approval.ToolCalls[i].Reason = item.Reason
+			if item.Status == pkgagent.ApprovalApproved {
+				approved = append(approved, call.ID)
+				allDenied = false
+			} else {
+				denied = append(denied, call.ID)
+			}
+		}
+		if allDenied {
+			approval.Status = pkgagent.ApprovalDenied
+		} else {
+			approval.Status = pkgagent.ApprovalApproved
+		}
 	}
-	if err := a.runtime.Terminate(ctx, approval.RunID, pkgagent.RunFailed, pkgagent.StopApprovalDenied, "approval_denied"); err != nil {
+
+	var ev pkgagent.AgentEvent
+	err = a.db.WithTx(ctx, func(ctx context.Context) error {
+		if err := a.runtime.RecordToolDecisions(ctx, approval.RunID, approved, denied); err != nil {
+			return err
+		}
+		updated, err := a.q(ctx).UpdateApproval(ctx, sqlite.UpdateApprovalParams{
+			Scope:     string(approval.Scope),
+			Status:    string(approval.Status),
+			ToolCalls: string(pkgagent.MarshalPayload(approval.ToolCalls)),
+			ID:        approval.ID,
+		})
+		if err != nil {
+			return wrapHandlerDB(err)
+		}
+		approval = mapApproval(updated)
+		decisions := make([]pkgagent.ApprovalDecision, 0, len(approval.ToolCalls))
+		for _, call := range approval.ToolCalls {
+			decisions = append(decisions, pkgagent.ApprovalDecision{
+				ToolCallID: call.ID,
+				Status:     call.Status,
+				Reason:     call.Reason,
+			})
+		}
+		ev, err = a.runtime.AppendEvent(ctx, pkgagent.AgentEvent{
+			SessionID: approval.SessionID,
+			RunID:     approval.RunID,
+			Type:      pkgagent.EventApprovalDecided,
+			Payload: pkgagent.MarshalPayload(pkgagent.ApprovalDecidedPayload{
+				ApprovalID: approval.ID,
+				ToolCallID: approval.ToolCallID,
+				Status:     approval.Status,
+				Scope:      approval.Scope,
+				Reason:     req.Reason,
+				Decisions:  decisions,
+				ToolCalls:  approval.ToolCalls,
+			}),
+		})
+		return err
+	})
+	if err != nil {
+		return pkgagent.Approval{}, err
+	}
+	a.runtime.Publish(ev)
+	a.logger().Info("approval decided", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID, "status", approval.Status)
+	if err := a.submitDecidedRun(ctx, approval.RunID); err != nil {
 		return pkgagent.Approval{}, err
 	}
 	return approval, nil
+}
+
+// resubmitDecidedApproval 在审批已落库但 Run 仍停在 waiting_approval 时只补投 Worker。
+func (a *API) resubmitDecidedApproval(ctx context.Context, approval pkgagent.Approval) (pkgagent.Approval, error) {
+	run, err := a.runtime.GetRun(ctx, approval.RunID)
+	if err != nil {
+		return pkgagent.Approval{}, err
+	}
+	if run.Status != pkgagent.RunWaitingApproval {
+		return pkgagent.Approval{}, cderr.Conflict("approval already decided")
+	}
+	a.logger().Info("resubmit decided approval", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID)
+	if err := a.submitDecidedRun(ctx, approval.RunID); err != nil {
+		return pkgagent.Approval{}, err
+	}
+	return approval, nil
+}
+
+func (a *API) submitDecidedRun(ctx context.Context, runID string) error {
+	if worker := a.runtime.Worker(); worker != nil {
+		return worker.Submit(ctx, runID)
+	}
+	return nil
+}
+
+func normalizeDecisions(req DecideApprovalRequest, calls []pkgagent.ApprovalToolCall) ([]ToolDecision, error) {
+	decisions := req.Decisions
+	if len(decisions) == 0 && req.Status != "" && len(calls) == 1 {
+		decisions = []ToolDecision{{ToolCallID: calls[0].ID, Status: req.Status, Reason: req.Reason}}
+	}
+	if len(decisions) != len(calls) {
+		return nil, cderr.Invalid("decisions must cover every tool call")
+	}
+	want := make(map[string]struct{}, len(calls))
+	for _, call := range calls {
+		want[call.ID] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(decisions))
+	for _, item := range decisions {
+		if item.Status != pkgagent.ApprovalApproved && item.Status != pkgagent.ApprovalDenied {
+			return nil, cderr.Invalid("invalid approval status")
+		}
+		if _, ok := want[item.ToolCallID]; !ok {
+			return nil, cderr.Invalid("unknown tool_call_id")
+		}
+		if _, dup := seen[item.ToolCallID]; dup {
+			return nil, cderr.Invalid("duplicate tool_call_id")
+		}
+		seen[item.ToolCallID] = struct{}{}
+	}
+	if len(seen) != len(want) {
+		return nil, cderr.Invalid("decisions must cover every tool call")
+	}
+	return decisions, nil
 }

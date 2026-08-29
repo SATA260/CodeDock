@@ -28,6 +28,7 @@ type Approval struct {
 	Scope      string
 	Status     string
 	ExpiresAt  string
+	ToolCalls  string
 }
 
 type CompactionCheckpoint struct {
@@ -40,14 +41,13 @@ type CompactionCheckpoint struct {
 }
 
 type ContextMessage struct {
-	ID        string
-	ProjectID string
-	GroupID   string
-	SessionID string
-	RunID     string
-	Role      string
-	Content   string
-	CreatedAt string
+	ID          string
+	WorkspaceID string
+	SessionID   string
+	RunID       string
+	Role        string
+	Content     string
+	CreatedAt   string
 }
 
 type ContextMessagesFt struct {
@@ -89,6 +89,8 @@ type RunToolCheckpoint struct {
 	PendingCalls   string
 	Results        string
 	UpdatedAt      string
+	ApprovedCalls  string
+	DeniedCalls    string
 }
 
 type SchemaMigration struct {
@@ -107,6 +109,7 @@ type Session struct {
 	CompactionSeq int64
 	CreatedAt     string
 	UpdatedAt     string
+	WorkspaceID   string
 }
 
 type SessionLease struct {
@@ -126,6 +129,8 @@ type TextMemory struct {
 	ByteLen   int64
 	CreatedAt string
 	UpdatedAt string
+	Kind      string
+	Name      string
 }
 
 type Turn struct {

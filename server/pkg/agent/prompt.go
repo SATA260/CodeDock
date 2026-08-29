@@ -18,14 +18,20 @@ func Build(_ context.Context, req Prompt) (Chat, error) {
 	if system == "" {
 		system = DefaultSystemPrompt
 	}
-	messages := req.Context.Messages
+	var prefix []Message
+	for _, index := range req.Context.MemoryIndexes {
+		if index == "" {
+			continue
+		}
+		prefix = append(prefix, Message{Role: RoleSystem, Content: EncodeText(index)})
+	}
 	if req.Context.Summary != nil && req.Context.Summary.Content != "" {
-		summary := Message{
+		prefix = append(prefix, Message{
 			Role:    RoleSystem,
 			Content: EncodeText("Conversation summary:\n" + req.Context.Summary.Content),
-		}
-		messages = append([]Message{summary}, messages...)
+		})
 	}
+	messages := append(prefix, req.Context.Messages...)
 	return Chat{
 		SessionID:       req.Context.SessionID,
 		RunID:           req.Run.ID,

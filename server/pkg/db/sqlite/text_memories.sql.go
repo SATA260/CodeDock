@@ -9,74 +9,61 @@ import (
 	"context"
 )
 
-const deleteTextMemory = `-- name: DeleteTextMemory :exec
+const deleteTextMemoriesByScope = `-- name: DeleteTextMemoriesByScope :exec
 DELETE FROM text_memories
 WHERE scope = ? AND scope_id = ?
+`
+
+type DeleteTextMemoriesByScopeParams struct {
+	Scope   string
+	ScopeID string
+}
+
+func (q *Queries) DeleteTextMemoriesByScope(ctx context.Context, arg DeleteTextMemoriesByScopeParams) error {
+	_, err := q.db.ExecContext(ctx, deleteTextMemoriesByScope, arg.Scope, arg.ScopeID)
+	return err
+}
+
+const deleteTextMemory = `-- name: DeleteTextMemory :exec
+DELETE FROM text_memories
+WHERE scope = ? AND scope_id = ? AND kind = ? AND name = ?
 `
 
 type DeleteTextMemoryParams struct {
 	Scope   string
 	ScopeID string
+	Kind    string
+	Name    string
 }
 
 func (q *Queries) DeleteTextMemory(ctx context.Context, arg DeleteTextMemoryParams) error {
-	_, err := q.db.ExecContext(ctx, deleteTextMemory, arg.Scope, arg.ScopeID)
+	_, err := q.db.ExecContext(ctx, deleteTextMemory,
+		arg.Scope,
+		arg.ScopeID,
+		arg.Kind,
+		arg.Name,
+	)
 	return err
 }
 
 const getTextMemory = `-- name: GetTextMemory :one
-SELECT id, scope, scope_id, content, byte_len, created_at, updated_at FROM text_memories
-WHERE scope = ? AND scope_id = ?
+SELECT id, scope, scope_id, content, byte_len, created_at, updated_at, kind, name FROM text_memories
+WHERE scope = ? AND scope_id = ? AND kind = ? AND name = ?
 `
 
 type GetTextMemoryParams struct {
 	Scope   string
 	ScopeID string
+	Kind    string
+	Name    string
 }
 
 func (q *Queries) GetTextMemory(ctx context.Context, arg GetTextMemoryParams) (TextMemory, error) {
-	row := q.db.QueryRowContext(ctx, getTextMemory, arg.Scope, arg.ScopeID)
-	var i TextMemory
-	err := row.Scan(
-		&i.ID,
-		&i.Scope,
-		&i.ScopeID,
-		&i.Content,
-		&i.ByteLen,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const insertTextMemory = `-- name: InsertTextMemory :one
-INSERT INTO text_memories (
-    id, scope, scope_id, content, byte_len, created_at, updated_at
-) VALUES (
-    ?, ?, ?, ?, ?, ?, ?
-)
-RETURNING id, scope, scope_id, content, byte_len, created_at, updated_at
-`
-
-type InsertTextMemoryParams struct {
-	ID        string
-	Scope     string
-	ScopeID   string
-	Content   string
-	ByteLen   int64
-	CreatedAt string
-	UpdatedAt string
-}
-
-func (q *Queries) InsertTextMemory(ctx context.Context, arg InsertTextMemoryParams) (TextMemory, error) {
-	row := q.db.QueryRowContext(ctx, insertTextMemory,
-		arg.ID,
+	row := q.db.QueryRowContext(ctx, getTextMemory,
 		arg.Scope,
 		arg.ScopeID,
-		arg.Content,
-		arg.ByteLen,
-		arg.CreatedAt,
-		arg.UpdatedAt,
+		arg.Kind,
+		arg.Name,
 	)
 	var i TextMemory
 	err := row.Scan(
@@ -87,17 +74,25 @@ func (q *Queries) InsertTextMemory(ctx context.Context, arg InsertTextMemoryPara
 		&i.ByteLen,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.Name,
 	)
 	return i, err
 }
 
 const listTextMemories = `-- name: ListTextMemories :many
-SELECT id, scope, scope_id, content, byte_len, created_at, updated_at FROM text_memories
-ORDER BY updated_at DESC
+SELECT id, scope, scope_id, content, byte_len, created_at, updated_at, kind, name FROM text_memories
+WHERE scope = ? AND scope_id = ?
+ORDER BY kind ASC, name ASC
 `
 
-func (q *Queries) ListTextMemories(ctx context.Context) ([]TextMemory, error) {
-	rows, err := q.db.QueryContext(ctx, listTextMemories)
+type ListTextMemoriesParams struct {
+	Scope   string
+	ScopeID string
+}
+
+func (q *Queries) ListTextMemories(ctx context.Context, arg ListTextMemoriesParams) ([]TextMemory, error) {
+	rows, err := q.db.QueryContext(ctx, listTextMemories, arg.Scope, arg.ScopeID)
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +108,8 @@ func (q *Queries) ListTextMemories(ctx context.Context) ([]TextMemory, error) {
 			&i.ByteLen,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
+			&i.Name,
 		); err != nil {
 			return nil, err
 		}
@@ -127,28 +124,42 @@ func (q *Queries) ListTextMemories(ctx context.Context) ([]TextMemory, error) {
 	return items, nil
 }
 
-const updateTextMemory = `-- name: UpdateTextMemory :one
-UPDATE text_memories
-SET content = ?, byte_len = ?, updated_at = ?
-WHERE scope = ? AND scope_id = ?
-RETURNING id, scope, scope_id, content, byte_len, created_at, updated_at
+const upsertTextMemory = `-- name: UpsertTextMemory :one
+INSERT INTO text_memories (
+    id, scope, scope_id, kind, name, content, byte_len, created_at, updated_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?
+)
+ON CONFLICT (scope, scope_id, kind, name) DO UPDATE SET
+    content = excluded.content,
+    byte_len = excluded.byte_len,
+    updated_at = excluded.updated_at
+RETURNING id, scope, scope_id, content, byte_len, created_at, updated_at, kind, name
 `
 
-type UpdateTextMemoryParams struct {
-	Content   string
-	ByteLen   int64
-	UpdatedAt string
+type UpsertTextMemoryParams struct {
+	ID        string
 	Scope     string
 	ScopeID   string
+	Kind      string
+	Name      string
+	Content   string
+	ByteLen   int64
+	CreatedAt string
+	UpdatedAt string
 }
 
-func (q *Queries) UpdateTextMemory(ctx context.Context, arg UpdateTextMemoryParams) (TextMemory, error) {
-	row := q.db.QueryRowContext(ctx, updateTextMemory,
-		arg.Content,
-		arg.ByteLen,
-		arg.UpdatedAt,
+func (q *Queries) UpsertTextMemory(ctx context.Context, arg UpsertTextMemoryParams) (TextMemory, error) {
+	row := q.db.QueryRowContext(ctx, upsertTextMemory,
+		arg.ID,
 		arg.Scope,
 		arg.ScopeID,
+		arg.Kind,
+		arg.Name,
+		arg.Content,
+		arg.ByteLen,
+		arg.CreatedAt,
+		arg.UpdatedAt,
 	)
 	var i TextMemory
 	err := row.Scan(
@@ -159,6 +170,8 @@ func (q *Queries) UpdateTextMemory(ctx context.Context, arg UpdateTextMemoryPara
 		&i.ByteLen,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.Name,
 	)
 	return i, err
 }

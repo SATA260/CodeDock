@@ -22,7 +22,7 @@ func (q *Queries) CountSessionApprovals(ctx context.Context, sessionID string) (
 }
 
 const getApproval = `-- name: GetApproval :one
-SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at FROM approvals
+SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls FROM approvals
 WHERE id = ?
 `
 
@@ -37,17 +37,18 @@ func (q *Queries) GetApproval(ctx context.Context, id string) (Approval, error) 
 		&i.Scope,
 		&i.Status,
 		&i.ExpiresAt,
+		&i.ToolCalls,
 	)
 	return i, err
 }
 
 const insertApproval = `-- name: InsertApproval :one
 INSERT INTO approvals (
-    id, session_id, run_id, tool_call_id, scope, status, expires_at
+    id, session_id, run_id, tool_call_id, tool_calls, scope, status, expires_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, session_id, run_id, tool_call_id, scope, status, expires_at
+RETURNING id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls
 `
 
 type InsertApprovalParams struct {
@@ -55,6 +56,7 @@ type InsertApprovalParams struct {
 	SessionID  string
 	RunID      string
 	ToolCallID string
+	ToolCalls  string
 	Scope      string
 	Status     string
 	ExpiresAt  string
@@ -66,6 +68,7 @@ func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) 
 		arg.SessionID,
 		arg.RunID,
 		arg.ToolCallID,
+		arg.ToolCalls,
 		arg.Scope,
 		arg.Status,
 		arg.ExpiresAt,
@@ -79,25 +82,32 @@ func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) 
 		&i.Scope,
 		&i.Status,
 		&i.ExpiresAt,
+		&i.ToolCalls,
 	)
 	return i, err
 }
 
 const updateApproval = `-- name: UpdateApproval :one
 UPDATE approvals
-SET scope = ?, status = ?
+SET scope = ?, status = ?, tool_calls = ?
 WHERE id = ?
-RETURNING id, session_id, run_id, tool_call_id, scope, status, expires_at
+RETURNING id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls
 `
 
 type UpdateApprovalParams struct {
-	Scope  string
-	Status string
-	ID     string
+	Scope     string
+	Status    string
+	ToolCalls string
+	ID        string
 }
 
 func (q *Queries) UpdateApproval(ctx context.Context, arg UpdateApprovalParams) (Approval, error) {
-	row := q.db.QueryRowContext(ctx, updateApproval, arg.Scope, arg.Status, arg.ID)
+	row := q.db.QueryRowContext(ctx, updateApproval,
+		arg.Scope,
+		arg.Status,
+		arg.ToolCalls,
+		arg.ID,
+	)
 	var i Approval
 	err := row.Scan(
 		&i.ID,
@@ -107,6 +117,7 @@ func (q *Queries) UpdateApproval(ctx context.Context, arg UpdateApprovalParams) 
 		&i.Scope,
 		&i.Status,
 		&i.ExpiresAt,
+		&i.ToolCalls,
 	)
 	return i, err
 }

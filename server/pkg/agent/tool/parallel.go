@@ -6,10 +6,10 @@ import (
 )
 
 type limitedGroup struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	sem    chan struct{}
-	wg     sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
+	sem     chan struct{}
+	wg      sync.WaitGroup
 	errOnce sync.Once
 	err     error
 }

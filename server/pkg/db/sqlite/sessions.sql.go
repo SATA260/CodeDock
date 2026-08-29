@@ -30,7 +30,7 @@ const claimActiveRun = `-- name: ClaimActiveRun :one
 UPDATE sessions
 SET active_run_id = ?, updated_at = ?
 WHERE id = ? AND active_run_id IS NULL
-RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at
+RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id
 `
 
 type ClaimActiveRunParams struct {
@@ -53,6 +53,7 @@ func (q *Queries) ClaimActiveRun(ctx context.Context, arg ClaimActiveRunParams) 
 		&i.CompactionSeq,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
@@ -86,7 +87,7 @@ func (q *Queries) CountSessions(ctx context.Context) (int64, error) {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at FROM sessions
+SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id FROM sessions
 WHERE id = ?
 `
 
@@ -104,6 +105,7 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.CompactionSeq,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
@@ -129,11 +131,11 @@ func (q *Queries) IncrementEventSeq(ctx context.Context, arg IncrementEventSeqPa
 
 const insertSession = `-- name: InsertSession :one
 INSERT INTO sessions (
-    id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at
+    id, tenant_id, user_id, agent_id, workspace_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at
+RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id
 `
 
 type InsertSessionParams struct {
@@ -141,6 +143,7 @@ type InsertSessionParams struct {
 	TenantID      string
 	UserID        string
 	AgentID       string
+	WorkspaceID   string
 	Status        string
 	ActiveRunID   sql.NullString
 	LastEventSeq  int64
@@ -155,6 +158,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (S
 		arg.TenantID,
 		arg.UserID,
 		arg.AgentID,
+		arg.WorkspaceID,
 		arg.Status,
 		arg.ActiveRunID,
 		arg.LastEventSeq,
@@ -174,6 +178,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (S
 		&i.CompactionSeq,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
@@ -199,7 +204,7 @@ const updateSession = `-- name: UpdateSession :one
 UPDATE sessions
 SET agent_id = ?, status = ?, active_run_id = ?, last_event_seq = ?, compaction_seq = ?, updated_at = ?
 WHERE id = ?
-RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at
+RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id
 `
 
 type UpdateSessionParams struct {
@@ -234,6 +239,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 		&i.CompactionSeq,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
