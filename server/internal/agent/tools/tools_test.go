@@ -129,3 +129,30 @@ func TestMemoryTools(t *testing.T) {
 		t.Fatalf("queued %+v", queued)
 	}
 }
+
+func TestMemoryReadMissingIsResult(t *testing.T) {
+	q, ctx := testQueries(t)
+	if _, err := q.InsertSession(ctx, sqlite.InsertSessionParams{
+		ID:          "sess-miss",
+		TenantID:    "t1",
+		UserID:      "u1",
+		AgentID:     "default",
+		WorkspaceID: "ws1",
+		Status:      "active",
+		CreatedAt:   "2026-01-01T00:00:00Z",
+		UpdatedAt:   "2026-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ReadTool(q).Execute(ctx, tool.Input{SessionID: "sess-miss", Call: tool.Call{
+		ID:        "c1",
+		Name:      "memory_read",
+		Arguments: []byte(`{"scope":"user","name":"nope"}`),
+	}})
+	if err != nil {
+		t.Fatalf("missing memory must be a result, not error: %v", err)
+	}
+	if out.Success || out.Error == "" {
+		t.Fatalf("out=%+v", out)
+	}
+}

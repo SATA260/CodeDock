@@ -13,6 +13,7 @@ import (
 // newRouter 注册健康检查与 Session / Run / Approval / Memory 路由。
 func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 	router := chi.NewRouter()
+	router.Use(cors)
 	router.Use(middleware.RequestID)
 	router.Use(logger.Middleware(log))
 	router.Use(middleware.RealIP)
@@ -30,6 +31,7 @@ func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 			r.Post("/{session_id}/messages", api.CreateMessage)
 			r.Get("/{session_id}/messages", api.ListMessages)
 			r.Delete("/{session_id}/messages/{message_id}", api.DeleteMessage)
+			r.Get("/{session_id}/event-log", api.ListEvents)
 			r.Get("/{session_id}/events", api.SubscribeEvents)
 			r.Get("/{session_id}/usage", api.GetSessionUsage)
 			r.Get("/{session_id}/approvals", api.ListApprovals)

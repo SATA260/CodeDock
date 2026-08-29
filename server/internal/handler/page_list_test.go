@@ -117,6 +117,33 @@ func listSessions(t *testing.T, f *fixture, query string) handler.ListSessionsRe
 	return resp
 }
 
+func TestListEventsReplay(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{})
+	runID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "hello",
+		Mode:    pkgagent.ModeAutoApprove,
+		Config:  withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
+	})
+	f.waitRun(t, runID, pkgagent.RunCompleted)
+
+	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/event-log", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list events %d %s", rec.Code, rec.Body.String())
+	}
+	var resp handler.ListEventsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Events) == 0 {
+		t.Fatal("expected persisted events")
+	}
+	if resp.Events[0].Seq <= 0 {
+		t.Fatalf("seq=%d", resp.Events[0].Seq)
+	}
+}
+
 func listMessages(t *testing.T, f *fixture, sessionID, query string) handler.ListMessagesResponse {
 	t.Helper()
 	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/messages"+query, nil)

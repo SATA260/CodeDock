@@ -47,7 +47,7 @@ type ListUsageBySessionParams struct {
 }
 
 const listSessions = `
-SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id
+SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id, summary
 FROM sessions
 ORDER BY
   CASE WHEN ? = 'updated_at' AND ? = 'asc' THEN updated_at END ASC,
@@ -143,6 +143,7 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.WorkspaceID,
+			&i.Summary,
 		); err != nil {
 			return nil, err
 		}

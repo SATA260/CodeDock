@@ -401,9 +401,6 @@ func (r *Runtime) runTools(ctx context.Context, run pkgagent.Run, turn pkgagent.
 		},
 	}
 	out, err := tool.Dispatch(ctx, inv)
-	if err != nil && !out.WaitingApproval {
-		return false, err
-	}
 	if out.WaitingApproval {
 		items := make([]pkgagent.ApprovalToolCall, 0, len(out.ApprovalCalls))
 		for _, call := range out.ApprovalCalls {
@@ -461,10 +458,22 @@ func (r *Runtime) runTools(ctx context.Context, run pkgagent.Run, turn pkgagent.
 		return true, nil
 	}
 
-	for _, result := range out.Results {
+	if err != nil {
+		_ = r.persistToolResults(ctx, run, turn, calls, out.Results)
+		return false, err
+	}
+	if err := r.persistToolResults(ctx, run, turn, calls, out.Results); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// persistToolResults 把本轮工具结果（含失败）写成事件和 tool 消息；未执行的调用补一条失败，避免缺结果。
+func (r *Runtime) persistToolResults(ctx context.Context, run pkgagent.Run, turn pkgagent.Turn, calls []tool.Call, results []tool.Result) error {
+	for _, result := range fillMissingToolResults(calls, results) {
 		content := pkgagent.EncodeToolResult(result.CallID, result.Output)
 		if !result.Success {
-			content = pkgagent.EncodeText(result.Error)
+			content = pkgagent.EncodeToolError(result.CallID, result.Error)
 		}
 		runID := run.ID
 		turnID := turn.ID
@@ -482,7 +491,7 @@ func (r *Runtime) runTools(ctx context.Context, run pkgagent.Run, turn pkgagent.
 			}),
 		})
 		if err != nil {
-			return false, err
+			return err
 		}
 		if _, err := r.insertMessage(ctx, pkgagent.Message{
 			SessionID: run.SessionID,
@@ -492,13 +501,36 @@ func (r *Runtime) runTools(ctx context.Context, run pkgagent.Run, turn pkgagent.
 			Content:   content,
 			EventSeq:  ev.Seq,
 		}); err != nil {
-			return false, err
+			return err
 		}
 	}
-	if err != nil {
-		return false, err
+	return nil
+}
+
+func fillMissingToolResults(calls []tool.Call, results []tool.Result) []tool.Result {
+	seen := make(map[string]struct{}, len(results))
+	out := make([]tool.Result, 0, len(calls))
+	for _, result := range results {
+		if result.CallID != "" {
+			seen[result.CallID] = struct{}{}
+		}
+		out = append(out, result)
 	}
-	return false, nil
+	for _, call := range calls {
+		if call.ID == "" {
+			continue
+		}
+		if _, ok := seen[call.ID]; ok {
+			continue
+		}
+		out = append(out, tool.Result{
+			CallID:  call.ID,
+			Name:    call.Name,
+			Success: false,
+			Error:   "tool did not execute",
+		})
+	}
+	return out
 }
 
 // emitToolEvent 把 Dispatch 过程事件落成 AgentEvent；审批与最终结果由调用方另写。

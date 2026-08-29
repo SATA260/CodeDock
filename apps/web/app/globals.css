@@ -1,26 +1,16 @@
 @import "tailwindcss";
+@import "@codedock/ui/styles/tokens.css";
+@import "@codedock/ui/styles/markdown.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
+@source "../../../packages/ui";
+@source "../../../packages/views";
+@source "../../../packages/ui/node_modules/streamdown/dist/*.js";
+@source "../../../packages/ui/node_modules/@streamdown/code/dist/*.js";
+@source "../../../packages/ui/node_modules/@streamdown/cjk/dist/*.js";
+@source "../../../packages/ui/node_modules/@streamdown/math/dist/*.js";
+@source "../../../packages/ui/node_modules/@streamdown/mermaid/dist/*.js";
+@source "../../../node_modules/streamdown/dist/*.js";
+@source "../../../node_modules/@streamdown/code/dist/*.js";
+@source "../../../node_modules/@streamdown/cjk/dist/*.js";
+@source "../../../node_modules/@streamdown/math/dist/*.js";
+@source "../../../node_modules/@streamdown/mermaid/dist/*.js";

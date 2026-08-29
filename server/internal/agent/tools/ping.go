@@ -42,12 +42,12 @@ func (p pingTool) Execute(ctx context.Context, input tool.Input) (tool.Result, e
 	var args pingInput
 	if len(input.Call.Arguments) > 0 {
 		if err := json.Unmarshal(input.Call.Arguments, &args); err != nil {
-			return tool.Result{CallID: input.Call.ID, Name: "ping", Success: false, Error: err.Error()}, err
+			return tool.Result{CallID: input.Call.ID, Name: "ping", Success: false, Error: err.Error()}, nil
 		}
 	}
 	raw, err := json.Marshal(pingOutput{OK: true})
 	if err != nil {
-		return tool.Result{CallID: input.Call.ID, Name: "ping", Success: false, Error: err.Error()}, err
+		return tool.Result{CallID: input.Call.ID, Name: "ping", Success: false, Error: err.Error()}, nil
 	}
 	return tool.Result{
 		CallID:  input.Call.ID,

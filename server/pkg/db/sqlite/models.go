@@ -110,6 +110,7 @@ type Session struct {
 	CreatedAt     string
 	UpdatedAt     string
 	WorkspaceID   string
+	Summary       string
 }
 
 type SessionLease struct {

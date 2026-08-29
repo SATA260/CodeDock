@@ -30,7 +30,7 @@ const claimActiveRun = `-- name: ClaimActiveRun :one
 UPDATE sessions
 SET active_run_id = ?, updated_at = ?
 WHERE id = ? AND active_run_id IS NULL
-RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id
+RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id, summary
 `
 
 type ClaimActiveRunParams struct {
@@ -54,6 +54,7 @@ func (q *Queries) ClaimActiveRun(ctx context.Context, arg ClaimActiveRunParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.WorkspaceID,
+		&i.Summary,
 	)
 	return i, err
 }
@@ -87,7 +88,7 @@ func (q *Queries) CountSessions(ctx context.Context) (int64, error) {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id FROM sessions
+SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id, summary FROM sessions
 WHERE id = ?
 `
 
@@ -106,6 +107,7 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.WorkspaceID,
+		&i.Summary,
 	)
 	return i, err
 }
@@ -135,7 +137,7 @@ INSERT INTO sessions (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id
+RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id, summary
 `
 
 type InsertSessionParams struct {
@@ -179,8 +181,26 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (S
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.WorkspaceID,
+		&i.Summary,
 	)
 	return i, err
+}
+
+const setSessionSummary = `-- name: SetSessionSummary :exec
+UPDATE sessions
+SET summary = ?, updated_at = ?
+WHERE id = ? AND summary = ''
+`
+
+type SetSessionSummaryParams struct {
+	Summary   string
+	UpdatedAt string
+	ID        string
+}
+
+func (q *Queries) SetSessionSummary(ctx context.Context, arg SetSessionSummaryParams) error {
+	_, err := q.db.ExecContext(ctx, setSessionSummary, arg.Summary, arg.UpdatedAt, arg.ID)
+	return err
 }
 
 const updateCompactionSeq = `-- name: UpdateCompactionSeq :exec
@@ -204,7 +224,7 @@ const updateSession = `-- name: UpdateSession :one
 UPDATE sessions
 SET agent_id = ?, status = ?, active_run_id = ?, last_event_seq = ?, compaction_seq = ?, updated_at = ?
 WHERE id = ?
-RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id
+RETURNING id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id, summary
 `
 
 type UpdateSessionParams struct {
@@ -240,6 +260,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.WorkspaceID,
+		&i.Summary,
 	)
 	return i, err
 }

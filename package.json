@@ -1,0 +1,10 @@
+{
+  "name": "codedock",
+  "private": true,
+  "scripts": {
+    "dev:web": "pnpm --filter web dev",
+    "build:web": "pnpm --filter web build",
+    "test:client": "pnpm --filter @codedock/core test"
+  },
+  "packageManager": "pnpm@11.17.0"
+}
