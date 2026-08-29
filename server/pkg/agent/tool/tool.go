@@ -34,59 +34,59 @@ const (
 
 // Permission 描述工具所需的能力；审批与否由工具自己声明。
 type Permission struct {
-	Capabilities     []Capability
-	RequiresApproval bool
-	Resource         string
+	Capabilities     []Capability `json:"capabilities,omitempty"`
+	RequiresApproval bool         `json:"requires_approval"`
+	Resource         string       `json:"resource,omitempty"`
 }
 
 // PermissionPolicy 是 Run 创建时冻结的工具授权策略。
 type PermissionPolicy struct {
-	Version             string
-	AllowedCapabilities []Capability
-	DeniedTools         []string
-	ResourceScopes      []string
+	Version             string       `json:"version,omitempty"`
+	AllowedCapabilities []Capability `json:"allowed_capabilities,omitempty"`
+	DeniedTools         []string     `json:"denied_tools,omitempty"`
+	ResourceScopes      []string     `json:"resource_scopes,omitempty"`
 }
 
 // ApprovalPolicy 是 Run 创建时冻结的用户审批策略。
 type ApprovalPolicy struct {
-	Version           string
-	AutoApprovedTools []string
-	DefaultExpiry     time.Duration
+	Version           string        `json:"version,omitempty"`
+	AutoApprovedTools []string      `json:"auto_approved_tools,omitempty"`
+	DefaultExpiry     time.Duration `json:"default_expiry,omitempty"`
 }
 
 // Definition 是模型可见的统一工具描述。
 type Definition struct {
-	Name             string
-	Prompt           string
-	ParametersSchema json.RawMessage
-	OutputSchema     json.RawMessage
-	Permission       Permission
-	SupportsCancel   bool
-	SupportsRetry    bool
-	Version          string
+	Name             string          `json:"name"`
+	Prompt           string          `json:"prompt,omitempty"`
+	ParametersSchema json.RawMessage `json:"parameters_schema,omitempty"`
+	OutputSchema     json.RawMessage `json:"output_schema,omitempty"`
+	Permission       Permission      `json:"permission"`
+	SupportsCancel   bool            `json:"supports_cancel"`
+	SupportsRetry    bool            `json:"supports_retry"`
+	Version          string          `json:"version,omitempty"`
 }
 
 // Prompt 是注册中心返回给模型层的统一工具提示词。
 type Prompt struct {
-	Name             string
-	Content          string
-	ParametersSchema json.RawMessage
-	OutputSchema     json.RawMessage
+	Name             string          `json:"name"`
+	Content          string          `json:"content"`
+	ParametersSchema json.RawMessage `json:"parameters_schema,omitempty"`
+	OutputSchema     json.RawMessage `json:"output_schema,omitempty"`
 }
 
 // Reference 是可序列化的版本化工具标识。
 type Reference struct {
-	Name    string
-	Version string
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
 }
 
 // Call 是模型输出并完成参数组装后的工具调用。
 type Call struct {
-	ID             string
-	Name           string
-	Arguments      json.RawMessage
-	Attempt        int
-	IdempotencyKey string
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	Arguments      json.RawMessage `json:"arguments,omitempty"`
+	Attempt        int             `json:"attempt,omitempty"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
 }
 
 // Input 是传递给各种工具兼容层的统一执行输入。

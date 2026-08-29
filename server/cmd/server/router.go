@@ -13,6 +13,7 @@ import (
 // newRouter 注册健康检查与 Session / Run / Approval / Memory 路由。
 func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 	router := chi.NewRouter()
+	router.Use(cors)
 	router.Use(middleware.RequestID)
 	router.Use(logger.Middleware(log))
 	router.Use(middleware.RealIP)
