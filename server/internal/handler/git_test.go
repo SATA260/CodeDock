@@ -50,8 +50,10 @@ func gitRouter(api *handler.API) http.Handler {
 	r.Get("/git/status", api.GitStatus)
 	r.Get("/git/diff", api.GitDiff)
 	r.Get("/git/graph", api.GitGraph)
+	r.Get("/git/log", api.GitLog)
 	r.Post("/git/stage", api.GitStage)
 	r.Post("/git/unstage", api.GitUnstage)
+	r.Post("/git/discard", api.GitDiscard)
 	r.Post("/git/commit", api.GitCommit)
 	r.Post("/git/reset", api.GitReset)
 	r.Post("/git/revert", api.GitRevert)
@@ -292,6 +294,65 @@ func TestGitConflictAbortAndPromptSnapshot(t *testing.T) {
 	}
 	if string(body) != "snap\n" {
 		t.Fatalf("restored %q", body)
+	}
+}
+
+func TestGitLog(t *testing.T) {
+	dir := initGitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "a.txt")
+	gitCmd(t, dir, "commit", "-m", "add a")
+	api := newGitAPI(t, dir)
+	r := gitRouter(api)
+	rec := doGit(t, r, http.MethodGet, "/git/log?limit=10", "")
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	var body struct {
+		Commits []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"commits"`
+	}
+	decodeGit(t, rec, &body)
+	if len(body.Commits) != 1 || body.Commits[0].Title != "add a" || body.Commits[0].ID == "" {
+		t.Fatalf("log: %+v", body.Commits)
+	}
+}
+
+func TestGitDiscard(t *testing.T) {
+	dir := initGitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("base"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "a.txt")
+	gitCmd(t, dir, "commit", "-m", "base")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("dirty"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pkg", "new.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	api := newGitAPI(t, dir)
+	r := gitRouter(api)
+	rec := doGit(t, r, http.MethodPost, "/git/discard", `{"paths":["a.txt","pkg/new.txt"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "base" {
+		t.Fatalf("tracked: %q", body)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pkg", "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("untracked: %v", err)
 	}
 }
 

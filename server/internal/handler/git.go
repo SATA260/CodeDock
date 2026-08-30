@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	cderr "codedock/internal/errors"
@@ -494,6 +495,30 @@ func (a *API) GitGraph(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, graph)
 }
 
+// GitLog 读当前检出线上的近期提交。
+func (a *API) GitLog(w http.ResponseWriter, r *http.Request) {
+	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		n, convErr := strconv.Atoi(raw)
+		if convErr != nil || n <= 0 {
+			writeError(w, cderr.Invalid("invalid limit"))
+			return
+		}
+		limit = n
+	}
+	commits, err := git.Log(repo, co, limit)
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commits": commits})
+}
+
 // GitStage 暂存选中路径。
 func (a *API) GitStage(w http.ResponseWriter, r *http.Request) {
 	var req gitPathsRequest
@@ -526,6 +551,25 @@ func (a *API) GitUnstage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := git.Unstage(repo, co, req.Paths); err != nil {
+		writeGitError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// GitDiscard 撤回工作区改动：已跟踪还原成暂存区，未跟踪删除。
+func (a *API) GitDiscard(w http.ResponseWriter, r *http.Request) {
+	var req gitPathsRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	repo, co, err := a.openSite(req.Checkout)
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	if err := git.Discard(repo, co, req.Paths); err != nil {
 		writeGitError(w, err)
 		return
 	}

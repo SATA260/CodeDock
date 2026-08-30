@@ -74,6 +74,26 @@ func TestOpenAndStatusNotRepo(t *testing.T) {
 	}
 }
 
+func TestStatusListsNestedUntrackedFiles(t *testing.T) {
+	repo, co := initRepo(t)
+	writeRepoFile(t, co.Path, "pkg/foo/a.txt", "x")
+	writeRepoFile(t, co.Path, "pkg/foo/b.txt", "y")
+	state, err := Status(repo, co)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Files) != 2 {
+		t.Fatalf("nested untracked: %+v", state.Files)
+	}
+	got := map[string]bool{}
+	for _, file := range state.Files {
+		got[file.Path] = file.WorktreeStatus == "?"
+	}
+	if !got["pkg/foo/a.txt"] || !got["pkg/foo/b.txt"] {
+		t.Fatalf("expected files under pkg/foo: %+v", state.Files)
+	}
+}
+
 func TestStatusEmptyAndFirstCommit(t *testing.T) {
 	repo, co := initRepo(t)
 	state, err := Status(repo, co)
@@ -274,6 +294,79 @@ func TestCreateBranchUsesCheckoutHEAD(t *testing.T) {
 	}
 	if fromWT.Head != featureCommit.ID {
 		t.Fatalf("from-wt head %s want checkout %s (not main %s)", fromWT.Head, featureCommit.ID, mainCommit.ID)
+	}
+}
+
+func TestLogListsCurrentBranchNewestFirst(t *testing.T) {
+	repo, co := initRepo(t)
+	first := commitFile(t, repo, co, "a.txt", "1", "first")
+	second := commitFile(t, repo, co, "a.txt", "2", "second")
+	commits, err := Log(repo, co, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 2 || commits[0].ID != second.ID || commits[1].ID != first.ID {
+		t.Fatalf("log: %+v", commits)
+	}
+	if commits[0].Title != "second" || commits[0].Author == "" || commits[0].Date == "" {
+		t.Fatalf("fields: %+v", commits[0])
+	}
+}
+
+func TestDiscardRestoresTrackedAndDeletesUntracked(t *testing.T) {
+	repo, co := initRepo(t)
+	commitFile(t, repo, co, "a.txt", "base", "first")
+	writeRepoFile(t, co.Path, "a.txt", "dirty")
+	writeRepoFile(t, co.Path, "pkg/foo/new.txt", "untracked")
+	if err := Discard(repo, co, []string{"a.txt", "pkg/foo/new.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(co.Path, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "base" {
+		t.Fatalf("tracked restore: %q", body)
+	}
+	if _, err := os.Stat(filepath.Join(co.Path, "pkg/foo/new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("untracked still there: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(co.Path, "pkg")); !os.IsNotExist(err) {
+		t.Fatalf("empty untracked dirs remain: %v", err)
+	}
+	state, err := Status(repo, co)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Files) != 0 {
+		t.Fatalf("status after discard: %+v", state.Files)
+	}
+}
+
+func TestDiscardKeepsStaged(t *testing.T) {
+	repo, co := initRepo(t)
+	commitFile(t, repo, co, "a.txt", "base", "first")
+	writeRepoFile(t, co.Path, "a.txt", "staged")
+	if err := Stage(repo, co, []string{"a.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	writeRepoFile(t, co.Path, "a.txt", "worktree")
+	if err := Discard(repo, co, []string{"a.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(co.Path, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "staged" {
+		t.Fatalf("worktree should match index: %q", body)
+	}
+	state, err := Status(repo, co)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Files) != 1 || state.Files[0].StagedStatus != "M" || letterDirty(state.Files[0].WorktreeStatus) {
+		t.Fatalf("keep staged: %+v", state.Files)
 	}
 }
 

@@ -19,6 +19,22 @@ export {
   type AgentClientOptions,
   type WatchEventsOptions,
 } from "./chat/index.ts";
+export { GitClient, GitClientError, type GitClientOptions } from "./git/index.ts";
+export type {
+  Branch,
+  BranchView,
+  Commit,
+  CommitRequest,
+  DiffFile,
+  DiffScope,
+  FileStatus,
+  Graph,
+  GraphEdge,
+  GraphNode,
+  Ref,
+  Remote,
+  SiteState,
+} from "./git/index.ts";
 export type {
   AgentEvent,
   AgentMode,

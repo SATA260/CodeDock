@@ -2,7 +2,7 @@
 
 修改 CodeDock 代码前，先阅读 [`docs/architecture.md`](docs/architecture.md)。该文档是当前目录归属和模块边界的依据。
 
-Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping` 与记忆工具 `memory_read` / `memory_write` / `memory_search`，不实现文件 / Shell / Git **工具**。Git 用户操作走 HTTP + `pkg/git`，不经过 Agent Tool；本阶段不做前端 Git 页。
+Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping` 与记忆工具 `memory_read` / `memory_write` / `memory_search`，不实现文件 / Shell / Git **工具**。Git 用户操作走 HTTP + `pkg/git`，不经过 Agent Tool。前端 Git 在 `packages/core/git`、`packages/views/git` 与 `apps/web` 的 `/git`，不扩 `AgentClient`。
 
 ## 目录放置规则
 
@@ -16,10 +16,10 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 进程内事件总线放在 `server/internal/events`。
 - 数据库入口和 sqlc 生成代码放在 `server/pkg/db`。
 - 数据库结构演进放在 `server/migrations`。
-- 无头业务放在 `packages/core`（`@codedock/core`）：按业务域拆（现有 `chat/`），文件直接在域目录下，不要 `src/`。不依赖 React、Next、DOM、`process.env`。`baseUrl` / `userId` 由调用方注入。
+- 无头业务放在 `packages/core`（`@codedock/core`）：按业务域拆（现有 `chat/`、`git/`），文件直接在域目录下，不要 `src/`。不依赖 React、Next、DOM、`process.env`。`baseUrl` / `userId` 由调用方注入。Git 用独立 `GitClient`。
 - 无业务 UI 放在 `packages/ui`（`@codedock/ui`）：`components/`、`lib/`、`styles/`，不要 `src/`，不按业务域拆。不依赖 core，不知道 Session / Run / TimelineItem。
-- 组合层放在 `packages/views`（`@codedock/views`）：按业务域拆，与 core 对齐（现有 `chat/`）。包根 `provider.tsx` 注入 client。不 import `next/*`；导航用回调。不要 `src/`，不预建空业务域。
-- Web 路由和平台装配放在 `apps/web`：读 `NEXT_PUBLIC_*`、创建 `AgentClient`、包 `AgentProvider`、`router.push`。不解析 SSE。
+- 组合层放在 `packages/views`（`@codedock/views`）：按业务域拆，与 core 对齐（现有 `chat/`、`git/`）。包根 `provider.tsx` 注入 Agent client；Git 用 `views/git` 的 `GitProvider`。不 import `next/*`；导航用回调。不要 `src/`，不预建空业务域。
+- Web 路由和平台装配放在 `apps/web`：读 `NEXT_PUBLIC_*`、创建 `AgentClient` / `GitClient`、包对应 Provider、`router.push`。`/git` 放在 `(chat)` 组外。开发态切页顶栏只放 web。不解析 SSE。
 - 依赖方向：`apps/web` → `packages/views` → `packages/core`；`packages/views` → `packages/ui`。`ui` 不依赖 `core`。未来 CLI 只依赖 `core`。
 - 不要创建 `server/pkg/ai`。大模型调用属于 `pkg/agent`。
 

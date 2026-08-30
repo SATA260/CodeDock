@@ -30,7 +30,7 @@ func Status(repo Repo, checkout Checkout) (SiteState, error) {
 		return state, nil
 	}
 	state.IsRepo = true
-	out, err := runGit(dir, "status", "--porcelain=v2", "--branch", "-unormal")
+	out, err := runGit(dir, "status", "--porcelain=v2", "--branch", "-uall")
 	if err != nil {
 		return SiteState{}, err
 	}
@@ -335,6 +335,58 @@ func LogGraph(repo Repo, limit int) (Graph, error) {
 	return graph, nil
 }
 
+// Log 读这份检出当前线上的近期提交，从新到旧。不是 --all 的分叉图。
+func Log(repo Repo, checkout Checkout, limit int) ([]Commit, error) {
+	dir := checkoutDir(repo, checkout)
+	if !isRepo(dir) {
+		return []Commit{}, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	state, err := Status(repo, checkout)
+	if err != nil {
+		return nil, err
+	}
+	if !state.IsRepo || state.Empty {
+		return []Commit{}, nil
+	}
+	out, err := runGitAllow(dir, []int{128}, "log", "-n", strconv.Itoa(limit), "--format=%H%x1f%P%x1f%s%x1f%an%x1f%aI%x1f%b%x1e")
+	if err != nil {
+		return nil, err
+	}
+	commits := []Commit{}
+	for _, rec := range strings.Split(out, "\x1e") {
+		rec = strings.TrimSpace(rec)
+		if rec == "" {
+			continue
+		}
+		parts := strings.SplitN(rec, "\x1f", 6)
+		if len(parts) < 5 {
+			continue
+		}
+		var parents []string
+		if strings.TrimSpace(parts[1]) != "" {
+			parents = strings.Fields(parts[1])
+		} else {
+			parents = []string{}
+		}
+		body := ""
+		if len(parts) > 5 {
+			body = strings.TrimSpace(parts[5])
+		}
+		commits = append(commits, Commit{
+			ID:      strings.TrimSpace(parts[0]),
+			Parents: parents,
+			Title:   parts[2],
+			Body:    body,
+			Author:  parts[3],
+			Date:    strings.TrimSpace(parts[4]),
+		})
+	}
+	return commits, nil
+}
+
 func parseDecorations(raw string) []Ref {
 	raw = strings.TrimSpace(raw)
 	raw = strings.TrimPrefix(raw, "(")
@@ -574,4 +626,73 @@ func RestorePath(repo Repo, checkout Checkout, path string) error {
 	}
 	_, err = runGit(dir, "restore", "--source=HEAD", "--staged", "--worktree", "--", clean[0])
 	return err
+}
+
+// Discard 丢掉工作区改动：已跟踪的还原成暂存区；未跟踪的删除。不改暂存区。
+func Discard(repo Repo, checkout Checkout, paths []string) error {
+	dir := checkoutDir(repo, checkout)
+	if err := requireRepo(dir); err != nil {
+		return err
+	}
+	clean, err := normalizePaths(paths)
+	if err != nil {
+		return err
+	}
+	state, err := Status(repo, checkout)
+	if err != nil {
+		return err
+	}
+	byPath := make(map[string]FileStatus, len(state.Files))
+	for _, file := range state.Files {
+		byPath[file.Path] = file
+	}
+	var tracked []string
+	var untracked []string
+	for _, path := range clean {
+		if path == ".git" || strings.HasPrefix(path, ".git/") {
+			return fmt.Errorf("invalid path %q", path)
+		}
+		file, ok := byPath[path]
+		if !ok {
+			continue
+		}
+		if file.Unmerged {
+			return ErrConflict
+		}
+		if file.WorktreeStatus == "?" {
+			untracked = append(untracked, path)
+			continue
+		}
+		if letterDirty(file.WorktreeStatus) {
+			tracked = append(tracked, path)
+		}
+	}
+	if len(tracked) > 0 {
+		if _, err := runGit(dir, append([]string{"restore", "--worktree", "--"}, tracked...)...); err != nil {
+			return err
+		}
+	}
+	for _, path := range untracked {
+		if err := removeUntracked(dir, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeUntracked(dir, rel string) error {
+	abs := filepath.Join(dir, filepath.FromSlash(rel))
+	back, err := filepath.Rel(dir, abs)
+	if err != nil || back == "." || strings.HasPrefix(back, "..") {
+		return fmt.Errorf("invalid path %q", rel)
+	}
+	if err := os.RemoveAll(abs); err != nil {
+		return err
+	}
+	for parent := filepath.Dir(abs); parent != dir; parent = filepath.Dir(parent) {
+		if err := os.Remove(parent); err != nil {
+			break
+		}
+	}
+	return nil
 }

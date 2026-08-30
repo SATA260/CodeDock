@@ -5,10 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./index.ts",
-    "./chat": "./chat/index.ts"
+    "./chat": "./chat/index.ts",
+    "./git": "./git/index.ts"
   },
   "scripts": {
-    "test": "node --test --experimental-strip-types chat/reducer.test.ts chat/sse.test.ts"
+    "test": "node --test --experimental-strip-types chat/reducer.test.ts chat/sse.test.ts git/client.test.ts"
   },
   "devDependencies": {
     "@types/node": "^20",
