@@ -251,7 +251,7 @@ func TestGitConflictAbortAndPromptSnapshot(t *testing.T) {
 		t.Fatal(rec.Body.String())
 	}
 
-	rec = doGit(t, r, http.MethodPut, "/git/commit-message/prompt", `{"system_prompt":"写短标题"}`)
+	rec = doGit(t, r, http.MethodPut, "/git/commit-message/prompt", `{"selected":"custom","custom":"写短标题"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatal(rec.Body.String())
 	}
@@ -261,7 +261,7 @@ func TestGitConflictAbortAndPromptSnapshot(t *testing.T) {
 	}
 	var prompt handler.PromptConfig
 	decodeGit(t, rec, &prompt)
-	if prompt.SystemPrompt != "写短标题" {
+	if prompt.Selected != "custom" || prompt.Custom != "写短标题" || prompt.SystemPrompt != "写短标题" || len(prompt.Presets) != 2 {
 		t.Fatalf("prompt: %+v", prompt)
 	}
 
@@ -395,6 +395,92 @@ func TestGitUndoRejectsOtherCheckoutSnapshot(t *testing.T) {
 	rec = doGit(t, r, http.MethodPost, "/git/undo", body)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("undo other checkout: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGitCommitMessagePromptPresets(t *testing.T) {
+	dir := initGitRepo(t)
+	api := newGitAPI(t, dir)
+	r := gitRouter(api)
+
+	rec := doGit(t, r, http.MethodGet, "/git/commit-message/prompt", "")
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	var prompt handler.PromptConfig
+	decodeGit(t, rec, &prompt)
+	if prompt.Selected != "conventional" || prompt.SystemPrompt == "" || len(prompt.Presets) != 2 {
+		t.Fatalf("default prompt: %+v", prompt)
+	}
+
+	rec = doGit(t, r, http.MethodPut, "/git/commit-message/prompt", `{"selected":"nope","custom":""}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid id: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doGit(t, r, http.MethodPut, "/git/commit-message/prompt", `{"selected":"conventional","custom":"keep me"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	decodeGit(t, rec, &prompt)
+	if prompt.Selected != "conventional" || prompt.Custom != "keep me" || !strings.Contains(prompt.SystemPrompt, "type(scope)") || !strings.Contains(prompt.SystemPrompt, `- "`) {
+		t.Fatalf("conventional: %+v", prompt)
+	}
+
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "codedock"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", "codedock", "commit-message.json"), []byte(`{"selected":"standard","custom":""}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec = doGit(t, r, http.MethodGet, "/git/commit-message/prompt", "")
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	decodeGit(t, rec, &prompt)
+	if prompt.Selected != "conventional" || !strings.Contains(prompt.SystemPrompt, "type(scope)") {
+		t.Fatalf("legacy standard: %+v", prompt)
+	}
+
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "codedock"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(dir, ".git", "codedock", "commit-message-prompt")
+	if err := os.WriteFile(legacy, []byte("旧提示词"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	jsonPath := filepath.Join(dir, ".git", "codedock", "commit-message.json")
+	if err := os.Remove(jsonPath); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	rec = doGit(t, r, http.MethodGet, "/git/commit-message/prompt", "")
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	decodeGit(t, rec, &prompt)
+	if prompt.Selected != "custom" || prompt.Custom != "旧提示词" || prompt.SystemPrompt != "旧提示词" {
+		t.Fatalf("migrate: %+v", prompt)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec = doGit(t, r, http.MethodPost, "/git/commit-message/generate", `{}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("nothing staged: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = doGit(t, r, http.MethodPost, "/git/stage", `{"paths":["a.txt"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	rec = doGit(t, r, http.MethodPost, "/git/commit-message/generate", `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	var draft handler.MessageDraft
+	decodeGit(t, rec, &draft)
+	if draft.Title == "" {
+		t.Fatal("draft title")
 	}
 }
 

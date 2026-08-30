@@ -93,3 +93,26 @@ export type DiffFile = {
   binary: boolean;
   patch: string;
 };
+
+export type MessageDraft = {
+  title: string;
+  body: string;
+};
+
+export type PromptPreset = {
+  id: string;
+  name: string;
+  system_prompt: string;
+};
+
+export type PromptConfig = {
+  presets: PromptPreset[];
+  selected: string;
+  custom: string;
+  system_prompt: string;
+};
+
+export type PromptConfigUpdate = {
+  selected: string;
+  custom: string;
+};

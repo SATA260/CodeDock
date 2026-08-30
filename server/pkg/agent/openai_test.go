@@ -2,10 +2,29 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"codedock/pkg/agent/tool"
 )
+
+func TestOpenAIRequestDisablesThinking(t *testing.T) {
+	body, err := json.Marshal(openaiChatRequest{
+		Model:     "deepseek-v4-flash",
+		Stream:    true,
+		MaxTokens: 96,
+		Thinking:  &openaiThinking{Type: "disabled"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"thinking":{"type":"disabled"}`) {
+		t.Fatalf("body %s", body)
+	}
+	if !strings.Contains(string(body), `"max_tokens":96`) {
+		t.Fatalf("body %s", body)
+	}
+}
 
 // TestMergeToolDelta 校验流式 tool_calls 按 index 拼成一条完整调用。
 func TestMergeToolDelta(t *testing.T) {

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -16,8 +15,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-const defaultCommitPrompt = "根据已暂存的 diff 写 Git 提交说明。第一行是不超过 72 个字符的标题，空一行后写正文。不要使用代码围栏，不要解释。"
 
 type gitCheckoutRequest struct {
 	Checkout string `json:"checkout"`
@@ -69,10 +66,6 @@ type gitConflictWriteRequest struct {
 	Checkout string `json:"checkout"`
 }
 
-type gitPromptRequest struct {
-	SystemPrompt string `json:"system_prompt"`
-}
-
 type gitStashCreateRequest struct {
 	AgentRun string `json:"agent_run"`
 	Checkout string `json:"checkout"`
@@ -108,11 +101,6 @@ type ConflictSession struct {
 type MessageDraft struct {
 	Title string `json:"title"` // 生成的标题行。
 	Body  string `json:"body"`  // 生成的正文。
-}
-
-// PromptConfig 是生成说明用的 system prompt。
-type PromptConfig struct {
-	SystemPrompt string `json:"system_prompt"` // 空则用产品默认。
 }
 
 // AgentSnapshot 是 Agent 改工作区前的副本，不是用户 stash 列表里的条目。
@@ -252,26 +240,6 @@ func codedockFile(repo git.Repo, name string) (string, error) {
 	return filepath.Join(dir, name), nil
 }
 
-func (a *API) loadPrompt(repo git.Repo) string {
-	path, err := codedockFile(repo, "commit-message-prompt")
-	if err != nil {
-		return defaultCommitPrompt
-	}
-	body, err := os.ReadFile(path)
-	if err != nil || strings.TrimSpace(string(body)) == "" {
-		return defaultCommitPrompt
-	}
-	return string(body)
-}
-
-func (a *API) savePrompt(repo git.Repo, prompt string) error {
-	path, err := codedockFile(repo, "commit-message-prompt")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(prompt), 0o644)
-}
-
 func (a *API) loadSnapshots(repo git.Repo) ([]AgentSnapshot, error) {
 	path, err := codedockFile(repo, "snapshots.json")
 	if err != nil {
@@ -327,19 +295,11 @@ func snapshotByID(items []AgentSnapshot, id string) (AgentSnapshot, bool) {
 	return AgentSnapshot{}, false
 }
 
-func parseDraft(text string) MessageDraft {
-	text = strings.TrimSpace(text)
-	title, body, ok := strings.Cut(text, "\n")
-	if !ok {
-		return MessageDraft{Title: text}
-	}
-	return MessageDraft{Title: strings.TrimSpace(title), Body: strings.TrimSpace(body)}
-}
-
 func (a *API) gitModel() pkgagent.ModelConfig {
 	opts, err := json.Marshal(map[string]string{
 		"api_key":  a.cfg.LLMAPIKey,
 		"base_url": a.cfg.LLMBaseURL,
+		"thinking": "disabled",
 	})
 	if err != nil {
 		opts = json.RawMessage(`{}`)
@@ -349,21 +309,6 @@ func (a *API) gitModel() pkgagent.ModelConfig {
 		Model:    a.cfg.LLMModel,
 		Options:  opts,
 	}
-}
-
-func fallbackDraft(files []git.DiffFile) string {
-	if len(files) == 0 {
-		return ""
-	}
-	title := files[0].Kind + " " + files[0].Path
-	var body strings.Builder
-	for _, file := range files {
-		body.WriteString(file.Kind)
-		body.WriteByte(' ')
-		body.WriteString(file.Path)
-		body.WriteByte('\n')
-	}
-	return title + "\n\n" + strings.TrimSpace(body.String())
 }
 
 func checkoutRelPath(root, rel string) (string, error) {
@@ -926,105 +871,6 @@ func (a *API) GitAbortConflict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-// GitGetPrompt 读生成说明用的 system prompt。
-func (a *API) GitGetPrompt(w http.ResponseWriter, r *http.Request) {
-	repo, _, err := a.openSite(r.URL.Query().Get("checkout"))
-	if err != nil {
-		writeGitError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, PromptConfig{SystemPrompt: a.loadPrompt(repo)})
-}
-
-// GitSetPrompt 保存用户自定义的 system prompt。
-func (a *API) GitSetPrompt(w http.ResponseWriter, r *http.Request) {
-	var req gitPromptRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, err)
-		return
-	}
-	repo, _, err := a.openSite("")
-	if err != nil {
-		writeGitError(w, err)
-		return
-	}
-	if err := a.savePrompt(repo, req.SystemPrompt); err != nil {
-		writeGitError(w, err)
-		return
-	}
-	prompt := req.SystemPrompt
-	if strings.TrimSpace(prompt) == "" {
-		prompt = defaultCommitPrompt
-	}
-	writeJSON(w, http.StatusOK, PromptConfig{SystemPrompt: prompt})
-}
-
-// GitGenerateMessage 读已暂存 diff，生成说明草稿。
-func (a *API) GitGenerateMessage(w http.ResponseWriter, r *http.Request) {
-	var req gitCheckoutRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, err)
-		return
-	}
-	repo, co, err := a.openSite(req.Checkout)
-	if err != nil {
-		writeGitError(w, err)
-		return
-	}
-	files, err := git.Diff(repo, co, "staged")
-	if err != nil {
-		writeGitError(w, err)
-		return
-	}
-	if len(files) == 0 {
-		writeError(w, cderr.Invalid("nothing staged"))
-		return
-	}
-	draft := a.generateDraft(r.Context(), repo, files)
-	draft.Title = strings.TrimSpace(draft.Title)
-	if draft.Title == "" {
-		draft = parseDraft(fallbackDraft(files))
-	}
-	writeJSON(w, http.StatusOK, draft)
-}
-
-func (a *API) generateDraft(ctx context.Context, repo git.Repo, files []git.DiffFile) MessageDraft {
-	var b strings.Builder
-	for _, file := range files {
-		if file.Binary {
-			b.WriteString("binary " + file.Kind + " " + file.Path + "\n")
-			continue
-		}
-		if file.Patch != "" {
-			b.WriteString(file.Patch)
-			b.WriteByte('\n')
-			continue
-		}
-		b.WriteString(file.Kind + " " + file.Path + "\n")
-	}
-	stream, err := pkgagent.Stream(ctx, pkgagent.Chat{
-		Model:        a.gitModel(),
-		SystemPrompt: a.loadPrompt(repo),
-		Messages: []pkgagent.Message{{
-			Role:    pkgagent.RoleUser,
-			Content: pkgagent.EncodeText(b.String()),
-		}},
-	})
-	if err != nil {
-		return parseDraft(fallbackDraft(files))
-	}
-	defer stream.Close()
-	result, err := stream.Result(ctx)
-	if err != nil {
-		return parseDraft(fallbackDraft(files))
-	}
-	text := strings.TrimSpace(pkgagent.DecodeText(result.Message.Content))
-	if text == "" || text == "ok" {
-		return parseDraft(fallbackDraft(files))
-	}
-	return parseDraft(text)
 }
 
 // GitCreateSnapshot 复制当时提交和工作区，不挪走现有改动。

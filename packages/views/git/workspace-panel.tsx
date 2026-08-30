@@ -1,6 +1,6 @@
 "use client";
 
-import type { SiteState } from "@codedock/core/git";
+import type { MessageDraft, PromptConfig, SiteState } from "@codedock/core/git";
 import { Button } from "@codedock/ui";
 import { RefreshCw } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
@@ -9,11 +9,20 @@ import { DiscardConfirm, type DiscardRequest } from "./discard-confirm.tsx";
 import { FileTree } from "./file-tree.tsx";
 import type { PreviewTarget } from "./lib/preview.ts";
 import { splitWorkspaceFiles, stagedLabel, worktreeLabel } from "./lib/status.ts";
+import { PromptPicker } from "./prompt-picker.tsx";
 import { PublishActions } from "./publish-actions.tsx";
+
+function draftText(draft: MessageDraft): string {
+  const title = draft.title.trim();
+  const body = draft.body.trim();
+  return body ? `${title}\n\n${body}` : title;
+}
 
 export function WorkspacePanel({
   state,
   busy,
+  generating,
+  prompt,
   preview,
   onPreview,
   onReload,
@@ -21,10 +30,14 @@ export function WorkspacePanel({
   onUnstage,
   onDiscard,
   onCommit,
+  onGenerate,
+  onSavePrompt,
   onPush,
 }: {
   state: SiteState;
   busy: boolean;
+  generating: boolean;
+  prompt: PromptConfig | null;
   preview: PreviewTarget | null;
   onPreview: (target: PreviewTarget) => void;
   onReload: () => Promise<void>;
@@ -32,6 +45,8 @@ export function WorkspacePanel({
   onUnstage: (paths: string[]) => Promise<void>;
   onDiscard: (paths: string[]) => Promise<void>;
   onCommit: (message: string) => Promise<void>;
+  onGenerate: () => Promise<MessageDraft>;
+  onSavePrompt: (selected: string, custom: string) => Promise<void>;
   onPush: () => Promise<void>;
 }) {
   const [message, setMessage] = useState("");
@@ -67,7 +82,7 @@ export function WorkspacePanel({
   return (
     <section className="flex h-full min-h-0 w-[340px] shrink-0 flex-col border-r border-border">
       <form
-        className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5"
+        className="flex shrink-0 flex-col gap-2 border-b border-border px-3 py-2"
         onSubmit={(event) => {
           event.preventDefault();
           const text = message.trim();
@@ -79,20 +94,45 @@ export function WorkspacePanel({
           });
         }}
       >
-        <input
-          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        <textarea
+          className="min-h-[168px] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           placeholder="已确认的说明，提交前可以再改"
           value={message}
           onChange={(event) => setMessage(event.target.value)}
         />
-        <PublishActions
-          busy={busy}
-          canCommit={!busy && message.trim() !== "" && staged.length > 0}
-          canPush={
-            !busy && (state.remotes ?? []).length > 0 && Boolean(state.upstream) && !state.upstream_gone
-          }
-          onPush={() => void onPush()}
-        />
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={busy || generating || staged.length === 0}
+            onClick={() => {
+              void onGenerate()
+                .then((draft) => {
+                  setMessage(draftText(draft));
+                })
+                .catch(() => undefined);
+            }}
+          >
+            {generating ? "生成中" : "生成"}
+          </Button>
+          <PromptPicker
+            prompt={prompt}
+            disabled={busy || generating}
+            onSelect={(selected) => onSavePrompt(selected, prompt?.custom ?? "")}
+            onSaveCustom={(custom) => onSavePrompt(prompt?.selected ?? "custom", custom)}
+          />
+          <div className="ml-auto">
+            <PublishActions
+              busy={busy}
+              canCommit={!busy && message.trim() !== "" && staged.length > 0}
+              canPush={
+                !busy && (state.remotes ?? []).length > 0 && Boolean(state.upstream) && !state.upstream_gone
+              }
+              onPush={() => void onPush()}
+            />
+          </div>
+        </div>
       </form>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <FileSection

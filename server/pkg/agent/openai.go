@@ -15,15 +15,22 @@ import (
 )
 
 type openaiOptions struct {
-	APIKey  string `json:"api_key"`
-	BaseURL string `json:"base_url"`
+	APIKey   string `json:"api_key"`
+	BaseURL  string `json:"base_url"`
+	Thinking string `json:"thinking"`
+}
+
+type openaiThinking struct {
+	Type string `json:"type"`
 }
 
 type openaiChatRequest struct {
-	Model    string              `json:"model"`
-	Stream   bool                `json:"stream"`
-	Messages []openaiChatMessage `json:"messages"`
-	Tools    []openaiTool        `json:"tools,omitempty"`
+	Model     string              `json:"model"`
+	Stream    bool                `json:"stream"`
+	Messages  []openaiChatMessage `json:"messages"`
+	Tools     []openaiTool        `json:"tools,omitempty"`
+	MaxTokens int64               `json:"max_tokens,omitempty"`
+	Thinking  *openaiThinking     `json:"thinking,omitempty"`
 }
 
 type openaiChatMessage struct {
@@ -79,12 +86,17 @@ func streamOpenAI(ctx context.Context, chat Chat) (ModelStream, error) {
 		base = "https://api.openai.com/v1"
 	}
 
-	body, err := json.Marshal(openaiChatRequest{
-		Model:    chat.Model.Model,
-		Stream:   true,
-		Messages: toOpenAIMessages(chat),
-		Tools:    toOpenAITools(chat.Tools),
-	})
+	reqBody := openaiChatRequest{
+		Model:     chat.Model.Model,
+		Stream:    true,
+		Messages:  toOpenAIMessages(chat),
+		Tools:     toOpenAITools(chat.Tools),
+		MaxTokens: chat.MaxOutputTokens,
+	}
+	if opts.Thinking != "" {
+		reqBody.Thinking = &openaiThinking{Type: opts.Thinking}
+	}
+	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, err
 	}

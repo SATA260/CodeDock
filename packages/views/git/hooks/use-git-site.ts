@@ -1,6 +1,6 @@
 "use client";
 
-import type { BranchView, Commit, DiffFile, SiteState } from "@codedock/core/git";
+import type { BranchView, Commit, DiffFile, MessageDraft, PromptConfig, SiteState } from "@codedock/core/git";
 import { useCallback, useEffect, useState } from "react";
 
 import { localNameFromRemote } from "../lib/status.ts";
@@ -41,8 +41,10 @@ export function useGitSite() {
   const [branches, setBranches] = useState<BranchView>(emptyBranches);
   const [diffs, setDiffs] = useState(emptyDiffs);
   const [commits, setCommits] = useState<Commit[]>([]);
+  const [prompt, setPrompt] = useState<PromptConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -74,6 +76,25 @@ export function useGitSite() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void client
+      .messagePrompt()
+      .then((next) => {
+        if (!cancelled) {
+          setPrompt(next);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "无法读取提示词");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
 
   const run = useCallback(
     async (action: () => Promise<unknown>) => {
@@ -113,6 +134,34 @@ export function useGitSite() {
     }
   }, [refresh]);
 
+  const generate = useCallback(async (): Promise<MessageDraft> => {
+    setGenerating(true);
+    try {
+      const draft = await client.generateMessage();
+      setError(null);
+      return draft;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成失败");
+      throw err;
+    } finally {
+      setGenerating(false);
+    }
+  }, [client]);
+
+  const savePrompt = useCallback(
+    async (selected: string, custom: string) => {
+      try {
+        const next = await client.saveMessagePrompt({ selected, custom });
+        setPrompt(next);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "无法保存提示词");
+        throw err;
+      }
+    },
+    [client],
+  );
+
   const checkoutRemote = useCallback(
     (remoteName: string) =>
       run(async () => {
@@ -132,8 +181,10 @@ export function useGitSite() {
     branches,
     diffs,
     commits,
+    prompt,
     error,
     busy,
+    generating,
     loading,
     refresh,
     reload,
@@ -141,6 +192,8 @@ export function useGitSite() {
     unstage,
     discard,
     commit,
+    generate,
+    savePrompt,
     push,
     switchBranch,
     checkoutRemote,

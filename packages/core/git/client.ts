@@ -1,4 +1,14 @@
-import type { BranchView, Commit, CommitRequest, DiffFile, DiffScope, SiteState } from "./types.ts";
+import type {
+  BranchView,
+  Commit,
+  CommitRequest,
+  DiffFile,
+  DiffScope,
+  MessageDraft,
+  PromptConfig,
+  PromptConfigUpdate,
+  SiteState,
+} from "./types.ts";
 
 export class GitClientError extends Error {
   readonly status: number;
@@ -96,6 +106,24 @@ export class GitClient {
       `/git/log${query({ limit: String(limit), checkout })}`,
     );
     return body.commits ?? [];
+  }
+
+  async messagePrompt(checkout?: string): Promise<PromptConfig> {
+    return this.request<PromptConfig>(`/git/commit-message/prompt${query({ checkout })}`);
+  }
+
+  async saveMessagePrompt(req: PromptConfigUpdate): Promise<PromptConfig> {
+    return this.request<PromptConfig>("/git/commit-message/prompt", {
+      method: "PUT",
+      json: { selected: req.selected, custom: req.custom },
+    });
+  }
+
+  async generateMessage(checkout?: string): Promise<MessageDraft> {
+    return this.request<MessageDraft>("/git/commit-message/generate", {
+      method: "POST",
+      json: { checkout: checkout ?? "" },
+    });
   }
 
   private async request<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {

@@ -61,6 +61,17 @@ test("GitClient status and mutations hit /git routes", async () => {
           ],
         });
       }
+      if (url.includes("/git/commit-message/prompt")) {
+        return json({
+          presets: [{ id: "conventional", name: "Conventional", system_prompt: "写说明" }],
+          selected: "conventional",
+          custom: "",
+          system_prompt: "写说明",
+        });
+      }
+      if (url.includes("/git/commit-message/generate")) {
+        return json({ title: "add a", body: "details" });
+      }
       return json({ ok: true });
     },
   });
@@ -81,6 +92,13 @@ test("GitClient status and mutations hit /git routes", async () => {
   assert.equal(diffs[0]?.path, "a.txt");
   const commits = await client.log(20, "/wt");
   assert.equal(commits[0]?.title, "first");
+  const prompt = await client.messagePrompt("/wt");
+  assert.equal(prompt.selected, "conventional");
+  const saved = await client.saveMessagePrompt({ selected: "custom", custom: "写短标题" });
+  assert.equal(saved.selected, "conventional");
+  const draft = await client.generateMessage();
+  assert.equal(draft.title, "add a");
+  assert.equal(draft.body, "details");
 
   assert.equal(calls[0]?.url, "http://api.test/git/status");
   assert.equal(calls[1]?.url, "http://api.test/git/stage");
@@ -98,6 +116,12 @@ test("GitClient status and mutations hit /git routes", async () => {
   assert.deepEqual(calls[8]?.body, { name: "feature", checkout: "/wt" });
   assert.equal(calls[9]?.url, "http://api.test/git/diff?scope=worktree");
   assert.equal(calls[10]?.url, "http://api.test/git/log?limit=20&checkout=%2Fwt");
+  assert.equal(calls[11]?.url, "http://api.test/git/commit-message/prompt?checkout=%2Fwt");
+  assert.equal(calls[12]?.url, "http://api.test/git/commit-message/prompt");
+  assert.equal(calls[12]?.method, "PUT");
+  assert.deepEqual(calls[12]?.body, { selected: "custom", custom: "写短标题" });
+  assert.equal(calls[13]?.url, "http://api.test/git/commit-message/generate");
+  assert.deepEqual(calls[13]?.body, { checkout: "" });
 });
 
 test("GitClient maps error JSON", async () => {

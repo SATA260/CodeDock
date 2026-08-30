@@ -76,6 +76,8 @@ export function GitPage({ onBack, headerActions }: GitPageProps) {
             <WorkspacePanel
               state={site.state}
               busy={site.busy}
+              generating={site.generating}
+              prompt={site.prompt}
               preview={preview}
               onPreview={setPreview}
               onReload={site.reload}
@@ -83,6 +85,8 @@ export function GitPage({ onBack, headerActions }: GitPageProps) {
               onUnstage={site.unstage}
               onDiscard={site.discard}
               onCommit={site.commit}
+              onGenerate={site.generate}
+              onSavePrompt={site.savePrompt}
               onPush={site.push}
             />
             <DiffPanel target={preview} file={previewFile} ready={!site.loading} />
