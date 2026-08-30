@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// newRouter 注册健康检查与 Session / Run / Approval / Memory 路由。
+// newRouter 注册健康检查与 Session / Run / Approval / Memory / Git 路由。
 func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 	router := chi.NewRouter()
 	router.Use(cors)
@@ -51,6 +51,37 @@ func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 			r.Get("/", api.ListTextMemories)
 			r.Get("/{scope}/{scope_id}", api.GetTextMemory)
 			r.Delete("/{scope}/{scope_id}", api.DeleteTextMemory)
+		})
+		router.Route("/git", func(r chi.Router) {
+			r.Get("/status", api.GitStatus)
+			r.Get("/diff", api.GitDiff)
+			r.Get("/graph", api.GitGraph)
+			r.Post("/stage", api.GitStage)
+			r.Post("/unstage", api.GitUnstage)
+			r.Post("/commit", api.GitCommit)
+			r.Post("/reset", api.GitReset)
+			r.Post("/revert", api.GitRevert)
+			r.Post("/push", api.GitPush)
+			r.Post("/pull", api.GitPull)
+			r.Get("/remotes", api.GitListRemotes)
+			r.Get("/worktrees", api.GitListWorktrees)
+			r.Post("/worktrees", api.GitAddWorktree)
+			r.Get("/branches", api.GitListBranches)
+			r.Post("/branches", api.GitCreateBranch)
+			r.Post("/branches/switch", api.GitSwitchBranch)
+			r.Delete("/branches", api.GitDeleteBranch)
+			r.Get("/conflict", api.GitGetConflict)
+			r.Post("/conflict/write", api.GitWriteConflict)
+			r.Post("/conflict/continue", api.GitContinueConflict)
+			r.Post("/conflict/abort", api.GitAbortConflict)
+			r.Get("/commit-message/prompt", api.GitGetPrompt)
+			r.Put("/commit-message/prompt", api.GitSetPrompt)
+			r.Post("/commit-message/generate", api.GitGenerateMessage)
+			r.Post("/stash", api.GitCreateSnapshot)
+			r.Get("/stash/latest", api.GitLatestSnapshot)
+			r.Post("/stash/restore", api.GitRestoreSnapshot)
+			r.Get("/undo", api.GitListUndo)
+			r.Post("/undo", api.GitClickUndo)
 		})
 	}
 

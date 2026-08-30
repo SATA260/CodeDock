@@ -16,6 +16,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("LLM_MODEL", "")
 	t.Setenv("LLM_API_KEY", "")
 	t.Setenv("LLM_BASE_URL", "")
+	t.Setenv("GIT_REPO", "")
 
 	cfg := Load()
 	if cfg.HTTPAddr != ":8080" {
@@ -36,6 +37,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LLMModel != "fake" {
 		t.Fatalf("LLMModel = %q, want fake", cfg.LLMModel)
 	}
+	if cfg.GitRepo != "" {
+		t.Fatalf("GitRepo = %q, want empty", cfg.GitRepo)
+	}
 }
 
 // TestLoadFromEnv 校验环境变量覆盖默认配置。
@@ -48,6 +52,7 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("LLM_MODEL", "gpt-4o")
 	t.Setenv("LLM_API_KEY", "sk-test")
 	t.Setenv("LLM_BASE_URL", "https://api.example.com/v1")
+	t.Setenv("GIT_REPO", "/tmp/repo")
 
 	cfg := Load()
 	if cfg.HTTPAddr != ":9090" || cfg.LogLevel != "info" || cfg.DBEngine != "postgres" || cfg.DBDSN != "postgres://localhost" {
@@ -55,6 +60,9 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.LLMProvider != "openai" || cfg.LLMModel != "gpt-4o" || cfg.LLMAPIKey != "sk-test" || cfg.LLMBaseURL != "https://api.example.com/v1" {
 		t.Fatalf("Load() LLM = %+v", cfg)
+	}
+	if cfg.GitRepo != "/tmp/repo" {
+		t.Fatalf("GitRepo = %q, want /tmp/repo", cfg.GitRepo)
 	}
 }
 

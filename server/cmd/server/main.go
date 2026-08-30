@@ -60,7 +60,7 @@ func main() {
 	runtime.Start(ctx)
 
 	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, model)
-	api := handler.New(client, queries, runtime, bus, defaults, logger.NewLogger("handler"))
+	api := handler.New(client, queries, runtime, bus, defaults, cfg, logger.NewLogger("handler"))
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
