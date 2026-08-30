@@ -1,14 +1,22 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	cderr "codedock/internal/errors"
+	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/git"
+
+	"github.com/google/uuid"
 )
+
+const defaultCommitPrompt = "根据已暂存的 diff 写 Git 提交说明。第一行是不超过 72 个字符的标题，空一行后写正文。不要使用代码围栏，不要解释。"
 
 type gitCheckoutRequest struct {
 	Checkout string `json:"checkout"`
@@ -125,6 +133,42 @@ type UndoButton struct {
 	TargetID string `json:"target_id"` // 目标提交、路径或快照 ID；针对整份工作区或当前整合时可空。
 }
 
+func mapGitErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if cderr.IsNotFound(err) || cderr.IsConflict(err) || cderr.IsInvalid(err) || cderr.IsUnavailable(err) || cderr.IsUnauthorized(err) {
+		return err
+	}
+	switch {
+	case errors.Is(err, git.ErrNotRepo), errors.Is(err, git.ErrCurrentBranch):
+		return cderr.Invalid("%s", err.Error())
+	case errors.Is(err, git.ErrConflict), errors.Is(err, git.ErrDirty), errors.Is(err, git.ErrIntegrating):
+		return cderr.Conflict("%s", err.Error())
+	default:
+		return cderr.Invalid("%s", err.Error())
+	}
+}
+
+func writeGitError(w http.ResponseWriter, err error) {
+	writeError(w, mapGitErr(err))
+}
+
+func sameCheckout(a, b string) bool {
+	aa, errA := filepath.Abs(a)
+	bb, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	if ra, err := filepath.EvalSymlinks(aa); err == nil {
+		aa = ra
+	}
+	if rb, err := filepath.EvalSymlinks(bb); err == nil {
+		bb = rb
+	}
+	return filepath.Clean(aa) == filepath.Clean(bb)
+}
+
 func (a *API) gitRoot() (string, error) {
 	if a != nil && strings.TrimSpace(a.cfg.GitRepo) != "" {
 		return filepath.Abs(a.cfg.GitRepo)
@@ -143,7 +187,7 @@ func (a *API) openSite(checkout string) (git.Repo, git.Checkout, error) {
 	}
 	repo, err := git.Open(root)
 	if err != nil {
-		return git.Repo{}, git.Checkout{}, err
+		return git.Repo{}, git.Checkout{}, mapGitErr(err)
 	}
 	path := root
 	if strings.TrimSpace(checkout) != "" {
@@ -153,21 +197,264 @@ func (a *API) openSite(checkout string) (git.Repo, git.Checkout, error) {
 	if err != nil {
 		return git.Repo{}, git.Checkout{}, cderr.Invalid("invalid checkout")
 	}
-	// TODO: checkout 必须是主仓或 ListWorktrees 里的路径。
-	_, _ = git.ListWorktrees(repo)
+	if !sameCheckout(abs, root) {
+		trees, err := git.ListWorktrees(repo)
+		if err != nil {
+			return git.Repo{}, git.Checkout{}, mapGitErr(err)
+		}
+		found := false
+		for _, tree := range trees {
+			if sameCheckout(tree.Path, abs) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return git.Repo{}, git.Checkout{}, cderr.Invalid("checkout is not a worktree of this repo")
+		}
+	}
 	return repo, git.Checkout{Path: abs}, nil
+}
+
+func (a *API) conflictSession(repo git.Repo, co git.Checkout) (ConflictSession, error) {
+	state, err := git.Status(repo, co)
+	if err != nil {
+		return ConflictSession{}, err
+	}
+	ours, theirs, err := git.ConflictNames(repo, co)
+	if err != nil {
+		return ConflictSession{}, err
+	}
+	sess := ConflictSession{Kind: state.Integrating, Ours: ours, Theirs: theirs, Items: []git.ConflictItem{}}
+	for _, file := range state.Files {
+		if !file.Unmerged {
+			continue
+		}
+		item, err := git.ReadConflict(repo, co, file.Path)
+		if err != nil {
+			item = git.ConflictItem{Path: file.Path}
+		}
+		sess.Items = append(sess.Items, item)
+	}
+	return sess, nil
+}
+
+func codedockFile(repo git.Repo, name string) (string, error) {
+	gd, err := git.CommonDir(repo)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(gd, "codedock")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
+}
+
+func (a *API) loadPrompt(repo git.Repo) string {
+	path, err := codedockFile(repo, "commit-message-prompt")
+	if err != nil {
+		return defaultCommitPrompt
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || strings.TrimSpace(string(body)) == "" {
+		return defaultCommitPrompt
+	}
+	return string(body)
+}
+
+func (a *API) savePrompt(repo git.Repo, prompt string) error {
+	path, err := codedockFile(repo, "commit-message-prompt")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(prompt), 0o644)
+}
+
+func (a *API) loadSnapshots(repo git.Repo) ([]AgentSnapshot, error) {
+	path, err := codedockFile(repo, "snapshots.json")
+	if err != nil {
+		if errors.Is(err, git.ErrNotRepo) {
+			return []AgentSnapshot{}, nil
+		}
+		return nil, err
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []AgentSnapshot{}, nil
+		}
+		return nil, err
+	}
+	var items []AgentSnapshot
+	if err := json.Unmarshal(body, &items); err != nil {
+		return []AgentSnapshot{}, nil
+	}
+	if items == nil {
+		return []AgentSnapshot{}, nil
+	}
+	return items, nil
+}
+
+func (a *API) saveSnapshots(repo git.Repo, items []AgentSnapshot) error {
+	path, err := codedockFile(repo, "snapshots.json")
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(items)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o644)
+}
+
+func latestSnapshot(items []AgentSnapshot, checkout string) AgentSnapshot {
+	for i := len(items) - 1; i >= 0; i-- {
+		if checkout == "" || sameCheckout(items[i].Checkout.Path, checkout) {
+			return items[i]
+		}
+	}
+	return AgentSnapshot{}
+}
+
+func snapshotByID(items []AgentSnapshot, id string) (AgentSnapshot, bool) {
+	for _, item := range items {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return AgentSnapshot{}, false
+}
+
+func parseDraft(text string) MessageDraft {
+	text = strings.TrimSpace(text)
+	title, body, ok := strings.Cut(text, "\n")
+	if !ok {
+		return MessageDraft{Title: text}
+	}
+	return MessageDraft{Title: strings.TrimSpace(title), Body: strings.TrimSpace(body)}
+}
+
+func (a *API) gitModel() pkgagent.ModelConfig {
+	opts, err := json.Marshal(map[string]string{
+		"api_key":  a.cfg.LLMAPIKey,
+		"base_url": a.cfg.LLMBaseURL,
+	})
+	if err != nil {
+		opts = json.RawMessage(`{}`)
+	}
+	return pkgagent.ModelConfig{
+		Provider: a.cfg.LLMProvider,
+		Model:    a.cfg.LLMModel,
+		Options:  opts,
+	}
+}
+
+func fallbackDraft(files []git.DiffFile) string {
+	if len(files) == 0 {
+		return ""
+	}
+	title := files[0].Kind + " " + files[0].Path
+	var body strings.Builder
+	for _, file := range files {
+		body.WriteString(file.Kind)
+		body.WriteByte(' ')
+		body.WriteString(file.Path)
+		body.WriteByte('\n')
+	}
+	return title + "\n\n" + strings.TrimSpace(body.String())
+}
+
+func checkoutRelPath(root, rel string) (string, error) {
+	rel = filepath.Clean(filepath.FromSlash(rel))
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", cderr.Invalid("invalid path")
+	}
+	abs := filepath.Join(root, rel)
+	inside, err := filepath.Rel(root, abs)
+	if err != nil || strings.HasPrefix(inside, "..") {
+		return "", cderr.Invalid("invalid path")
+	}
+	return abs, nil
+}
+
+func undoButtons(state git.SiteState, graph git.Graph, snap AgentSnapshot) []UndoButton {
+	buttons := []UndoButton{}
+	if !state.Empty && state.Head != "" {
+		hasParent := false
+		for _, node := range graph.Nodes {
+			if node.Commit.ID == state.Head && len(node.Commit.Parents) > 0 {
+				hasParent = true
+				break
+			}
+		}
+		if hasParent {
+			risk := ""
+			if state.Upstream != "" && state.Ahead == 0 {
+				risk = "这次提交已经推送，撤销会改写已发布历史"
+			}
+			buttons = append(buttons, UndoButton{
+				ID:     "last_commit",
+				Label:  "撤销上次提交",
+				Risk:   risk,
+				Target: "last_commit",
+			})
+		}
+		if len(state.Files) > 0 {
+			buttons = append(buttons, UndoButton{
+				ID:     "uncommitted",
+				Label:  "丢弃未提交的改动",
+				Risk:   "工作区和暂存区的改动都会丢掉；未跟踪文件会留下",
+				Target: "uncommitted",
+			})
+		}
+		for _, file := range state.Files {
+			if file.Unmerged || file.WorktreeStatus == "?" {
+				continue
+			}
+			buttons = append(buttons, UndoButton{
+				ID:       "path:" + file.Path,
+				Label:    "还原 " + file.Path,
+				Risk:     "会丢掉这个文件的未提交改动",
+				Target:   "path",
+				TargetID: file.Path,
+			})
+		}
+	}
+	if state.Integrating != "" {
+		buttons = append(buttons, UndoButton{
+			ID:     "integrate",
+			Label:  "中止当前整合",
+			Risk:   "未完成的整合会被放弃",
+			Target: "integrate",
+		})
+	}
+	if snap.ID != "" {
+		risk := "会回到快照时的提交，之后的提交可能丢掉"
+		if snap.HasUntracked {
+			risk += "；未跟踪文件不在快照里"
+		}
+		buttons = append(buttons, UndoButton{
+			ID:       "agent_stash",
+			Label:    "恢复 Agent 改文件前的快照",
+			Risk:     risk,
+			Target:   "agent_stash",
+			TargetID: snap.ID,
+		})
+	}
+	return buttons
 }
 
 // GitStatus 给界面看当前整局。
 func (a *API) GitStatus(w http.ResponseWriter, r *http.Request) {
 	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	state, err := git.Status(repo, co)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
@@ -177,7 +464,7 @@ func (a *API) GitStatus(w http.ResponseWriter, r *http.Request) {
 func (a *API) GitDiff(w http.ResponseWriter, r *http.Request) {
 	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	scope := r.URL.Query().Get("scope")
@@ -186,7 +473,7 @@ func (a *API) GitDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	files, err := git.Diff(repo, co, scope)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"files": files})
@@ -196,12 +483,12 @@ func (a *API) GitDiff(w http.ResponseWriter, r *http.Request) {
 func (a *API) GitGraph(w http.ResponseWriter, r *http.Request) {
 	repo, _, err := a.openSite(r.URL.Query().Get("checkout"))
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	graph, err := git.LogGraph(repo, 50)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, graph)
@@ -216,11 +503,11 @@ func (a *API) GitStage(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	if err := git.Stage(repo, co, req.Paths); err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -235,11 +522,11 @@ func (a *API) GitUnstage(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	if err := git.Unstage(repo, co, req.Paths); err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -254,18 +541,18 @@ func (a *API) GitCommit(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	if len(req.Paths) > 0 {
 		if err := git.Stage(repo, co, req.Paths); err != nil {
-			writeError(w, err)
+			writeGitError(w, err)
 			return
 		}
 	}
 	commit, err := git.CreateCommit(repo, co, req.Message)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"commit": commit})
@@ -278,15 +565,28 @@ func (a *API) GitReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	// TODO: mixed/hard 必须 confirm；Empty 时不能 HEAD~1。
-	_ = req.Confirm
+	if strings.TrimSpace(req.Target) == "" {
+		writeError(w, cderr.Invalid("target is required"))
+		return
+	}
+	if req.Mode == "" {
+		req.Mode = "mixed"
+	}
+	if req.Mode != "soft" && req.Mode != "mixed" && req.Mode != "hard" {
+		writeError(w, cderr.Invalid("mode must be soft, mixed, or hard"))
+		return
+	}
+	if req.Mode != "soft" && !req.Confirm {
+		writeError(w, cderr.Invalid("mixed/hard reset requires confirm"))
+		return
+	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	if err := git.Reset(repo, co, req.Target, req.Mode); err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -301,12 +601,12 @@ func (a *API) GitRevert(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	commit, err := git.Revert(repo, co, git.Commit{ID: req.ID})
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"commit": commit})
@@ -321,11 +621,11 @@ func (a *API) GitPush(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	if err := git.Push(repo, co); err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -340,12 +640,20 @@ func (a *API) GitPull(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	if err := git.Pull(repo, co); err != nil {
-		// TODO: ErrConflict 时写 ConflictSession 409。
-		writeError(w, err)
+		if errors.Is(err, git.ErrConflict) {
+			sess, sessErr := a.conflictSession(repo, co)
+			if sessErr != nil {
+				writeGitError(w, sessErr)
+				return
+			}
+			writeJSON(w, http.StatusConflict, sess)
+			return
+		}
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -355,12 +663,12 @@ func (a *API) GitPull(w http.ResponseWriter, r *http.Request) {
 func (a *API) GitListRemotes(w http.ResponseWriter, r *http.Request) {
 	repo, _, err := a.openSite(r.URL.Query().Get("checkout"))
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	remotes, err := git.ListRemotes(repo)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"remotes": remotes})
@@ -370,12 +678,12 @@ func (a *API) GitListRemotes(w http.ResponseWriter, r *http.Request) {
 func (a *API) GitListWorktrees(w http.ResponseWriter, r *http.Request) {
 	repo, _, err := a.openSite("")
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	trees, err := git.ListWorktrees(repo)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"worktrees": trees})
@@ -390,12 +698,12 @@ func (a *API) GitAddWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, _, err := a.openSite("")
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	tree, err := git.AddWorktree(repo, req.Path, req.Branch, req.NewBranch)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"worktree": tree})
@@ -405,22 +713,22 @@ func (a *API) GitAddWorktree(w http.ResponseWriter, r *http.Request) {
 func (a *API) GitListBranches(w http.ResponseWriter, r *http.Request) {
 	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	state, err := git.Status(repo, co)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	listed, err := git.ListBranches(repo)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	graph, err := git.LogGraph(repo, 50)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	view := BranchView{Current: state.Branch, Locals: []git.Branch{}, Remotes: []git.Branch{}, Graph: graph}
@@ -441,13 +749,13 @@ func (a *API) GitCreateBranch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, _, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
-	if err := git.CreateBranch(repo, req.Name, req.Start); err != nil {
-		writeError(w, err)
+	if err := git.CreateBranch(repo, co, req.Name, req.Start); err != nil {
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -462,11 +770,11 @@ func (a *API) GitSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	if err := git.SwitchBranch(repo, co, req.Name); err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -481,11 +789,11 @@ func (a *API) GitDeleteBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, _, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	if err := git.DeleteBranch(repo, req.Name); err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -495,24 +803,13 @@ func (a *API) GitDeleteBranch(w http.ResponseWriter, r *http.Request) {
 func (a *API) GitGetConflict(w http.ResponseWriter, r *http.Request) {
 	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
-	state, err := git.Status(repo, co)
+	sess, err := a.conflictSession(repo, co)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
-	}
-	sess := ConflictSession{Kind: state.Integrating, Items: []git.ConflictItem{}}
-	for _, file := range state.Files {
-		if !file.Unmerged {
-			continue
-		}
-		item, err := git.ReadConflict(repo, co, file.Path)
-		if err != nil {
-			item = git.ConflictItem{Path: file.Path}
-		}
-		sess.Items = append(sess.Items, item)
 	}
 	writeJSON(w, http.StatusOK, sess)
 }
@@ -526,13 +823,26 @@ func (a *API) GitWriteConflict(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	abs, err := checkoutRelPath(co.Path, req.Path)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
-	// TODO: 写入工作区并 Stage 该路径。
-	_ = repo
-	_ = co
-	_ = req
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		writeGitError(w, err)
+		return
+	}
+	if err := os.WriteFile(abs, []byte(req.Result), 0o644); err != nil {
+		writeGitError(w, err)
+		return
+	}
+	if err := git.Stage(repo, co, []string{req.Path}); err != nil {
+		writeGitError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -545,11 +855,11 @@ func (a *API) GitContinueConflict(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	if err := git.ContinueIntegrate(repo, co); err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -564,11 +874,11 @@ func (a *API) GitAbortConflict(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	if err := git.AbortIntegrate(repo, co); err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -576,9 +886,12 @@ func (a *API) GitAbortConflict(w http.ResponseWriter, r *http.Request) {
 
 // GitGetPrompt 读生成说明用的 system prompt。
 func (a *API) GitGetPrompt(w http.ResponseWriter, r *http.Request) {
-	// TODO: 读用户自定义 prompt；空则产品默认。
-	_ = r
-	writeJSON(w, http.StatusOK, PromptConfig{})
+	repo, _, err := a.openSite(r.URL.Query().Get("checkout"))
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, PromptConfig{SystemPrompt: a.loadPrompt(repo)})
 }
 
 // GitSetPrompt 保存用户自定义的 system prompt。
@@ -588,8 +901,20 @@ func (a *API) GitSetPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	// TODO: 保存 PromptConfig。
-	writeJSON(w, http.StatusOK, PromptConfig{SystemPrompt: req.SystemPrompt})
+	repo, _, err := a.openSite("")
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	if err := a.savePrompt(repo, req.SystemPrompt); err != nil {
+		writeGitError(w, err)
+		return
+	}
+	prompt := req.SystemPrompt
+	if strings.TrimSpace(prompt) == "" {
+		prompt = defaultCommitPrompt
+	}
+	writeJSON(w, http.StatusOK, PromptConfig{SystemPrompt: prompt})
 }
 
 // GitGenerateMessage 读已暂存 diff，生成说明草稿。
@@ -601,17 +926,61 @@ func (a *API) GitGenerateMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	files, err := git.Diff(repo, co, "staged")
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
-	// TODO: 二进制不喂模型；一次短调用，不进 Agent Loop。
-	_ = files
-	writeJSON(w, http.StatusOK, MessageDraft{})
+	if len(files) == 0 {
+		writeError(w, cderr.Invalid("nothing staged"))
+		return
+	}
+	draft := a.generateDraft(r.Context(), repo, files)
+	draft.Title = strings.TrimSpace(draft.Title)
+	if draft.Title == "" {
+		draft = parseDraft(fallbackDraft(files))
+	}
+	writeJSON(w, http.StatusOK, draft)
+}
+
+func (a *API) generateDraft(ctx context.Context, repo git.Repo, files []git.DiffFile) MessageDraft {
+	var b strings.Builder
+	for _, file := range files {
+		if file.Binary {
+			b.WriteString("binary " + file.Kind + " " + file.Path + "\n")
+			continue
+		}
+		if file.Patch != "" {
+			b.WriteString(file.Patch)
+			b.WriteByte('\n')
+			continue
+		}
+		b.WriteString(file.Kind + " " + file.Path + "\n")
+	}
+	stream, err := pkgagent.Stream(ctx, pkgagent.Chat{
+		Model:        a.gitModel(),
+		SystemPrompt: a.loadPrompt(repo),
+		Messages: []pkgagent.Message{{
+			Role:    pkgagent.RoleUser,
+			Content: pkgagent.EncodeText(b.String()),
+		}},
+	})
+	if err != nil {
+		return parseDraft(fallbackDraft(files))
+	}
+	defer stream.Close()
+	result, err := stream.Result(ctx)
+	if err != nil {
+		return parseDraft(fallbackDraft(files))
+	}
+	text := strings.TrimSpace(pkgagent.DecodeText(result.Message.Content))
+	if text == "" || text == "ok" {
+		return parseDraft(fallbackDraft(files))
+	}
+	return parseDraft(text)
 }
 
 // GitCreateSnapshot 复制当时提交和工作区，不挪走现有改动。
@@ -623,32 +992,62 @@ func (a *API) GitCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	state, err := git.Status(repo, co)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	oid, err := git.CaptureWork(repo, co, req.AgentRun)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
-	// TODO: 持久化快照；HasUntracked 来自 Status 未跟踪文件。
-	writeJSON(w, http.StatusOK, AgentSnapshot{Checkout: co, Head: state.Head, StashOID: oid, AgentRun: req.AgentRun})
+	snap := AgentSnapshot{
+		ID:           uuid.NewString(),
+		Checkout:     git.Checkout{Path: co.Path, CurrentBranch: state.Branch, CurrentCommit: state.Head, Detached: state.Detached},
+		Head:         state.Head,
+		StashOID:     oid,
+		HasUntracked: hasUntrackedFiles(state),
+		AgentRun:     req.AgentRun,
+	}
+	items, err := a.loadSnapshots(repo)
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	items = append(items, snap)
+	if err := a.saveSnapshots(repo, items); err != nil {
+		writeGitError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
+}
+
+func hasUntrackedFiles(state git.SiteState) bool {
+	for _, file := range state.Files {
+		if file.WorktreeStatus == "?" {
+			return true
+		}
+	}
+	return false
 }
 
 // GitLatestSnapshot 取最近一份 Agent 快照。
 func (a *API) GitLatestSnapshot(w http.ResponseWriter, r *http.Request) {
-	_, _, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
-	// TODO: 取最近一份；没有则空对象。
-	writeJSON(w, http.StatusOK, AgentSnapshot{})
+	items, err := a.loadSnapshots(repo)
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, latestSnapshot(items, co.Path))
 }
 
 // GitRestoreSnapshot 回到快照时的提交，并把副本铺回工作区。
@@ -660,32 +1059,69 @@ func (a *API) GitRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
-	// TODO: 用 Latest / ID 找到 Head 与 StashOID。
-	if err := git.RestoreWork(repo, co, "", ""); err != nil {
-		writeError(w, err)
+	items, err := a.loadSnapshots(repo)
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	var snap AgentSnapshot
+	if req.ID != "" {
+		var ok bool
+		snap, ok = snapshotByID(items, req.ID)
+		if !ok {
+			writeError(w, cderr.NotFound("snapshot not found"))
+			return
+		}
+	} else {
+		snap = latestSnapshot(items, co.Path)
+		if snap.ID == "" {
+			writeError(w, cderr.NotFound("snapshot not found"))
+			return
+		}
+	}
+	if err := restoreSnapshotOn(repo, co, snap); err != nil {
+		writeGitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func restoreSnapshotOn(repo git.Repo, co git.Checkout, snap AgentSnapshot) error {
+	if snap.ID == "" {
+		return cderr.NotFound("snapshot not found")
+	}
+	if snap.Checkout.Path != "" && !sameCheckout(snap.Checkout.Path, co.Path) {
+		return cderr.Invalid("snapshot belongs to another checkout")
+	}
+	return git.RestoreWork(repo, co, snap.StashOID, snap.Head)
 }
 
 // GitListUndo 按当前 SiteState 算出能点的撤销按钮。
 func (a *API) GitListUndo(w http.ResponseWriter, r *http.Request) {
 	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
 	state, err := git.Status(repo, co)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
-	// TODO: 看 Ahead / Empty / Integrating / 是否有 Agent 快照。
-	_ = state
-	writeJSON(w, http.StatusOK, map[string]any{"buttons": []UndoButton{}})
+	graph, err := git.LogGraph(repo, 50)
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	items, err := a.loadSnapshots(repo)
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"buttons": undoButtons(state, graph, latestSnapshot(items, co.Path))})
 }
 
 // GitClickUndo 执行该按钮对应的重置、回退或恢复。
@@ -697,12 +1133,44 @@ func (a *API) GitClickUndo(w http.ResponseWriter, r *http.Request) {
 	}
 	repo, co, err := a.openSite(req.Checkout)
 	if err != nil {
-		writeError(w, err)
+		writeGitError(w, err)
 		return
 	}
-	// TODO: 按按钮 Target 调 Reset / Revert / AbortIntegrate / RestoreWork。
-	_ = repo
-	_ = co
-	_ = req
+	switch {
+	case req.ID == "last_commit":
+		err = git.Reset(repo, co, "HEAD~1", "mixed")
+	case req.ID == "uncommitted":
+		err = git.Reset(repo, co, "HEAD", "hard")
+	case req.ID == "integrate":
+		err = git.AbortIntegrate(repo, co)
+	case req.ID == "agent_stash" || strings.HasPrefix(req.ID, "agent_stash:"):
+		items, loadErr := a.loadSnapshots(repo)
+		if loadErr != nil {
+			writeGitError(w, loadErr)
+			return
+		}
+		id := strings.TrimPrefix(req.ID, "agent_stash:")
+		var snap AgentSnapshot
+		if id == "" || id == "agent_stash" {
+			snap = latestSnapshot(items, co.Path)
+		} else {
+			var ok bool
+			snap, ok = snapshotByID(items, id)
+			if !ok {
+				writeError(w, cderr.NotFound("snapshot not found"))
+				return
+			}
+		}
+		err = restoreSnapshotOn(repo, co, snap)
+	case strings.HasPrefix(req.ID, "path:"):
+		err = git.RestorePath(repo, co, strings.TrimPrefix(req.ID, "path:"))
+	default:
+		writeError(w, cderr.Invalid("unknown undo button"))
+		return
+	}
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
