@@ -2,6 +2,8 @@
   "name": "codedock",
   "private": true,
   "scripts": {
+    "dev": "sh scripts/dev.sh",
+    "dev:api": "sh scripts/dev-api.sh",
     "dev:web": "pnpm --filter web dev",
     "build:web": "pnpm --filter web build",
     "test:client": "pnpm --filter @codedock/core test",

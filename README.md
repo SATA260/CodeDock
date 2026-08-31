@@ -14,14 +14,19 @@ cp apps/web/.env.example apps/web/.env.local
 pnpm install
 ```
 
-API（默认 `http://localhost:8080`）：
+一次起 API + Web。若已有 `tmp/git-sandbox`，API 默认指到沙箱，避免在本仓上试撤回：
 
 ```bash
-cd server
-go run ./cmd/server
+pnpm dev
 ```
 
-服务会从当前目录向上查找 `.env`，在 `server/` 下启动也能读到仓库根的 `.env`。
+也可以分开起。API（默认 `http://localhost:8080`）：
+
+```bash
+pnpm dev:api
+```
+
+从 `server/` 直接 `go run` 时，未设 `GIT_REPO` 会用进程 cwd（`server/` 不是仓根）。服务会从当前目录向上查找 `.env`。
 
 Web（默认 `http://localhost:3000`）：
 
@@ -29,7 +34,7 @@ Web（默认 `http://localhost:3000`）：
 pnpm dev:web
 ```
 
-浏览器打开 [http://localhost:3000](http://localhost:3000)。完整环境变量见 [`.env.example`](.env.example)，不要提交 `.env` 或密钥。
+浏览器打开 [http://localhost:3000](http://localhost:3000)。开发态顶栏可在对话和仓库之间切换。完整环境变量见 [`.env.example`](.env.example) 和 [`apps/web/.env.example`](apps/web/.env.example)，不要提交 `.env` 或密钥。
 
 ## 测试
 

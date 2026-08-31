@@ -15,15 +15,23 @@ import (
 )
 
 type openaiOptions struct {
-	APIKey  string `json:"api_key"`
-	BaseURL string `json:"base_url"`
+	APIKey   string `json:"api_key"`
+	BaseURL  string `json:"base_url"`
+	Thinking string `json:"thinking"`
+}
+
+type openaiThinking struct {
+	Type string `json:"type"`
 }
 
 type openaiChatRequest struct {
-	Model    string              `json:"model"`
-	Stream   bool                `json:"stream"`
-	Messages []openaiChatMessage `json:"messages"`
-	Tools    []openaiTool        `json:"tools,omitempty"`
+	Model               string              `json:"model"`
+	Stream              bool                `json:"stream"`
+	Messages            []openaiChatMessage `json:"messages"`
+	Tools               []openaiTool        `json:"tools,omitempty"`
+	MaxTokens           int64               `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int64               `json:"max_completion_tokens,omitempty"`
+	Thinking            *openaiThinking     `json:"thinking,omitempty"`
 }
 
 type openaiChatMessage struct {
@@ -79,12 +87,17 @@ func streamOpenAI(ctx context.Context, chat Chat) (ModelStream, error) {
 		base = "https://api.openai.com/v1"
 	}
 
-	body, err := json.Marshal(openaiChatRequest{
+	reqBody := openaiChatRequest{
 		Model:    chat.Model.Model,
 		Stream:   true,
 		Messages: toOpenAIMessages(chat),
 		Tools:    toOpenAITools(chat.Tools),
-	})
+	}
+	applyOutputLimit(&reqBody, chat.Model.Model, chat.MaxOutputTokens)
+	if opts.Thinking != "" && supportsThinking(base) {
+		reqBody.Thinking = &openaiThinking{Type: opts.Thinking}
+	}
+	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +130,26 @@ func streamOpenAI(ctx context.Context, chat Chat) (ModelStream, error) {
 	}
 	go consumeOpenAI(ctx, chat, resp.Body, stream)
 	return stream, nil
+}
+
+func applyOutputLimit(req *openaiChatRequest, model string, n int64) {
+	if req == nil || n <= 0 {
+		return
+	}
+	if isReasoningModel(model) {
+		req.MaxCompletionTokens = n
+		return
+	}
+	req.MaxTokens = n
+}
+
+func isReasoningModel(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4") || strings.Contains(m, "reasoner")
+}
+
+func supportsThinking(base string) bool {
+	return strings.Contains(strings.ToLower(base), "deepseek")
 }
 
 // consumeOpenAI 解析 SSE 增量，拼出最终文本、工具调用和用量后关闭流。

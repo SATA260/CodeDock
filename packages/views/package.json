@@ -5,11 +5,13 @@
   "type": "module",
   "exports": {
     ".": "./index.ts",
-    "./chat": "./chat/index.ts"
+    "./chat": "./chat/index.ts",
+    "./git": "./git/index.ts"
   },
   "dependencies": {
     "@codedock/core": "workspace:*",
     "@codedock/ui": "workspace:*",
+    "@git-diff-view/react": "^0.1.7",
     "lucide-react": "^0.544.0"
   },
   "peerDependencies": {

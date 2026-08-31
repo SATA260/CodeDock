@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgentMode, TimelineItem } from "@codedock/core/chat";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useAgent } from "../provider.tsx";
 import { ApprovalDock } from "./approval-dock.tsx";
@@ -16,6 +16,7 @@ export type ChatPageProps = {
   onOpenSession: (id: string) => void;
   onNewConversation: () => void;
   brandSrc?: string;
+  headerActions?: ReactNode;
 };
 
 export function ChatPage({
@@ -23,6 +24,7 @@ export function ChatPage({
   onOpenSession,
   onNewConversation,
   brandSrc,
+  headerActions,
 }: ChatPageProps) {
   const { client } = useAgent();
   const list = useSessionList();
@@ -57,7 +59,7 @@ export function ChatPage({
   };
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-background text-foreground">
+    <div className="flex h-full overflow-hidden bg-background text-foreground">
       <SessionSidebar
         sessions={list.sessions}
         currentId={sessionId}
@@ -68,8 +70,9 @@ export function ChatPage({
         brandSrc={brandSrc}
       />
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 items-center border-b border-border px-4 text-sm text-muted-foreground">
-          {sessionId ? "对话" : "新对话"}
+        <header className="flex h-12 items-center gap-3 border-b border-border px-4 text-sm text-muted-foreground">
+          <span>{sessionId ? "对话" : "新对话"}</span>
+          {headerActions ? <div className="ml-auto flex items-center gap-2">{headerActions}</div> : null}
         </header>
         {timeline.error || composerError ? (
           <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-red-300">

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import { Providers } from "./providers";
+import { TestNav } from "./test-nav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -25,8 +26,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="zh-CN"
       className={`${geistSans.variable} ${geistMono.variable} h-full dark antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-background font-sans text-foreground antialiased">
-        <Providers>{children}</Providers>
+      <body className="flex h-full flex-col bg-background font-sans text-foreground antialiased">
+        <Providers>
+          {process.env.NODE_ENV === "development" ? <TestNav /> : null}
+          <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+        </Providers>
       </body>
     </html>
   );

@@ -1,0 +1,20 @@
+export { GitClient, GitClientError, type GitClientOptions } from "./client.ts";
+export type {
+  Branch,
+  BranchView,
+  Commit,
+  CommitRequest,
+  DiffFile,
+  DiffScope,
+  FileStatus,
+  Graph,
+  GraphEdge,
+  GraphNode,
+  MessageDraft,
+  PromptConfig,
+  PromptConfigUpdate,
+  PromptPreset,
+  Ref,
+  Remote,
+  SiteState,
+} from "./types.ts";

@@ -20,6 +20,7 @@ import (
 	"codedock/internal/agent"
 	"codedock/internal/agent/memory"
 	agenttools "codedock/internal/agent/tools"
+	"codedock/internal/config"
 	cderr "codedock/internal/errors"
 	"codedock/internal/events"
 	"codedock/internal/handler"
@@ -121,7 +122,7 @@ func newFixture(t *testing.T, extras ...tool.Tool) *fixture {
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "hello"}}}),
 	})
-	api := handler.New(client, queries, runtime, bus, defaults, nil)
+	api := handler.New(client, queries, runtime, bus, defaults, config.Config{}, nil)
 	return &fixture{api: api, router: testRouter(api), cancel: cancel, queries: queries, runtime: runtime}
 }
 
@@ -956,7 +957,7 @@ func TestRecoverQueuedRun(t *testing.T) {
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "recovered"}}}),
 	})
 	runtime := agent.New(client, queries, bus, registry, nil, agenttools.Ports{})
-	api := handler.New(client, queries, runtime, bus, defaults, nil)
+	api := handler.New(client, queries, runtime, bus, defaults, config.Config{}, nil)
 	f := &fixture{api: api, router: testRouter(api), cancel: cancel}
 	sessionID := f.createSession(t)
 	runID := f.start(t, sessionID, handler.StartRunRequest{
