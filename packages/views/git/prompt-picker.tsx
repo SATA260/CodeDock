@@ -22,6 +22,17 @@ export function PromptPicker({
   const selected = prompt?.selected ?? "conventional";
   const label = prompt?.presets.find((item) => item.id === selected)?.name ?? "提示词";
 
+  const persistCustom = () => {
+    if (selected === "custom" && custom !== (prompt?.custom ?? "")) {
+      void onSaveCustom(custom);
+    }
+  };
+
+  const close = () => {
+    persistCustom();
+    setOpen(false);
+  };
+
   useEffect(() => {
     setCustom(prompt?.custom ?? "");
   }, [prompt?.custom]);
@@ -32,12 +43,12 @@ export function PromptPicker({
     }
     const onPointer = (event: PointerEvent) => {
       if (root.current && !root.current.contains(event.target as Node)) {
-        setOpen(false);
+        close();
       }
     };
     document.addEventListener("pointerdown", onPointer);
     return () => document.removeEventListener("pointerdown", onPointer);
-  }, [open]);
+  }, [open, custom, selected, prompt?.custom]);
 
   return (
     <div className="relative" ref={root}>
@@ -46,7 +57,13 @@ export function PromptPicker({
         disabled={disabled || !prompt}
         aria-expanded={open}
         className="inline-flex max-w-28 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-xs hover:bg-accent/60 disabled:opacity-50"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => {
+          if (open) {
+            close();
+            return;
+          }
+          setOpen(true);
+        }}
       >
         <span className="truncate">{label}</span>
         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -67,6 +84,7 @@ export function PromptPicker({
                     )}
                     onClick={() => {
                       if (preset.id !== selected) {
+                        persistCustom();
                         void onSelect(preset.id);
                       }
                       if (preset.id !== "custom") {

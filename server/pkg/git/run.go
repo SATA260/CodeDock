@@ -2,6 +2,7 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -55,30 +56,37 @@ type gitOutput struct {
 }
 
 func runGitCmd(dir string, args ...string) gitOutput {
-	cmd := exec.Command("git", args...)
+	return runGitCmdCtx(context.Background(), dir, args...)
+}
+
+func runGitCmdCtx(ctx context.Context, dir string, args ...string) gitOutput {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_EDITOR=true", "GIT_TERMINAL_PROMPT=0")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	done := make(chan error, 1)
-	go func() { done <- cmd.Run() }()
-	select {
-	case err := <-done:
-		out := gitOutput{stdout: stdout.String(), stderr: stderr.String(), err: err}
-		if err != nil {
-			var ee *exec.ExitError
-			if errors.As(err, &ee) {
-				out.code = ee.ExitCode()
-			} else {
-				out.code = -1
-			}
+	err := cmd.Run()
+	out := gitOutput{stdout: stdout.String(), stderr: stderr.String(), err: err}
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			out.err = fmt.Errorf("git %s timed out", strings.Join(args, " "))
+			out.code = -1
+			return out
 		}
-		return out
-	case <-time.After(60 * time.Second):
-		_ = cmd.Process.Kill()
-		return gitOutput{err: fmt.Errorf("git %s timed out", strings.Join(args, " ")), code: -1}
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			out.code = ee.ExitCode()
+		} else {
+			out.code = -1
+		}
 	}
+	return out
 }
 
 func gitErr(out gitOutput) error {
@@ -96,7 +104,11 @@ func gitErr(out gitOutput) error {
 }
 
 func runGit(dir string, args ...string) (string, error) {
-	out := runGitCmd(dir, args...)
+	return runGitCtx(context.Background(), dir, args...)
+}
+
+func runGitCtx(ctx context.Context, dir string, args ...string) (string, error) {
+	out := runGitCmdCtx(ctx, dir, args...)
 	if out.err != nil {
 		return "", gitErr(out)
 	}
@@ -223,15 +235,6 @@ func isDirty(state SiteState) bool {
 func hasUnmerged(state SiteState) bool {
 	for _, file := range state.Files {
 		if file.Unmerged {
-			return true
-		}
-	}
-	return false
-}
-
-func hasUntracked(state SiteState) bool {
-	for _, file := range state.Files {
-		if file.WorktreeStatus == "?" {
 			return true
 		}
 	}

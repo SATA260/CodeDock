@@ -257,7 +257,8 @@ func (a *API) loadSnapshots(repo git.Repo) ([]AgentSnapshot, error) {
 	}
 	var items []AgentSnapshot
 	if err := json.Unmarshal(body, &items); err != nil {
-		return []AgentSnapshot{}, nil
+		a.logger().Warn("snapshots.json is unreadable; starting from an empty list", "path", path, "error", err)
+		return []AgentSnapshot{}, nil //nolint:nilerr // 坏文件不应阻断撤销面板
 	}
 	if items == nil {
 		return []AgentSnapshot{}, nil
@@ -613,7 +614,7 @@ func (a *API) GitPush(w http.ResponseWriter, r *http.Request) {
 		writeGitError(w, err)
 		return
 	}
-	if err := git.Push(repo, co); err != nil {
+	if err := git.Push(r.Context(), repo, co); err != nil {
 		writeGitError(w, err)
 		return
 	}
@@ -632,7 +633,7 @@ func (a *API) GitPull(w http.ResponseWriter, r *http.Request) {
 		writeGitError(w, err)
 		return
 	}
-	if err := git.Pull(repo, co); err != nil {
+	if err := git.Pull(r.Context(), repo, co); err != nil {
 		if errors.Is(err, git.ErrConflict) {
 			sess, sessErr := a.conflictSession(repo, co)
 			if sessErr != nil {

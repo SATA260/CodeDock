@@ -5,11 +5,10 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
 sandbox="$root/tmp/git-sandbox"
 if [ -z "$GIT_REPO" ]; then
-  if [ -d "$sandbox/.git" ]; then
-    GIT_REPO="$sandbox"
-  else
-    GIT_REPO="$root"
+  if [ ! -d "$sandbox/.git" ]; then
+    sh "$root/scripts/git-sandbox.sh" >/dev/null
   fi
+  GIT_REPO="$sandbox"
 fi
 export GIT_REPO
 (cd "$root/server" && go run ./cmd/server) &

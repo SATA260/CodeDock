@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -52,10 +53,7 @@ func AddWorktree(repo Repo, path, branch, newBranch string) (Worktree, error) {
 	if err := requireRepo(repo.Path); err != nil {
 		return Worktree{}, err
 	}
-	if strings.TrimSpace(path) == "" {
-		return Worktree{}, errors.New("worktree path is required")
-	}
-	abs, err := filepath.Abs(path)
+	abs, err := constrainWorktreeDest(repo.Path, path)
 	if err != nil {
 		return Worktree{}, err
 	}
@@ -84,4 +82,39 @@ func AddWorktree(repo Repo, path, branch, newBranch string) (Worktree, error) {
 		}
 	}
 	return Worktree{Path: abs, Branch: firstNonEmpty(newBranch, branch)}, nil
+}
+
+func constrainWorktreeDest(repoPath, reqPath string) (string, error) {
+	reqPath = strings.TrimSpace(reqPath)
+	if reqPath == "" {
+		return "", errors.New("worktree path is required")
+	}
+	root, err := filepath.Abs(repoPath)
+	if err != nil {
+		return "", err
+	}
+	root = filepath.Clean(root)
+	parent := filepath.Dir(root)
+	var dest string
+	if filepath.IsAbs(reqPath) {
+		dest = filepath.Clean(reqPath)
+	} else {
+		dest = filepath.Clean(filepath.Join(root, reqPath))
+	}
+	dest, err = filepath.Abs(dest)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(dest); err == nil {
+		dest = resolved
+	}
+	parent, err = filepath.Abs(parent)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(parent, dest)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", errors.New("worktree path is outside the repository parent")
+	}
+	return dest, nil
 }

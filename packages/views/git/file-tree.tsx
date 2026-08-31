@@ -85,6 +85,7 @@ function TreeNode({
     <li>
       <div
         role={previewable || expandable ? "button" : undefined}
+        tabIndex={previewable || expandable ? 0 : undefined}
         aria-expanded={expandable ? open : undefined}
         className={cn(
           "group relative flex items-center gap-1.5 py-0.5 pr-2 text-sm hover:bg-accent/60",
@@ -92,6 +93,19 @@ function TreeNode({
           (previewable || expandable) && "cursor-pointer",
         )}
         style={{ paddingLeft: padding }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") {
+            return;
+          }
+          event.preventDefault();
+          if (expandable) {
+            setOpen((prev) => !prev);
+            return;
+          }
+          if (previewable && file) {
+            onPreview?.(file.path);
+          }
+        }}
         onClick={() => {
           if (expandable) {
             setOpen((prev) => !prev);

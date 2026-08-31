@@ -49,22 +49,37 @@ export function useGitSite() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextState, nextBranches, staged, worktree, nextCommits] = await Promise.all([
-        client.status(),
+      const nextState = await client.status();
+      setState(nextState);
+      const extras = await Promise.allSettled([
         client.listBranches(),
         client.diff("staged"),
         client.diff("worktree"),
         client.log(),
       ]);
-      setState(nextState);
-      setBranches({
-        ...nextBranches,
-        locals: nextBranches.locals ?? [],
-        remotes: nextBranches.remotes ?? [],
-        graph: nextBranches.graph ?? { nodes: [], edges: [] },
-      });
-      setDiffs({ staged, worktree });
-      setCommits(nextCommits);
+      const [nextBranches, staged, worktree, nextCommits] = extras;
+      if (nextBranches.status === "fulfilled") {
+        setBranches({
+          ...nextBranches.value,
+          locals: nextBranches.value.locals ?? [],
+          remotes: nextBranches.value.remotes ?? [],
+          graph: nextBranches.value.graph ?? { nodes: [], edges: [] },
+        });
+      }
+      if (staged.status === "fulfilled" || worktree.status === "fulfilled") {
+        setDiffs((prev) => ({
+          staged: staged.status === "fulfilled" ? staged.value : prev.staged,
+          worktree: worktree.status === "fulfilled" ? worktree.value : prev.worktree,
+        }));
+      }
+      if (nextCommits.status === "fulfilled") {
+        setCommits(nextCommits.value);
+      }
+      const failed = extras.find((item) => item.status === "rejected");
+      if (failed && failed.status === "rejected") {
+        setError(failed.reason instanceof Error ? failed.reason.message : "无法读取仓库");
+        return;
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "无法读取仓库");

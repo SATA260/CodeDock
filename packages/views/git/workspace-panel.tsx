@@ -55,19 +55,23 @@ export function WorkspacePanel({
   const { staged, worktree } = useMemo(() => splitWorkspaceFiles(files), [files]);
 
   const stage = (paths: string[]) => {
-    void onStage(paths).then(() => {
-      if (preview && preview.scope === "worktree" && paths.includes(preview.path)) {
-        onPreview({ path: preview.path, scope: "staged" });
-      }
-    });
+    void onStage(paths)
+      .then(() => {
+        if (preview && preview.scope === "worktree" && paths.includes(preview.path)) {
+          onPreview({ path: preview.path, scope: "staged" });
+        }
+      })
+      .catch(() => undefined);
   };
 
   const unstage = (paths: string[]) => {
-    void onUnstage(paths).then(() => {
-      if (preview && preview.scope === "staged" && paths.includes(preview.path)) {
-        onPreview({ path: preview.path, scope: "worktree" });
-      }
-    });
+    void onUnstage(paths)
+      .then(() => {
+        if (preview && preview.scope === "staged" && paths.includes(preview.path)) {
+          onPreview({ path: preview.path, scope: "worktree" });
+        }
+      })
+      .catch(() => undefined);
   };
 
   const confirmDiscard = () => {
@@ -89,9 +93,11 @@ export function WorkspacePanel({
           if (!text) {
             return;
           }
-          void onCommit(text).then(() => {
-            setMessage("");
-          });
+          void onCommit(text)
+            .then(() => {
+              setMessage("");
+            })
+            .catch(() => undefined);
         }}
       >
         <textarea
@@ -129,7 +135,9 @@ export function WorkspacePanel({
               canPush={
                 !busy && (state.remotes ?? []).length > 0 && Boolean(state.upstream) && !state.upstream_gone
               }
-              onPush={() => void onPush()}
+              onPush={() => {
+                void onPush().catch(() => undefined);
+              }}
             />
           </div>
         </div>

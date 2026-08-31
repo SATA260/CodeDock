@@ -17,7 +17,7 @@ export function splitWorkspaceFiles(files: FileStatus[]): {
   worktree: FileStatus[];
 } {
   return {
-    staged: files.filter(isStaged),
+    staged: files.filter((file) => isStaged(file) && !file.unmerged),
     worktree: files.filter((file) => isWorktreeDirty(file) || file.unmerged),
   };
 }

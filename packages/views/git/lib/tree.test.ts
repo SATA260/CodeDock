@@ -52,6 +52,7 @@ test("splitWorkspaceFiles separates staged and worktree", () => {
     file("staged.ts", "M", " "),
     file("dirty.ts", " ", "M"),
     file("both.ts", "M", "M"),
+    { ...file("conflict.ts", "U", "U"), unmerged: true },
   ]);
   assert.deepEqual(
     split.staged.map((item) => item.path),
@@ -59,7 +60,7 @@ test("splitWorkspaceFiles separates staged and worktree", () => {
   );
   assert.deepEqual(
     split.worktree.map((item) => item.path),
-    ["dirty.ts", "both.ts"],
+    ["dirty.ts", "both.ts", "conflict.ts"],
   );
 });
 

@@ -99,7 +99,7 @@ func ConflictNames(repo Repo, checkout Checkout) (ours, theirs string, err error
 	}
 	gd, err := gitDir(dir)
 	if err != nil {
-		return ours, "", nil
+		return ours, "", nil //nolint:nilerr // rebase onto 可选，没有 git 目录仍返回 ours
 	}
 	switch state.Integrating {
 	case "merge":

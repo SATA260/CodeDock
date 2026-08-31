@@ -356,7 +356,7 @@ func (a *API) streamDraft(ctx context.Context, repo git.Repo, pack messagePack) 
 	if err != nil {
 		return "", false
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	text := readDraftText(stream)
 	if text == "" || text == "ok" {
 		return "", false

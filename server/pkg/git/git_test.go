@@ -1,6 +1,8 @@
 package git
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -247,7 +249,7 @@ func TestSwitchDirtyAndWorktreeBusy(t *testing.T) {
 	if err := RestorePath(repo, co, "a.txt"); err != nil {
 		t.Fatal(err)
 	}
-	other := filepath.Join(t.TempDir(), "wt")
+	other := filepath.Join(filepath.Dir(repo.Path), "wt")
 	tree, err := AddWorktree(repo, other, "feature", "")
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +275,7 @@ func TestCreateBranchUsesCheckoutHEAD(t *testing.T) {
 	if err := CreateBranch(repo, co, "feature", ""); err != nil {
 		t.Fatal(err)
 	}
-	other := filepath.Join(t.TempDir(), "wt")
+	other := filepath.Join(filepath.Dir(repo.Path), "wt")
 	if _, err := AddWorktree(repo, other, "feature", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -499,7 +501,7 @@ func TestMergeConflictReadContinueAbort(t *testing.T) {
 func TestPushPullRemote(t *testing.T) {
 	repo, co := initRepo(t)
 	commitFile(t, repo, co, "a.txt", "1", "first")
-	if err := Push(repo, co); err == nil {
+	if err := Push(context.Background(), repo, co); err == nil {
 		t.Fatal("push without remote")
 	}
 	bare := t.TempDir()
@@ -512,7 +514,7 @@ func TestPushPullRemote(t *testing.T) {
 	if len(remotes) != 1 || remotes[0].Name != "origin" || remotes[0].FetchURL != bare {
 		t.Fatalf("remotes: %+v", remotes)
 	}
-	if err := Push(repo, co); err == nil {
+	if err := Push(context.Background(), repo, co); err == nil {
 		t.Fatal("push without upstream")
 	}
 	gitRun(t, co.Path, "push", "-u", "origin", "main")
@@ -531,7 +533,7 @@ func TestPushPullRemote(t *testing.T) {
 	if state.Ahead != 1 {
 		t.Fatalf("ahead: %+v", state)
 	}
-	if err := Push(repo, co); err != nil {
+	if err := Push(context.Background(), repo, co); err != nil {
 		t.Fatal(err)
 	}
 	parent := t.TempDir()
@@ -545,10 +547,10 @@ func TestPushPullRemote(t *testing.T) {
 	}
 	otherCo := Checkout{Path: other.Path}
 	commitFile(t, other, otherCo, "a.txt", "3", "third")
-	if err := Push(other, otherCo); err != nil {
+	if err := Push(context.Background(), other, otherCo); err != nil {
 		t.Fatal(err)
 	}
-	if err := Pull(repo, co); err != nil {
+	if err := Pull(context.Background(), repo, co); err != nil {
 		t.Fatal(err)
 	}
 	state, err = Status(repo, co)
@@ -568,5 +570,55 @@ func TestMutationsRequireRepo(t *testing.T) {
 	co := Checkout{Path: repo.Path}
 	if err := Stage(repo, co, []string{"a.txt"}); err != ErrNotRepo {
 		t.Fatalf("stage: %v", err)
+	}
+}
+
+func TestAddWorktreeRejectsEscape(t *testing.T) {
+	repo, _ := initRepo(t)
+	escape := filepath.Join(filepath.Dir(filepath.Dir(repo.Path)), "codedock-wt-escape")
+	if _, err := AddWorktree(repo, escape, "feature", ""); err == nil {
+		t.Fatal("expected path outside parent to fail")
+	}
+}
+
+func TestRestoreWorkRejectsMissingSnapshot(t *testing.T) {
+	repo, co := initRepo(t)
+	commitFile(t, repo, co, "a.txt", "base", "first")
+	writeRepoFile(t, co.Path, "a.txt", "dirty")
+	before, err := os.ReadFile(filepath.Join(co.Path, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreWork(repo, co, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "HEAD"); err == nil {
+		t.Fatal("expected missing snapshot to fail")
+	}
+	after, err := os.ReadFile(filepath.Join(co.Path, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("worktree changed after failed restore: %q", after)
+	}
+}
+
+func TestUntrackedDiffSkipsLargeFile(t *testing.T) {
+	repo, co := initRepo(t)
+	commitFile(t, repo, co, "a.txt", "1", "first")
+	big := filepath.Join(co.Path, "huge.bin")
+	if err := os.WriteFile(big, bytes.Repeat([]byte("x"), maxUntrackedPatchBytes+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, err := Diff(repo, co, "worktree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found DiffFile
+	for _, file := range files {
+		if file.Path == "huge.bin" {
+			found = file
+		}
+	}
+	if !found.Binary || found.Patch != "" {
+		t.Fatalf("large untracked should skip patch: %+v", found)
 	}
 }

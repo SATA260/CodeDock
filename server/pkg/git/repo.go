@@ -2,6 +2,7 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -258,9 +259,20 @@ func parseNameStatus(line string) (DiffFile, bool) {
 	return file, true
 }
 
+const maxUntrackedPatchBytes = 256 * 1024
+
 func untrackedDiff(dir, rel string) DiffFile {
 	file := DiffFile{Path: rel, Kind: "added"}
-	body, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+	abs := filepath.Join(dir, filepath.FromSlash(rel))
+	info, err := os.Stat(abs)
+	if err != nil || info.IsDir() {
+		return file
+	}
+	if info.Size() > maxUntrackedPatchBytes {
+		file.Binary = true
+		return file
+	}
+	body, err := os.ReadFile(abs)
 	if err != nil {
 		return file
 	}
@@ -547,7 +559,7 @@ func Revert(repo Repo, checkout Checkout, commit Commit) (Commit, error) {
 }
 
 // Push 推到已配置的 remote。
-func Push(repo Repo, checkout Checkout) error {
+func Push(ctx context.Context, repo Repo, checkout Checkout) error {
 	dir := checkoutDir(repo, checkout)
 	if err := requireRepo(dir); err != nil {
 		return err
@@ -568,12 +580,12 @@ func Push(repo Repo, checkout Checkout) error {
 	if state.UpstreamGone {
 		return errors.New("upstream is gone")
 	}
-	_, err = runGit(dir, "push")
+	_, err = runGitCtx(ctx, dir, "push")
 	return err
 }
 
 // Pull 拉取并尝试整合；有冲突返回 ErrConflict。
-func Pull(repo Repo, checkout Checkout) error {
+func Pull(ctx context.Context, repo Repo, checkout Checkout) error {
 	dir := checkoutDir(repo, checkout)
 	if err := requireRepo(dir); err != nil {
 		return err
@@ -597,7 +609,7 @@ func Pull(repo Repo, checkout Checkout) error {
 	if state.UpstreamGone {
 		return errors.New("upstream is gone")
 	}
-	if _, err := runGit(dir, "pull", "--no-rebase"); err != nil {
+	if _, err := runGitCtx(ctx, dir, "pull", "--no-rebase"); err != nil {
 		after, statusErr := Status(repo, checkout)
 		if statusErr == nil && (after.Integrating != "" || hasUnmerged(after)) {
 			return ErrConflict
@@ -681,16 +693,22 @@ func Discard(repo Repo, checkout Checkout, paths []string) error {
 }
 
 func removeUntracked(dir, rel string) error {
-	abs := filepath.Join(dir, filepath.FromSlash(rel))
-	back, err := filepath.Rel(dir, abs)
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	root = filepath.Clean(root)
+	abs := filepath.Join(root, filepath.FromSlash(rel))
+	back, err := filepath.Rel(root, abs)
 	if err != nil || back == "." || strings.HasPrefix(back, "..") {
 		return fmt.Errorf("invalid path %q", rel)
 	}
 	if err := os.RemoveAll(abs); err != nil {
 		return err
 	}
-	for parent := filepath.Dir(abs); parent != dir; parent = filepath.Dir(parent) {
-		if err := os.Remove(parent); err != nil {
+	sep := string(os.PathSeparator)
+	for parent := filepath.Dir(abs); parent != root && strings.HasPrefix(parent, root+sep); parent = filepath.Dir(parent) {
+		if err := os.Remove(parent); err != nil { //nolint:nilerr // 目录非空时停止上收
 			break
 		}
 	}

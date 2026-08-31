@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -30,6 +31,11 @@ func RestoreWork(repo Repo, checkout Checkout, stashOID, head string) error {
 	}
 	if strings.TrimSpace(head) == "" {
 		return errors.New("head is required")
+	}
+	if strings.TrimSpace(stashOID) != "" {
+		if _, err := runGit(dir, "rev-parse", "--verify", "--quiet", stashOID+"^{commit}"); err != nil {
+			return fmt.Errorf("snapshot %s is unavailable", stashOID)
+		}
 	}
 	if _, err := runGit(dir, "reset", "--hard", head); err != nil {
 		return err
