@@ -13,6 +13,7 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 具体工具定义放在 `server/internal/agent/tools`。工具名、入参/出参、schema、权限和编排都在本包；Execute 若要调外部能力，只通过 `Ports` 里的接口。Runtime `New` 时由 `cmd/server` 注入 `Ports` 的具体实现，再 `Register`。每个工具只定义入参/出参结构体，执行用 `encoding/json`，schema 从类型推断。`tools` 可 import `memory`，不 import 父包 `internal/agent`。
 - Agent 通用无状态逻辑放在 `server/pkg/agent`：类型、token 统计、提示词、上下文、Tool 抽象（不含具体工具定义）、Agent 配置、模型调用。
 - Git CLI 操作放在 `server/pkg/git`：无状态，不写产品流程；Handler 直接调用。不进 `pkg/agent`。
+- Codex 对接放在 `server/pkg/codex`：看板的子模块，类型与调用图给看板调用；无状态，不查库、不调本机 CLI。不进 `pkg/agent`。
 - 进程内事件总线放在 `server/internal/events`。
 - 数据库入口和 sqlc 生成代码放在 `server/pkg/db`。
 - 数据库结构演进放在 `server/migrations`。

@@ -39,6 +39,7 @@ server/internal/agent
     v
 server/pkg/agent
 server/pkg/git
+server/pkg/codex
 ```
 
 `pkg/ai` 已删除。大模型调用放在 `pkg/agent`，由 `ModelConfig` 在方法内创建，不由 Runtime 注入。
@@ -69,6 +70,7 @@ CodeDock/
 │   ├── pkg/
 │   │   ├── agent/               # 全部通用无状态逻辑，含模型调用与 Tool 抽象
 │   │   ├── git/                 # 无状态 Git CLI 操作，供 Handler 直接调用
+│   │   ├── codex/               # 看板的 Codex 子模块：类型与调用图，供看板调用
 │   │   └── db/                  # Client 与 sqlc 生成代码
 │   ├── migrations/
 │   ├── go.mod
@@ -119,6 +121,11 @@ pkg/agent
 pkg/git
   不依赖 handler、internal、sqlc
   无状态，只 exec 本机 git；不写产品流程
+
+pkg/codex
+  看板的 Codex 子模块，类型与调用图给看板调用
+  不依赖 handler、internal、sqlc
+  无状态，不查库、不调本机 CLI；不进 pkg/agent
 
 packages/core
   不依赖 React、Next、DOM、process.env、AI SDK
@@ -210,6 +217,10 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 不查库�
 - 模型调用 `Stream` / 压缩：在函数内按 `ModelConfig.Provider` 创建
   - `fake`：读 `Model.Options` 脚本（多段 text / tool_calls、失败次数、可取消挂起），测试不打外网
   - `openai`：OpenAI 兼容 HTTP（`BaseURL` + API Key）
+
+### `pkg/codex`
+
+看板的 Codex 子模块。类型与调用图给看板调用；无状态，不查库、不调本机 CLI。不进 `pkg/agent`。
 
 ### `pkg/db`
 
