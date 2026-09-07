@@ -27,6 +27,7 @@ server/internal/handler
     |-- 领取 Run 后的 Loop --> internal/agent
     |-- 用户记忆查看 / 删除 --> pkg/db/sqlite
     |-- Git HTTP --> pkg/git（本机 CLI，无产品流程）
+    |-- Claude HTTP --> pkg/claude（本机 Claude Code，不落库）
     |
     v
 server/internal/agent
@@ -39,6 +40,7 @@ server/internal/agent
     v
 server/pkg/agent
 server/pkg/git
+server/pkg/claude
 ```
 
 `pkg/ai` 已删除。大模型调用放在 `pkg/agent`，由 `ModelConfig` 在方法内创建，不由 Runtime 注入。
@@ -57,7 +59,7 @@ CodeDock/
 ├── server/
 │   ├── cmd/server/              # 服务启动、配置、Router 和依赖装配
 │   ├── internal/
-│   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel、记忆查看/删除、Git
+│   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel、记忆查看/删除、Git、Claude Code
 │   │   ├── agent/               # 运行时编排 + sqlc 持久化
 │   │   │   ├── memory/          # 热层目录+专题，冷层工作区 FTS 索引
 │   │   │   └── tools/           # 具体工具定义：ping、memory_*
@@ -69,6 +71,7 @@ CodeDock/
 │   ├── pkg/
 │   │   ├── agent/               # 全部通用无状态逻辑，含模型调用与 Tool 抽象
 │   │   ├── git/                 # 无状态 Git CLI 操作，供 Handler 直接调用
+│   │   ├── claude/              # 无状态 Claude Code 对接；从本机 Claude 读，不落库
 │   │   └── db/                  # Client 与 sqlc 生成代码
 │   ├── migrations/
 │   ├── go.mod
@@ -89,6 +92,7 @@ internal/handler
   -> pkg/db/sqlite.Queries
   -> pkg/agent          # 映射响应、token 统计、Profile 装配
   -> pkg/git            # 本机 Git CLI 操作
+  -> pkg/claude         # 本机 Claude Code 对接
   -> internal/agent     # Worker 领取后的 Loop
   -> internal/agent/memory  # 用户侧记忆响应类型
 
@@ -119,6 +123,10 @@ pkg/agent
 pkg/git
   不依赖 handler、internal、sqlc
   无状态，只 exec 本机 git；不写产品流程
+
+pkg/claude
+  不依赖 handler、internal、sqlc
+  无状态，从本机 Claude 读会话 / 实录 / 配置，不落库；不写产品流程
 
 packages/core
   不依赖 React、Next、DOM、process.env、AI SDK
@@ -158,8 +166,9 @@ apps/web
 - Run 的 Start / Continue / Retry / Cancel 和审批裁决直接在 Handler 中处理，需要执行时再交给 Worker
 - 同一 Session 只有一个 active Run：`interrupt` 先取消再开新 Run；`queue` 只落库，当前结束后自动领取
 - Git HTTP（`/git/*`）：校验 checkout、组响应，直接调用 `pkg/git`。`GIT_REPO` 为空则用进程 cwd。`GET /git/status` 回 `SiteState` 整局（含 `is_repo`、跟踪、ahead/behind、integrating）
+- Claude Code HTTP（`/claude/*`）：直接调用 `pkg/claude`。会话 / 实录 / 配置从本机 Claude 读，不查库、不落库
 
-Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 不查库。
+Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 与 Claude Code 不查库。
 
 ### `internal/agent`
 
@@ -197,6 +206,10 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 不查库�
 ### `pkg/git`
 
 无状态 Git CLI：`Open` / `Status`（`SiteState` 整局）/ Diff / 图 / 暂存提交 / reset / revert / 推拉 / remote / 分支 / worktree / `stash create` 副本 / 冲突读写。不进 `pkg/agent`，不写 HTTP 或产品流程。Workspace / Branch / Undo / 说明 / Agent 快照的产品组合在 Handler。
+
+### `pkg/claude`
+
+无状态 Claude Code 对接：引擎探测、会话、配置、斜杠命令、附件、回合、实录、审批，以及对本机 Claude 说话。会话 / 实录 / 模型 / 权限档从本机 Claude 读，不落库。不进 `pkg/agent`，不走本地对话的工具 / 记忆 / 压缩。Handler 直接调用。
 
 ### `pkg/agent`
 

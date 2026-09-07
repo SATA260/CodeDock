@@ -2,17 +2,18 @@
 
 修改 CodeDock 代码前，先阅读 [`docs/architecture.md`](docs/architecture.md)。该文档是当前目录归属和模块边界的依据。
 
-Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping` 与记忆工具 `memory_read` / `memory_write` / `memory_search`，不实现文件 / Shell / Git **工具**。Git 用户操作走 HTTP + `pkg/git`，不经过 Agent Tool。前端 Git 在 `packages/core/git`、`packages/views/git` 与 `apps/web` 的 `/git`，不扩 `AgentClient`。
+Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping` 与记忆工具 `memory_read` / `memory_write` / `memory_search`，不实现文件 / Shell / Git **工具**。Git 用户操作走 HTTP + `pkg/git`，不经过 Agent Tool。Claude Code 用户操作走 HTTP + `pkg/claude`，不经过 Agent Tool；会话 / 实录 / 配置从本机 Claude 读，不落库。前端 Git 在 `packages/core/git`、`packages/views/git` 与 `apps/web` 的 `/git`，不扩 `AgentClient`。
 
 ## 目录放置规则
 
 - 服务启动、配置读取、Router 和依赖装配放在 `server/cmd/server`。
-- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，用户侧记忆查看/删除，以及 Git（直接调 `pkg/git`）。
+- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，用户侧记忆查看/删除，Git（直接调 `pkg/git`），以及 Claude Code（直接调 `pkg/claude`）。
 - Agent 运行时编排和 sqlc 持久化放在 `server/internal/agent`。
 - Markdown 记忆（热层目录+专题）与 context message 索引（冷层按工作区 FTS）放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`，不定义 Tool。
 - 具体工具定义放在 `server/internal/agent/tools`。工具名、入参/出参、schema、权限和编排都在本包；Execute 若要调外部能力，只通过 `Ports` 里的接口。Runtime `New` 时由 `cmd/server` 注入 `Ports` 的具体实现，再 `Register`。每个工具只定义入参/出参结构体，执行用 `encoding/json`，schema 从类型推断。`tools` 可 import `memory`，不 import 父包 `internal/agent`。
 - Agent 通用无状态逻辑放在 `server/pkg/agent`：类型、token 统计、提示词、上下文、Tool 抽象（不含具体工具定义）、Agent 配置、模型调用。
 - Git CLI 操作放在 `server/pkg/git`：无状态，不写产品流程；Handler 直接调用。不进 `pkg/agent`。
+- Claude Code 对接放在 `server/pkg/claude`：无状态，不落库；会话 / 实录 / 模型 / 权限档从本机 Claude 读。Handler 直接调用。不进 `pkg/agent`，不走本地对话的工具 / 记忆 / 压缩。
 - 进程内事件总线放在 `server/internal/events`。
 - 数据库入口和 sqlc 生成代码放在 `server/pkg/db`。
 - 数据库结构演进放在 `server/migrations`。
@@ -35,7 +36,7 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - Agent 契约不得依赖 React、UI 包或路由框架。
 - 流式事件是通知，不是真实数据源；重连时应按 `event_seq` 回放。
 - 不要预先创建 Issue、Task、Review、Workspace 或其他具体业务域目录。
-- 不要把产品工作流放入 `server/pkg`。
+- 不要把产品工作流放入 `server/pkg`。Git 与 Claude Code 是本机 CLI 域：不落库，Handler 直接调 `pkg/git` / `pkg/claude`。
 - 前端三层不得反依赖：`core` 不依赖 React / Next / DOM / `process.env`；`ui` 不依赖 `core`；`views` 不 import `next/*`；`apps/web` 只做路由与平台装配。
 - 前端按业务域拆模块，不要 `src/`：`core` / `views` 用同名域目录（现有 `chat`）；`ui` 只用 `components` / `lib` / `styles`。新业务再建目录，不预建空文件夹。
 

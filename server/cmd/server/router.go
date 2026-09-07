@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// newRouter 注册健康检查与 Session / Run / Approval / Memory / Git 路由。
+// newRouter 注册健康检查与 Session / Run / Approval / Memory / Git / Claude Code 路由。
 func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 	router := chi.NewRouter()
 	router.Use(cors)
@@ -84,6 +84,29 @@ func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 			r.Post("/stash/restore", api.GitRestoreSnapshot)
 			r.Get("/undo", api.GitListUndo)
 			r.Post("/undo", api.GitClickUndo)
+		})
+		router.Route("/claude", func(r chi.Router) {
+			r.Get("/status", api.ClaudeProbe)
+			r.Get("/models", api.ClaudeListModels)
+			r.Get("/modes", api.ClaudeListModes)
+			r.Get("/commands", api.ClaudeListCommands)
+			r.Get("/sessions", api.ClaudeListSessions)
+			r.Post("/sessions", api.ClaudeCreateSession)
+			r.Get("/sessions/{session_id}", api.ClaudeGetSession)
+			r.Patch("/sessions/{session_id}", api.ClaudeRenameSession)
+			r.Post("/sessions/{session_id}/archive", api.ClaudeArchiveSession)
+			r.Post("/sessions/{session_id}/fork", api.ClaudeForkSession)
+			r.Get("/sessions/{session_id}/settings", api.ClaudeEffective)
+			r.Post("/sessions/{session_id}/settings", api.ClaudeApplySettings)
+			r.Post("/sessions/{session_id}/commands", api.ClaudeInvoke)
+			r.Post("/sessions/{session_id}/mentions", api.ClaudeMention)
+			r.Post("/sessions/{session_id}/images", api.ClaudeAttachImage)
+			r.Post("/sessions/{session_id}/turns", api.ClaudeStartTurn)
+			r.Get("/sessions/{session_id}/transcript", api.ClaudeHydrate)
+			r.Post("/turns/{turn_id}/cancel", api.ClaudeCancelTurn)
+			r.Post("/turns/{turn_id}/continue", api.ClaudeContinueTurn)
+			r.Post("/approvals/{approval_id}/decision", api.ClaudeDecide)
+			r.Post("/asks/{request_id}/reject-unknown", api.ClaudeRejectUnknown)
 		})
 	}
 
