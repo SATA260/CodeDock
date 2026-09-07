@@ -13,6 +13,7 @@ type Config struct {
 	LLMAPIKey   string
 	LLMBaseURL  string
 	GitRepo     string
+	CodexBin    string
 }
 
 // Load 从环境变量读取配置，未设置时使用默认值。
@@ -27,6 +28,7 @@ func Load() Config {
 		LLMAPIKey:   env("LLM_API_KEY", ""),
 		LLMBaseURL:  env("LLM_BASE_URL", ""),
 		GitRepo:     env("GIT_REPO", ""),
+		CodexBin:    env("CODEX_BIN", "codex"),
 	}
 }
 

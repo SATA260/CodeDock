@@ -12,54 +12,45 @@ const (
 type AskKind string
 
 const (
-	AskCommand    AskKind = "command"     // 能不能跑这条命令。
-	AskFileChange AskKind = "file_change" // 能不能改这些文件。
-	AskQuestion   AskKind = "question"    // 让人补一句字，或从几个选项里挑一个。
-	AskForm       AskKind = "form"        // MCP 跑起来之后弹出来、要人填的表单。
+	AskCommand     AskKind = "command"     // 能不能跑这条命令。
+	AskFileChange  AskKind = "file_change" // 能不能改这些文件。
+	AskQuestion    AskKind = "question"    // 让人补一句字，或从几个选项里挑一个。
+	AskForm        AskKind = "form"        // MCP 跑起来之后弹出来、要人填的表单。
+	AskPermissions AskKind = "permissions" // 额外权限。
 )
 
 // ApprovalAsk 是一条 Codex 已知的反问。
 type ApprovalAsk struct {
-	Kind              AskKind
-	Command           string
-	Paths             []string
-	Diff              string
-	Prompt            string   // 选择题或表单给人看的题面。
-	Options           []string // 补一句字时的选项。
-	Fields            []string // MCP 表单字段名。
-	ExternalRequestID string   // 用来回给 Codex 的那张问票。
+	ID                string   `json:"id"`
+	Kind              AskKind  `json:"kind"`
+	ThreadID          string   `json:"thread_id,omitempty"`
+	TurnID            string   `json:"turn_id,omitempty"`
+	Method            string   `json:"method,omitempty"`
+	Command           string   `json:"command,omitempty"`
+	Paths             []string `json:"paths,omitempty"`
+	Diff              string   `json:"diff,omitempty"`
+	Prompt            string   `json:"prompt,omitempty"` // 选择题或表单给人看的题面。
+	Options           []string `json:"options,omitempty"`
+	Fields            []string `json:"fields,omitempty"` // MCP 表单字段名。
+	ExternalRequestID string   `json:"external_request_id"`
 }
 
 // AskAnswer 是人对这条反问的作答。
 type AskAnswer struct {
-	Approved bool
-	Scope    DecisionScope
-	Choice   string   // 选择题选中的项。
-	Values   []string // 表单填写结果。
+	Approved bool          `json:"approved"`
+	Scope    DecisionScope `json:"scope,omitempty"`
+	Choice   string        `json:"choice,omitempty"` // 选择题选中的项。
+	Values   []string      `json:"values,omitempty"` // 表单填写结果。
 }
 
-// Approval 管 Codex 已知的反问：跑命令、改文件、补一句字、MCP 弹出的表单，这几种都做完整界面。
-// 不管官方新加、本模块认不出的提问，也不管本地模型那套工具审批。
-type Approval struct {
-	Codex *Codex
-	Turn  *Turns
-}
-
-// Require 登记一条 Codex 的反问等人作答，拿到结果后回给 Codex，并让这一轮接着跑。
-// 人不回话 Codex 就一直等着，所以这条必须有人答。
-func (a *Approval) Require(turnID string, ask ApprovalAsk) (approvalID string, err error) {
-	a.Decide("", AskAnswer{})
-	a.Codex.ReplyAsk(ask.ExternalRequestID, AskAnswer{})
-	a.Turn.Continue(turnID)
-	return "", nil
-}
-
-// Decide 记下人对这条反问的作答：批还是拒、管一次还是管整条对话、选了哪一项、表单填了什么。
-func (a *Approval) Decide(approvalID string, answer AskAnswer) error {
-	return nil
-}
-
-// Expire 这条反问放太久没人理，按拒绝回给 Codex，免得它一直等在那儿。
-func (a *Approval) Expire(approvalID string) error {
-	return nil
+// KnownAskMethod 判断这是不是本模块能做完整界面的官方反问。
+func KnownAskMethod(method string) bool {
+	switch method {
+	case MethodItemCommandApproval, MethodItemFileApproval, MethodItemPermissionsApproval,
+		MethodItemToolUserInput, MethodMCPElicitation,
+		MethodExecCommandApproval, MethodApplyPatchApproval:
+		return true
+	default:
+		return false
+	}
 }

@@ -59,9 +59,11 @@ CodeDock/
 │   ├── cmd/server/              # 服务启动、配置、Router 和依赖装配
 │   ├── internal/
 │   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel、记忆查看/删除、Git
+│   │   │   └── codex/           # 独立 /codex HTTP 薄桥接
 │   │   ├── agent/               # 运行时编排 + sqlc 持久化
 │   │   │   ├── memory/          # 热层目录+专题，冷层工作区 FTS 索引
 │   │   │   └── tools/           # 具体工具定义：ping、memory_*
+│   │   ├── codex/               # 本机 app-server 生命周期与内存排队/问票/SSE
 │   │   ├── events/              # 进程内事件总线
 │   │   ├── config/
 │   │   ├── logger/
@@ -70,7 +72,7 @@ CodeDock/
 │   ├── pkg/
 │   │   ├── agent/               # 全部通用无状态逻辑，含模型调用与 Tool 抽象
 │   │   ├── git/                 # 无状态 Git CLI 操作，供 Handler 直接调用
-│   │   ├── codex/               # 看板的 Codex 子模块：类型与调用图，供看板调用
+│   │   ├── codex/               # 看板的 Codex 子模块：协议客户端与领域类型
 │   │   └── db/                  # Client 与 sqlc 生成代码
 │   ├── migrations/
 │   ├── go.mod
@@ -83,6 +85,8 @@ CodeDock/
 ```text
 cmd/server
   -> internal/handler
+  -> internal/handler/codex
+  -> internal/codex
   -> internal/agent
   -> internal/events
   -> pkg/db
@@ -93,6 +97,15 @@ internal/handler
   -> pkg/git            # 本机 Git CLI 操作
   -> internal/agent     # Worker 领取后的 Loop
   -> internal/agent/memory  # 用户侧记忆响应类型
+
+internal/handler/codex
+  -> internal/codex
+  -> pkg/codex
+
+internal/codex
+  -> pkg/codex          # JSONL 协议客户端；不查库
+  启动本机 `codex app-server --stdio`
+  排队、草稿、问票、SSE 只放内存
 
 internal/agent
   -> pkg/db/sqlite.Queries
@@ -123,9 +136,10 @@ pkg/git
   无状态，只 exec 本机 git；不写产品流程
 
 pkg/codex
-  看板的 Codex 子模块，类型与调用图给看板调用
+  看板的 Codex 子模块：领域类型与 app-server JSONL 协议客户端
   不依赖 handler、internal、sqlc
-  无状态，不查库、不调本机 CLI；不进 pkg/agent
+  不查库、不 spawn `codex`；Transport 由 internal/codex 注入
+  不进 pkg/agent
 
 packages/core
   不依赖 React、Next、DOM、process.env、AI SDK
@@ -220,7 +234,15 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 不查库�
 
 ### `pkg/codex`
 
-看板的 Codex 子模块。类型与调用图给看板调用；无状态，不查库、不调本机 CLI。不进 `pkg/agent`。
+看板的 Codex 子模块。领域类型与 `codex app-server` JSONL 协议客户端给看板 / `internal/codex` 调用。不查库、不 spawn CLI。`session_id` 即官方 `thread_id`。不进 `pkg/agent`。
+
+### `internal/codex`
+
+本机 `codex app-server --stdio` 生命周期与内存编排：懒启动、握手、崩溃后不重发当前回合。官方 `thread/list/read` 是历史数据源；排队、附件草稿、问票和 SSE 环只驻进程内。未安装或未授权不能拖垮主服务。
+
+### `internal/handler/codex`
+
+独立 `/codex/*` HTTP 薄桥接。不写 Codex 业务表。
 
 ### `pkg/db`
 

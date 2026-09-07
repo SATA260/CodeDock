@@ -13,28 +13,50 @@ const (
 
 // CommandSpec 是一条与 Codex 斜杠、官方扩展按钮共用的命令。
 type CommandSpec struct {
-	Name   string // 与 Codex 斜杠同名，如 model、plan、fork、mcp。
-	Action CommandAction
-	Hint   string // hint 时给人看的话。
+	Name   string        `json:"name"` // 与 Codex 斜杠同名，如 model、plan、fork、mcp。
+	Action CommandAction `json:"action"`
+	Hint   string        `json:"hint,omitempty"` // hint 时给人看的话。
+	Field  string        `json:"field,omitempty"`
 }
 
 // CommandResult 是这条命令没法在本模块落地时，给人看的说明。
 type CommandResult struct {
-	Hint string
+	Hint    string        `json:"hint,omitempty"`
+	Action  CommandAction `json:"action,omitempty"`
+	Handled bool          `json:"handled"`
 }
 
-// Command 管把 Codex 斜杠名和官方扩展按钮收成同一套动作：能做的往下交给会话、配置、
-// 回合或附件，不能做的只给一句提示。不管怎么对 Codex 说话。
-type Command struct{}
+const hintUseTerminal = "这条配置请在终端里改 Codex（~/.codex/config.toml），本模块不改官方配置文件。"
 
-// List 列出对话框 `/` 里能用的命令。这些和官方扩展按钮共用同一套动作，不搞两套语义。
-// `/mcp`、`/skills` 这类也在列表里，但点了只会给提示。
-func (c *Command) List() []CommandSpec {
-	return nil
+// Commands 列出对话框 `/` 里能用的命令。这些和官方扩展按钮共用同一套动作。
+func Commands() []CommandSpec {
+	return []CommandSpec{
+		{Name: "model", Action: ActionApplySettings, Field: "model"},
+		{Name: "effort", Action: ActionApplySettings, Field: "effort"},
+		{Name: "plan", Action: ActionApplySettings, Field: "collaboration_mode"},
+		{Name: "permissions", Action: ActionApplySettings, Field: "sandbox"},
+		{Name: "approval", Action: ActionApplySettings, Field: "approval_policy"},
+		{Name: "stop", Action: ActionTurn},
+		{Name: "compact", Action: ActionTurn},
+		{Name: "review", Action: ActionTurn},
+		{Name: "fork", Action: ActionSession},
+		{Name: "archive", Action: ActionSession},
+		{Name: "rename", Action: ActionSession},
+		{Name: "mention", Action: ActionAttach},
+		{Name: "image", Action: ActionAttach},
+		{Name: "mcp", Action: ActionHint, Hint: hintUseTerminal},
+		{Name: "skills", Action: ActionHint, Hint: hintUseTerminal},
+		{Name: "plugins", Action: ActionHint, Hint: hintUseTerminal},
+		{Name: "hooks", Action: ActionHint, Hint: hintUseTerminal},
+	}
 }
 
-// Invoke 执行与 Codex 同名的那个动作。本模块不做的配置类命令不改 Codex 配置文件，
-// 只回一句「去终端改」的提示。
-func (c *Command) Invoke(sessionID, name, args string) (CommandResult, error) {
-	return CommandResult{}, nil
+// LookupCommand 按与 Codex 同名的斜杠名取命令。
+func LookupCommand(name string) (CommandSpec, bool) {
+	for _, spec := range Commands() {
+		if spec.Name == name {
+			return spec, true
+		}
+	}
+	return CommandSpec{}, false
 }

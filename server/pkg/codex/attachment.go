@@ -2,25 +2,45 @@ package codex
 
 // Input 是本条要带给 Codex 的正文、文件提及和图片。
 type Input struct {
-	Text     string
-	Mentions []string // 仓库内路径，对 Codex 的 mention。
-	Images   []string // 本地图片路径，对 Codex 的 localImage。
+	Text     string   `json:"text,omitempty"`
+	Mentions []string `json:"mentions,omitempty"` // 仓库内路径，对 Codex 的 mention。
+	Images   []string `json:"images,omitempty"`   // 本地图片路径，对 Codex 的 localImage。
 }
 
-// Attachment 管本条消息将要带给 Codex 的文件提及和图片。不管发送，不管工作目录从哪来。
-type Attachment struct{}
-
-// Mention 把一个仓库内文件挂到还没发出去的这条内容上，对应 Codex 的 mention。
-func (a *Attachment) Mention(sessionID, path string) error {
-	return nil
+// Empty 表示还没有正文或附件。
+func (in Input) Empty() bool {
+	return in.Text == "" && len(in.Mentions) == 0 && len(in.Images) == 0
 }
 
-// AttachImage 把一张本地图片挂到还没发出去的这条内容上，对应 Codex 的 localImage。
-func (a *Attachment) AttachImage(sessionID, path string) error {
-	return nil
+// UserInput 是发给 turn/start 的一条官方输入项。
+type UserInput struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+	Name string `json:"name,omitempty"`
+	Path string `json:"path,omitempty"`
+	URL  string `json:"url,omitempty"`
 }
 
-// TakeDraft 取出这条攒好的正文与附件并清空草稿，交给回合发给 Codex。
-func (a *Attachment) TakeDraft(sessionID string) (Input, error) {
-	return Input{}, nil
+// UserInputs 把本模块的 Input 编成 Codex 的 input 数组。
+func UserInputs(in Input) []UserInput {
+	items := make([]UserInput, 0, 1+len(in.Mentions)+len(in.Images))
+	if in.Text != "" {
+		items = append(items, UserInput{Type: "text", Text: in.Text})
+	}
+	for _, path := range in.Mentions {
+		if path == "" {
+			continue
+		}
+		items = append(items, UserInput{Type: "mention", Name: path, Path: path})
+	}
+	for _, path := range in.Images {
+		if path == "" {
+			continue
+		}
+		items = append(items, UserInput{Type: "localImage", Path: path})
+	}
+	if len(items) == 0 {
+		return []UserInput{{Type: "text", Text: ""}}
+	}
+	return items
 }
