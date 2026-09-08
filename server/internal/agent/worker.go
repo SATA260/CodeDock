@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	cderr "codedock/internal/errors"
 	pkgagent "codedock/pkg/agent"
@@ -104,12 +105,10 @@ func (w *Worker) Cancel(runID string) {
 		return
 	}
 	w.mu.Lock()
-	cancel, ok := w.cancels[runID]
-	if !ok {
-		w.skipped[runID] = struct{}{}
-	}
+	w.skipped[runID] = struct{}{}
+	cancel := w.cancels[runID]
 	w.mu.Unlock()
-	if ok && cancel != nil {
+	if cancel != nil {
 		cancel()
 	}
 	w.runtime.logger().Info("worker cancel", "run_id", runID)
@@ -135,13 +134,6 @@ func (w *Worker) execute(parent context.Context, job pkgagent.StepJob) {
 
 	w.mu.Lock()
 	delete(w.queued, stepJobKey(job))
-	if _, skipped := w.skipped[runID]; skipped {
-		delete(w.skipped, runID)
-		w.mu.Unlock()
-		cancel()
-		close(done)
-		return
-	}
 	w.cancels[runID] = cancel
 	w.done[runID] = done
 	w.mu.Unlock()
@@ -161,13 +153,73 @@ func (w *Worker) execute(parent context.Context, job pkgagent.StepJob) {
 	if err != nil || !ok {
 		return
 	}
-	state, err := w.runtime.LoadAgentState(ctx, job.RunID)
+	defer w.runtime.releaseStep(job.RunID, job.StepIndex)
+
+	state, history, err := w.runtime.LoadAgentState(ctx, job.RunID)
 	if err != nil {
 		return
 	}
-	result, err := w.runtime.engine.Step(ctx, state, job)
+	w.mu.Lock()
+	_, skipped := w.skipped[runID]
+	w.mu.Unlock()
+	if skipped || state.CancelRequested {
+		if !pkgagent.IsTerminal(state.Status) {
+			result, ferr := w.runtime.engine.Step(ctx, pkgagent.StepInput{
+				State:   cancelState(state),
+				Job:     job,
+				History: history,
+			})
+			if ferr == nil {
+				_ = w.runtime.CommitStep(ctx, job.RunID, result)
+			}
+		}
+		w.mu.Lock()
+		delete(w.skipped, runID)
+		w.mu.Unlock()
+		return
+	}
+	result, err := w.runtime.engine.Step(ctx, pkgagent.StepInput{State: state, Job: job, History: history})
 	if err != nil {
+		if ctx.Err() != nil || state.CancelRequested {
+			result, _ = w.runtime.engine.Step(context.Background(), pkgagent.StepInput{
+				State:   cancelState(state),
+				Job:     job,
+				History: history,
+			})
+			_ = w.runtime.CommitStep(ctx, job.RunID, result)
+			return
+		}
+		failed := failState(state, err)
+		_ = w.runtime.CommitStep(ctx, job.RunID, pkgagent.StepResult{
+			State: failed,
+			Facts: []pkgagent.Fact{{
+				Type:    pkgagent.EventRunFailed,
+				Payload: pkgagent.MarshalPayload(pkgagent.RunTerminalPayload{Status: pkgagent.RunFailed, StopReason: failed.StopReason}),
+			}},
+		})
 		return
 	}
 	_ = w.runtime.CommitStep(ctx, job.RunID, result)
+}
+
+func cancelState(state pkgagent.AgentState) pkgagent.AgentState {
+	state.CancelRequested = true
+	return state
+}
+
+func failState(state pkgagent.AgentState, err error) pkgagent.AgentState {
+	reason := pkgagent.StopModelError
+	now := timeNow()
+	state.Status = pkgagent.RunFailed
+	state.StopReason = &reason
+	state.FinishedAt = &now
+	if state.StepIndex <= 0 {
+		state.StepIndex = 1
+	}
+	_ = err
+	return state
+}
+
+func timeNow() time.Time {
+	return time.Now().UTC()
 }

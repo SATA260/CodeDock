@@ -133,6 +133,15 @@ func (a *API) start(ctx context.Context, sessionID string, req StartRunRequest) 
 	}
 
 	if session.ActiveRunID != nil && req.InputMode == InputInterrupt {
+		release := a.runtime.HoldDequeue(sessionID)
+		defer func() {
+			release()
+			fresh, err := a.q(ctx).GetSession(ctx, sessionID)
+			if err != nil || (fresh.ActiveRunID.Valid && fresh.ActiveRunID.String != "") {
+				return
+			}
+			_ = a.runtime.DequeueNext(ctx, sessionID, "")
+		}()
 		_ = a.runtime.RequestCancel(ctx, *session.ActiveRunID)
 		if worker := a.runtime.Worker(); worker != nil {
 			worker.CancelAndWait(*session.ActiveRunID)
@@ -143,17 +152,32 @@ func (a *API) start(ctx context.Context, sessionID string, req StartRunRequest) 
 	if err != nil {
 		return StartRunResponse{}, err
 	}
-	if err := a.runtime.ClaimSession(ctx, sessionID, runID); err != nil {
+
+	if req.InputMode == InputQueue {
+		fresh, err := a.q(ctx).GetSession(ctx, sessionID)
+		if err != nil {
+			return StartRunResponse{}, wrapHandlerDB(err)
+		}
+		if fresh.ActiveRunID.Valid && fresh.ActiveRunID.String != "" && fresh.ActiveRunID.String != runID {
+			a.logger().Info("run queued", "session_id", sessionID, "run_id", runID, "active_run_id", fresh.ActiveRunID.String)
+			return StartRunResponse{SessionID: sessionID, RunID: runID}, nil
+		}
+	}
+
+	claimed, err := a.runtime.ClaimSession(ctx, sessionID, runID)
+	if err != nil {
 		return StartRunResponse{}, err
 	}
-	if err := a.runtime.Enqueue(ctx, pkgagent.StepJob{
-		RunID:     runID,
-		StepIndex: 1,
-		Phase:     pkgagent.PhaseUserInput,
-	}); err != nil {
-		return StartRunResponse{}, err
+	if claimed {
+		if err := a.runtime.Enqueue(ctx, pkgagent.StepJob{
+			RunID:     runID,
+			StepIndex: 1,
+			Phase:     pkgagent.PhaseUserInput,
+		}); err != nil {
+			return StartRunResponse{}, err
+		}
 	}
-	a.logger().Info("run started", "session_id", sessionID, "run_id", runID, "input_mode", req.InputMode)
+	a.logger().Info("run started", "session_id", sessionID, "run_id", runID, "input_mode", req.InputMode, "claimed", claimed)
 	return StartRunResponse{SessionID: sessionID, RunID: runID}, nil
 }
 

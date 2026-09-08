@@ -75,3 +75,56 @@ func (r *Runtime) compactIndex(ctx context.Context, key memory.TextMemoryKey) {
 		r.logger().Error("index compact upsert failed", "error", err, "scope", key.Scope, "scope_id", key.ScopeID)
 	}
 }
+
+// loadMemoryIndexes 读取用户与工作区冻结目录，供本 Session 装上下文。
+func (r *Runtime) loadMemoryIndexes(ctx context.Context, userID, workspaceID string) []string {
+	if r == nil {
+		return nil
+	}
+	q := r.q(ctx)
+	var out []string
+	if userID != "" {
+		if item, err := memory.Get(ctx, q, memory.TextMemoryKey{
+			Scope:   memory.ScopeUser,
+			ScopeID: userID,
+			Kind:    memory.KindIndex,
+			Name:    memory.NameIndex,
+		}); err == nil && item.Content != "" {
+			out = append(out, item.Content)
+		}
+	}
+	if workspaceID != "" {
+		if item, err := memory.Get(ctx, q, memory.TextMemoryKey{
+			Scope:   memory.ScopeWorkspace,
+			ScopeID: workspaceID,
+			Kind:    memory.KindIndex,
+			Name:    memory.NameIndex,
+		}); err == nil && item.Content != "" {
+			out = append(out, item.Content)
+		}
+	}
+	return out
+}
+
+// indexPersisted 把已落库消息写入冷层 FTS。
+func (r *Runtime) indexPersisted(ctx context.Context, workspaceID string, msg pkgagent.Message) {
+	if r == nil || workspaceID == "" || msg.ID == "" {
+		return
+	}
+	content := pkgagent.DecodeText(msg.Content)
+	if content == "" {
+		return
+	}
+	runID := deref(msg.RunID)
+	if err := memory.IndexMessage(ctx, r.q(ctx), memory.ContextMessage{
+		ID:          msg.ID,
+		WorkspaceID: workspaceID,
+		SessionID:   msg.SessionID,
+		RunID:       runID,
+		Role:        string(msg.Role),
+		Content:     content,
+		CreatedAt:   msg.CreatedAt,
+	}); err != nil {
+		r.logger().Error("index message failed", "message_id", msg.ID, "error", err)
+	}
+}
