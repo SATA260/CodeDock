@@ -5,7 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +19,41 @@ import (
 	"codedock/internal/handler"
 	pkgagent "codedock/pkg/agent"
 )
+
+var (
+	fakeClaudeOnce sync.Once
+	fakeClaudePath string
+	fakeClaudeErr  error
+)
+
+func fakeClaudeBin(t *testing.T) string {
+	t.Helper()
+	fakeClaudeOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "handler-fake-claude")
+		if err != nil {
+			fakeClaudeErr = err
+			return
+		}
+		out := filepath.Join(dir, "claude")
+		_, file, _, ok := runtime.Caller(0)
+		if !ok {
+			fakeClaudeErr = os.ErrNotExist
+			return
+		}
+		src := filepath.Join(filepath.Dir(file), "..", "..", "pkg", "claude", "testdata", "fakeclaude")
+		cmd := exec.Command("go", "build", "-o", out, src)
+		if body, err := cmd.CombinedOutput(); err != nil {
+			fakeClaudeErr = err
+			t.Logf("build fake claude: %s", body)
+			return
+		}
+		fakeClaudePath = out
+	})
+	if fakeClaudeErr != nil {
+		t.Fatalf("build fake claude: %v", fakeClaudeErr)
+	}
+	return fakeClaudePath
+}
 
 func newClaudeAPI(t *testing.T) *handler.API {
 	t.Helper()
@@ -122,6 +162,10 @@ func TestClaudeHTTPContracts(t *testing.T) {
 }
 
 func TestClaudeSkeletonHTTP(t *testing.T) {
+	t.Setenv("CLAUDE_BIN", fakeClaudeBin(t))
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	t.Setenv("GIT_REPO", t.TempDir())
+	t.Setenv("FAKE_CLAUDE_AUTH", "1")
 	router := claudeRouter(newClaudeAPI(t))
 
 	var status handler.ClaudeStatusResponse
@@ -162,8 +206,6 @@ func TestClaudeSkeletonHTTP(t *testing.T) {
 	if !ok.OK {
 		t.Fatal("ok")
 	}
-	decodeClaude(t, doClaude(t, router, http.MethodPost, "/claude/sessions/s1/archive", ""), &ok)
-	decodeClaude(t, doClaude(t, router, http.MethodPost, "/claude/sessions/s1/fork", ""), &created)
 
 	var settings handler.ClaudeSettingsResponse
 	decodeClaude(t, doClaude(t, router, http.MethodGet, "/claude/sessions/s1/settings", ""), &settings)
@@ -191,4 +233,7 @@ func TestClaudeSkeletonHTTP(t *testing.T) {
 	decodeClaude(t, doClaude(t, router, http.MethodPost, "/claude/turns/t1/continue", ""), &ok)
 	decodeClaude(t, doClaude(t, router, http.MethodPost, "/claude/approvals/a1/decision", `{"approved":true,"scope":"once","choice":"","values":[]}`), &ok)
 	decodeClaude(t, doClaude(t, router, http.MethodPost, "/claude/asks/r1/reject-unknown", `{"session_id":"s1","turn_id":"t1"}`), &ok)
+
+	decodeClaude(t, doClaude(t, router, http.MethodPost, "/claude/sessions/s1/archive", ""), &ok)
+	decodeClaude(t, doClaude(t, router, http.MethodPost, "/claude/sessions/s1/fork", ""), &created)
 }

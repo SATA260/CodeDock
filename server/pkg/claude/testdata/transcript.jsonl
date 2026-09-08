@@ -1,0 +1,7 @@
+{"type":"user","message":{"role":"user","content":"hello"}}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hmm"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"path":"a.go"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"TodoWrite","input":{"plan":"do"}}]}}
+{"type":"system","subtype":"title","title":"My Chat"}

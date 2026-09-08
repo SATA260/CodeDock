@@ -1,12 +1,21 @@
 package claude
 
-// 本文件管 Claude Code 已知的反问：跑命令、改文件、选择题、MCP 弹出的表单。不管官方新加、本模块认不出的提问，不管本地模型那套工具审批。问票以 Claude 为准，不落库。
+import "github.com/google/uuid"
 
 // Require 登记一条 Claude Code 已知的反问。
 func Require(turnID string, ask ApprovalAsk) (string, error) {
-	_ = turnID
-	_ = ask
-	return "", nil
+	id := ask.ExternalRequestID
+	if id == "" {
+		id = uuid.NewString()
+	}
+	ask.ExternalRequestID = id
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.asks[id] = &memAsk{ID: id, TurnID: turnID, Ask: ask}
+	if turn, ok := rt.turns[turnID]; ok {
+		turn.Status = TurnWaitingApproval
+	}
+	return id, nil
 }
 
 // Decide 按人对已知反问的作答记下结果。
