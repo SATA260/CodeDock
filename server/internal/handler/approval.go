@@ -36,7 +36,7 @@ type ListApprovalsResponse struct {
 	PageInfo
 }
 
-// ListApprovals 分页查询会话下的审批。
+// ListApprovals 分页查询会话下的全部审批。
 func (a *API) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	session, err := a.loadSession(r)
 	if err != nil {
@@ -72,7 +72,7 @@ func (a *API) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ListApprovalsResponse{Approvals: items, PageInfo: page.Info(total)})
 }
 
-// GetApproval 查询单条审批。
+// GetApproval 查询单条审批详情。
 func (a *API) GetApproval(w http.ResponseWriter, r *http.Request) {
 	row, err := a.q(r.Context()).GetApproval(r.Context(), chi.URLParam(r, "approval_id"))
 	if err != nil {
@@ -82,7 +82,7 @@ func (a *API) GetApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ApprovalResponse{Approval: mapApproval(row)})
 }
 
-// DecideApproval 持久化一批裁决并恢复 Run。
+// DecideApproval 提交对审批的裁决，并恢复对应 Run 的执行。
 func (a *API) DecideApproval(w http.ResponseWriter, r *http.Request) {
 	var req DecideApprovalRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -99,7 +99,8 @@ func (a *API) DecideApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ApprovalResponse{Approval: approval})
 }
 
-// decide 校验 pending/过期后同事务落齐裁决，提交后再 Submit 恢复。
+// decide 校验审批状态，将裁决写入数据库，并投递 human_approved 步骤以唤醒 Run。
+// 已过期审批会被整体拒绝；已裁决的审批再次提交时只重新入队。
 func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.Approval, error) {
 	row, err := a.q(ctx).GetApproval(ctx, req.ApprovalID)
 	if err != nil {
@@ -114,11 +115,9 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 	}
 
 	expired := !approval.ExpiresAt.IsZero() && util.Now().After(approval.ExpiresAt)
-	var approved, denied []string
 	if expired {
 		for i := range approval.ToolCalls {
 			approval.ToolCalls[i].Status = pkgagent.ApprovalExpired
-			denied = append(denied, approval.ToolCalls[i].ID)
 		}
 		approval.Status = pkgagent.ApprovalExpired
 	} else {
@@ -136,10 +135,7 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 			approval.ToolCalls[i].Status = item.Status
 			approval.ToolCalls[i].Reason = item.Reason
 			if item.Status == pkgagent.ApprovalApproved {
-				approved = append(approved, call.ID)
 				allDenied = false
-			} else {
-				denied = append(denied, call.ID)
 			}
 		}
 		if allDenied {
@@ -149,11 +145,7 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 		}
 	}
 
-	var ev pkgagent.AgentEvent
 	err = a.db.WithTx(ctx, func(ctx context.Context) error {
-		if err := a.runtime.RecordToolDecisions(ctx, approval.RunID, approved, denied); err != nil {
-			return err
-		}
 		updated, err := a.q(ctx).UpdateApproval(ctx, sqlite.UpdateApprovalParams{
 			Scope:     string(approval.Scope),
 			Status:    string(approval.Status),
@@ -164,34 +156,11 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 			return wrapHandlerDB(err)
 		}
 		approval = mapApproval(updated)
-		decisions := make([]pkgagent.ApprovalDecision, 0, len(approval.ToolCalls))
-		for _, call := range approval.ToolCalls {
-			decisions = append(decisions, pkgagent.ApprovalDecision{
-				ToolCallID: call.ID,
-				Status:     call.Status,
-				Reason:     call.Reason,
-			})
-		}
-		ev, err = a.runtime.AppendEvent(ctx, pkgagent.AgentEvent{
-			SessionID: approval.SessionID,
-			RunID:     approval.RunID,
-			Type:      pkgagent.EventApprovalDecided,
-			Payload: pkgagent.MarshalPayload(pkgagent.ApprovalDecidedPayload{
-				ApprovalID: approval.ID,
-				ToolCallID: approval.ToolCallID,
-				Status:     approval.Status,
-				Scope:      approval.Scope,
-				Reason:     req.Reason,
-				Decisions:  decisions,
-				ToolCalls:  approval.ToolCalls,
-			}),
-		})
-		return err
+		return nil
 	})
 	if err != nil {
 		return pkgagent.Approval{}, err
 	}
-	a.runtime.Publish(ev)
 	a.logger().Info("approval decided", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID, "status", approval.Status)
 	if err := a.submitDecidedRun(ctx, approval.RunID); err != nil {
 		return pkgagent.Approval{}, err
@@ -199,15 +168,8 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 	return approval, nil
 }
 
-// resubmitDecidedApproval 在审批已落库但 Run 仍停在 waiting_approval 时只补投 Worker。
+// resubmitDecidedApproval 对已经非 pending 的审批只重新投递 human_approved 步骤。
 func (a *API) resubmitDecidedApproval(ctx context.Context, approval pkgagent.Approval) (pkgagent.Approval, error) {
-	run, err := a.runtime.GetRun(ctx, approval.RunID)
-	if err != nil {
-		return pkgagent.Approval{}, err
-	}
-	if run.Status != pkgagent.RunWaitingApproval {
-		return pkgagent.Approval{}, cderr.Conflict("approval already decided")
-	}
 	a.logger().Info("resubmit decided approval", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID)
 	if err := a.submitDecidedRun(ctx, approval.RunID); err != nil {
 		return pkgagent.Approval{}, err
@@ -215,13 +177,15 @@ func (a *API) resubmitDecidedApproval(ctx context.Context, approval pkgagent.App
 	return approval, nil
 }
 
+// submitDecidedRun 投递 human_approved 步骤，让 Run 从等待审批处继续。
 func (a *API) submitDecidedRun(ctx context.Context, runID string) error {
-	if worker := a.runtime.Worker(); worker != nil {
-		return worker.Submit(ctx, runID)
-	}
-	return nil
+	return a.runtime.Enqueue(ctx, pkgagent.StepJob{
+		RunID: runID,
+		Phase: pkgagent.PhaseHumanApproved,
+	})
 }
 
+// normalizeDecisions 校验请求中的裁决覆盖全部 tool_call，且状态合法、无重复。
 func normalizeDecisions(req DecideApprovalRequest, calls []pkgagent.ApprovalToolCall) ([]ToolDecision, error) {
 	decisions := req.Decisions
 	if len(decisions) == 0 && req.Status != "" && len(calls) == 1 {
