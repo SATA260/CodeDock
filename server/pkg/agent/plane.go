@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -94,9 +95,28 @@ type Fact struct {
 	Payload json.RawMessage
 }
 
+// FactWriter 由 Runtime 实现：步骤内写入一条事实（不推进 step_index）。
+type FactWriter interface {
+	Append(ctx context.Context, runID string, fact Fact) error
+}
+
+// StepInput 是 Engine.Step 的入参：快照、作业和 Coordinator 装好的上下文。
+type StepInput struct {
+	State   AgentState
+	Job     StepJob
+	History History
+}
+
+// FinishPayload 是 finish 指令的载荷。
+type FinishPayload struct {
+	Status RunStatus  `json:"status"`
+	Reason StopReason `json:"reason"`
+}
+
 // StepResult 是一步执行后的输出。
 type StepResult struct {
-	State AgentState // 更新后的 AgentState（仅内存只读，持久化由 Coordinator 负责）
-	Facts []Fact     // 本步骤产生的事件
-	Next  *StepJob   // 非终态时指向下一步作业
+	State    AgentState // 更新后的 AgentState（仅内存只读，持久化由 Coordinator 负责）
+	Facts    []Fact     // 本步骤产生的事件
+	Messages []Message  // 本步骤要落库的助手 / 工具消息
+	Next     *StepJob   // 非终态时指向下一步作业
 }

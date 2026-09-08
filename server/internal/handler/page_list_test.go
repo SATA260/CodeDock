@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"codedock/internal/handler"
+	pkgagent "codedock/pkg/agent"
 )
 
 // TestListSessionsPagination 验证会话列表分页与排序。
@@ -60,9 +61,27 @@ func TestListSessionsPagination(t *testing.T) {
 	}
 }
 
-// TestListMessagesPagination 依赖完整 Run 循环生成消息，旧 Loop 已删除，骨架阶段跳过。
+// TestListMessagesPagination 验证消息分页；先跑完一次纯文本 Run 再分页。
 func TestListMessagesPagination(t *testing.T) {
-	t.Skip("旧 Execute Loop 已删除，消息分页依赖完整 Run 实现")
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	runID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "page me",
+		Mode:    pkgagent.ModeAutoApprove,
+	})
+	f.waitRun(t, runID, pkgagent.RunCompleted)
+
+	page1 := listMessages(t, f, sessionID, "?page=1&page_size=1&sort_by=event_seq&sort_order=asc")
+	if page1.Total < 2 || len(page1.Messages) != 1 {
+		t.Fatalf("page1 total=%d len=%d", page1.Total, len(page1.Messages))
+	}
+	page2 := listMessages(t, f, sessionID, "?page=2&page_size=1&sort_by=event_seq&sort_order=asc")
+	if len(page2.Messages) != 1 {
+		t.Fatalf("page2 len=%d", len(page2.Messages))
+	}
+	if page1.Messages[0].ID == page2.Messages[0].ID {
+		t.Fatal("pages should not repeat the same message")
+	}
 }
 
 // listSessions 发送 GET /sessions 并解析响应。
@@ -79,9 +98,39 @@ func listSessions(t *testing.T, f *fixture, query string) handler.ListSessionsRe
 	return resp
 }
 
-// TestListEventsReplay 依赖完整 Run 循环生成事件，旧 Loop 已删除，骨架阶段跳过。
+// TestListEventsReplay 验证事件按 seq 回放。
 func TestListEventsReplay(t *testing.T) {
-	t.Skip("旧 Execute Loop 已删除，事件回放依赖完整 Run 实现")
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	runID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "events",
+		Mode:    pkgagent.ModeAutoApprove,
+	})
+	f.waitRun(t, runID, pkgagent.RunCompleted)
+
+	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/event-log", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("events %d %s", rec.Code, rec.Body.String())
+	}
+	var resp handler.ListEventsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Events) < 2 {
+		t.Fatalf("events=%d", len(resp.Events))
+	}
+	if resp.Events[0].Type != pkgagent.EventRunCreated {
+		t.Fatalf("first event=%s", resp.Events[0].Type)
+	}
+	seenCompleted := false
+	for _, ev := range resp.Events {
+		if ev.Type == pkgagent.EventRunCompleted || ev.Type == pkgagent.EventRunStateChanged {
+			seenCompleted = true
+		}
+	}
+	if !seenCompleted {
+		t.Fatalf("missing terminal/state events: %+v", resp.Events)
+	}
 }
 
 // listMessages 发送 GET /sessions/{id}/messages 并解析响应。

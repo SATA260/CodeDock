@@ -15,16 +15,20 @@ import (
 
 // Runtime 负责 Agent 运行时的整体编排：管理 AgentState、调度 StepJob 与压缩记忆索引。
 type Runtime struct {
-	db        db.Client
-	queries   *sqlite.Queries
-	bus       *events.Bus
-	worker    *Worker
-	engine    *pkgagent.Engine
-	tools     tool.Registry
-	log       *slog.Logger
-	model     pkgagent.ModelConfig
-	compact   sync.Map
-	compactWG sync.WaitGroup
+	db           db.Client
+	queries      *sqlite.Queries
+	bus          *events.Bus
+	worker       *Worker
+	engine       *pkgagent.Engine
+	tools        tool.Registry
+	log          *slog.Logger
+	model        pkgagent.ModelConfig
+	compact      sync.Map
+	compactWG    sync.WaitGroup
+	claimMu      sync.Mutex
+	claimedSteps map[string]struct{}
+	dequeueMu    sync.Mutex
+	holdDequeue  map[string]int
 }
 
 // New 创建 Runtime 及其 Worker。工具定义在 tools 包注册；ports 只注入工具 Execute 所需的外部实现。
@@ -36,14 +40,16 @@ func New(client db.Client, queries *sqlite.Queries, bus *events.Bus, tools tool.
 		log = slog.Default()
 	}
 	runtime := &Runtime{
-		db:      client,
-		queries: queries,
-		bus:     bus,
-		tools:   tools,
-		log:     log,
-		model:   pkgagent.ModelConfig{Provider: "fake", Model: "fake"},
-		engine:  pkgagent.NewEngine(&pkgagent.Brain{}),
+		db:           client,
+		queries:      queries,
+		bus:          bus,
+		tools:        tools,
+		log:          log,
+		model:        pkgagent.ModelConfig{Provider: "fake", Model: "fake"},
+		claimedSteps: map[string]struct{}{},
+		holdDequeue:  map[string]int{},
 	}
+	runtime.engine = pkgagent.NewEngine(&pkgagent.Brain{}, runtime, tools)
 	agenttools.Register(tools, queries, runtime.EnqueueIndexCompact, ports)
 	runtime.worker = NewWorker(runtime)
 	return runtime
