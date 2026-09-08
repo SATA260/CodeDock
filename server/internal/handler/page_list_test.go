@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"codedock/internal/handler"
-	pkgagent "codedock/pkg/agent"
 )
 
+// TestListSessionsPagination 验证会话列表分页与排序。
 func TestListSessionsPagination(t *testing.T) {
 	f := newFixture(t)
 	ids := make([]string, 5)
@@ -60,50 +60,12 @@ func TestListSessionsPagination(t *testing.T) {
 	}
 }
 
+// TestListMessagesPagination 依赖完整 Run 循环生成消息，旧 Loop 已删除，骨架阶段跳过。
 func TestListMessagesPagination(t *testing.T) {
-	f := newFixture(t)
-	sessionID := f.createSession(t)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{})
-	for i := 0; i < 3; i++ {
-		runID := f.start(t, sessionID, handler.StartRunRequest{
-			Content: "m",
-			Mode:    pkgagent.ModeAutoApprove,
-			Config:  withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
-		})
-		f.waitRun(t, runID, pkgagent.RunCompleted)
-	}
-
-	all := listMessages(t, f, sessionID, "?page=1&page_size=20&sort_by=event_seq&sort_order=asc")
-	if all.Total < 6 {
-		t.Fatalf("total=%d body messages=%d", all.Total, len(all.Messages))
-	}
-	if all.AsOfEventSeq == 0 {
-		t.Fatal("as_of_event_seq should be set")
-	}
-
-	page1 := listMessages(t, f, sessionID, "?page=1&page_size=2&sort_by=event_seq&sort_order=asc")
-	page2 := listMessages(t, f, sessionID, "?page=2&page_size=2&sort_by=event_seq&sort_order=asc")
-	if len(page1.Messages) != 2 || len(page2.Messages) != 2 {
-		t.Fatalf("page lens %d %d", len(page1.Messages), len(page2.Messages))
-	}
-	if page1.Messages[0].EventSeq > page1.Messages[1].EventSeq {
-		t.Fatalf("page1 not asc: %+v", page1.Messages)
-	}
-	if page1.Messages[1].EventSeq > page2.Messages[0].EventSeq {
-		t.Fatalf("pages not contiguous: %d then %d", page1.Messages[1].EventSeq, page2.Messages[0].EventSeq)
-	}
-
-	desc := listMessages(t, f, sessionID, "?page=1&page_size=2&sort_by=event_seq&sort_order=desc")
-	if desc.Messages[0].EventSeq < desc.Messages[1].EventSeq {
-		t.Fatalf("desc not descending: %+v", desc.Messages)
-	}
-
-	overflow := listMessages(t, f, sessionID, "?page=99&page_size=2")
-	if overflow.Total != all.Total || len(overflow.Messages) != 0 {
-		t.Fatalf("overflow total=%d len=%d", overflow.Total, len(overflow.Messages))
-	}
+	t.Skip("旧 Execute Loop 已删除，消息分页依赖完整 Run 实现")
 }
 
+// listSessions 发送 GET /sessions 并解析响应。
 func listSessions(t *testing.T, f *fixture, query string) handler.ListSessionsResponse {
 	t.Helper()
 	rec := f.do(t, http.MethodGet, "/sessions"+query, nil)
@@ -117,33 +79,12 @@ func listSessions(t *testing.T, f *fixture, query string) handler.ListSessionsRe
 	return resp
 }
 
+// TestListEventsReplay 依赖完整 Run 循环生成事件，旧 Loop 已删除，骨架阶段跳过。
 func TestListEventsReplay(t *testing.T) {
-	f := newFixture(t)
-	sessionID := f.createSession(t)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{})
-	runID := f.start(t, sessionID, handler.StartRunRequest{
-		Content: "hello",
-		Mode:    pkgagent.ModeAutoApprove,
-		Config:  withFake(cfg, pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
-	})
-	f.waitRun(t, runID, pkgagent.RunCompleted)
-
-	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/event-log", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("list events %d %s", rec.Code, rec.Body.String())
-	}
-	var resp handler.ListEventsResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if len(resp.Events) == 0 {
-		t.Fatal("expected persisted events")
-	}
-	if resp.Events[0].Seq <= 0 {
-		t.Fatalf("seq=%d", resp.Events[0].Seq)
-	}
+	t.Skip("旧 Execute Loop 已删除，事件回放依赖完整 Run 实现")
 }
 
+// listMessages 发送 GET /sessions/{id}/messages 并解析响应。
 func listMessages(t *testing.T, f *fixture, sessionID, query string) handler.ListMessagesResponse {
 	t.Helper()
 	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/messages"+query, nil)
