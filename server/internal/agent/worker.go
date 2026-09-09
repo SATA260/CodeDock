@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -99,6 +100,25 @@ func (w *Worker) Submit(_ context.Context, job pkgagent.StepJob) error {
 	}
 }
 
+// Busy 判断本进程是否已在执行或已入队该 Run。
+func (w *Worker) Busy(runID string) bool {
+	if w == nil || runID == "" {
+		return false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, ok := w.cancels[runID]; ok {
+		return true
+	}
+	prefix := runID + "/"
+	for key := range w.queued {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // Cancel 取消指定 Run 当前运行中的步骤。
 func (w *Worker) Cancel(runID string) {
 	if w == nil || runID == "" {
@@ -126,7 +146,7 @@ func (w *Worker) CancelAndWait(runID string) {
 }
 
 // execute 执行一步：先尝试领取，再加载 AgentState，交给 Engine 执行，最后提交结果。
-// 流程：TryClaimStep → LoadAgentState → Engine.Step → CommitStep。
+// 逻辑：登记 cancel/done → TryClaimStep → 标 running → Load → 已取消则走 finish；Step 失败且非取消则 failed；成功则 CommitStep。
 func (w *Worker) execute(parent context.Context, job pkgagent.StepJob) {
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
@@ -154,6 +174,7 @@ func (w *Worker) execute(parent context.Context, job pkgagent.StepJob) {
 		return
 	}
 	defer w.runtime.releaseStep(job.RunID, job.StepIndex)
+	w.runtime.markStepJobStatus(ctx, job.RunID, job.StepIndex, stepJobRunning)
 
 	state, history, err := w.runtime.LoadAgentState(ctx, job.RunID)
 	if err != nil {
@@ -202,11 +223,13 @@ func (w *Worker) execute(parent context.Context, job pkgagent.StepJob) {
 	_ = w.runtime.CommitStep(ctx, job.RunID, result)
 }
 
+// cancelState 复制状态并标上 CancelRequested，供取消路径走 finish。
 func cancelState(state pkgagent.AgentState) pkgagent.AgentState {
 	state.CancelRequested = true
 	return state
 }
 
+// failState 把状态收成 failed，供 Step 出错且并非取消时落终态。
 func failState(state pkgagent.AgentState, err error) pkgagent.AgentState {
 	reason := pkgagent.StopModelError
 	now := timeNow()
@@ -220,6 +243,7 @@ func failState(state pkgagent.AgentState, err error) pkgagent.AgentState {
 	return state
 }
 
+// timeNow 返回 UTC 当前时间，便于测试替换。
 func timeNow() time.Time {
 	return time.Now().UTC()
 }

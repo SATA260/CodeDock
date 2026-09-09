@@ -21,6 +21,7 @@ export type {
   EventType,
   Message,
   PageInfo,
+  Run,
   RunStatus,
   Session,
   SessionState,
@@ -31,4 +32,11 @@ export type {
   ToolCall,
   ToolItemState,
 } from "./types.ts";
-export { isTerminalRun, isThinkingPhase, TERMINAL_RUN_STATUSES, THINKING_PHASES } from "./types.ts";
+export {
+  isRecoverableRun,
+  isTerminalRun,
+  isThinkingPhase,
+  RECOVERABLE_RUN_STATUSES,
+  TERMINAL_RUN_STATUSES,
+  THINKING_PHASES,
+} from "./types.ts";

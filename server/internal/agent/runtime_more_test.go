@@ -15,6 +15,7 @@ import (
 	"codedock/pkg/db/sqlite"
 )
 
+// TestRuntimeAccessorsAndSubmitErrors 覆盖访问器、注入提交错误与队列满。
 func TestRuntimeAccessorsAndSubmitErrors(t *testing.T) {
 	rt, _, ctx := testRuntime(t, false)
 	if rt.Worker() == nil || rt.Tools() == nil {
@@ -42,6 +43,7 @@ func TestRuntimeAccessorsAndSubmitErrors(t *testing.T) {
 	rt.WaitIndexCompact()
 }
 
+// TestLoadApprovalsCompactionAndRecoverPhases 覆盖装审批、压缩检查点与按状态恢复。
 func TestLoadApprovalsCompactionAndRecoverPhases(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -124,6 +126,7 @@ func TestLoadApprovalsCompactionAndRecoverPhases(t *testing.T) {
 	}
 }
 
+// TestCommitMessagesTurnAndFailed 覆盖提交助手消息后失败收束 Turn。
 func TestCommitMessagesTurnAndFailed(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -184,6 +187,7 @@ func TestCommitMessagesTurnAndFailed(t *testing.T) {
 	}
 }
 
+// TestWorkerFailAndCancelAndWait 覆盖模型失败收束与挂起 Run 的 CancelAndWait。
 func TestWorkerFailAndCancelAndWait(t *testing.T) {
 	rt, q, ctx := testRuntime(t, true)
 	sessionID := insertSession(t, q, ctx)
@@ -227,6 +231,7 @@ func TestWorkerFailAndCancelAndWait(t *testing.T) {
 	waitStatus(t, q, ctx, hangID, pkgagent.RunCancelled)
 }
 
+// TestCompactIndexBranches 覆盖目录压缩对缺失、未超限与超限内容的处理。
 func TestCompactIndexBranches(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	rt.SetModel(pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
@@ -253,6 +258,7 @@ func TestCompactIndexBranches(t *testing.T) {
 	rt.WaitIndexCompact()
 }
 
+// TestCreateClaimValidation 覆盖 Claim/Append/Commit/Cancel/Load 的空参数校验。
 func TestCreateClaimValidation(t *testing.T) {
 	rt, _, ctx := testRuntime(t, false)
 	if _, err := rt.ClaimSession(ctx, "", ""); err == nil {
@@ -272,6 +278,7 @@ func TestCreateClaimValidation(t *testing.T) {
 	}
 }
 
+// waitStatus 轮询直到 Run 进入期望状态之一，超时则失败。
 func waitStatus(t *testing.T, q *sqlite.Queries, ctx context.Context, runID string, want ...pkgagent.RunStatus) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -291,11 +298,13 @@ func waitStatus(t *testing.T, q *sqlite.Queries, ctx context.Context, runID stri
 	t.Fatalf("run %s status=%s want %v", runID, row.Status, want)
 }
 
+// ptrNow 返回当前 UTC 时间的指针，供测试填 StartedAt。
 func ptrNow() *time.Time {
 	now := time.Now().UTC()
 	return &now
 }
 
+// TestRecoverPhaseHelpers 覆盖 recoverPhase、turnStatusFor 与摘要截断。
 func TestRecoverPhaseHelpers(t *testing.T) {
 	if recoverPhase(pkgagent.RunQueued, pkgagent.AgentState{}) != pkgagent.PhaseUserInput {
 		t.Fatal("queued")
@@ -320,6 +329,7 @@ func TestRecoverPhaseHelpers(t *testing.T) {
 	}
 }
 
+// TestWorkerExecuteCancelAndMiss 覆盖重复领取、缺失 Run 与跳过执行后取消。
 func TestWorkerExecuteCancelAndMiss(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -359,6 +369,7 @@ func TestWorkerExecuteCancelAndMiss(t *testing.T) {
 	}
 }
 
+// TestTxQueriesAndNilAccessors 覆盖事务内 Queries 与空 Runtime 访问器。
 func TestTxQueriesAndNilAccessors(t *testing.T) {
 	rt, _, ctx := testRuntime(t, false)
 	if err := rt.db.WithTx(ctx, func(ctx context.Context) error {
@@ -379,6 +390,7 @@ func TestTxQueriesAndNilAccessors(t *testing.T) {
 	}
 }
 
+// TestRequestCancelRunningAndDequeueBusy 覆盖取消运行中 Run 不立刻出队下一条。
 func TestRequestCancelRunningAndDequeueBusy(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -420,6 +432,7 @@ func TestRequestCancelRunningAndDequeueBusy(t *testing.T) {
 	_ = queued
 }
 
+// TestMapHelpers 覆盖时间/JSON/审批映射等纯函数。
 func TestMapHelpers(t *testing.T) {
 	if !parseTime("bad").IsZero() {
 		t.Fatal("bad time")

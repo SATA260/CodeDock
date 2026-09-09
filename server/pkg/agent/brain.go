@@ -32,10 +32,12 @@ func (b *Brain) Decide(phase Phase, payload json.RawMessage, state AgentState) (
 	}
 }
 
+// hasPendingTools 判断当前 checkpoint 是否还有待执行的工具调用。
 func hasPendingTools(state AgentState) bool {
 	return len(state.Checkpoint.Pending) > 0
 }
 
+// overMaxTurns 判断是否因 ForceFinish 或达到 MaxTurns 而必须收束。
 func overMaxTurns(state AgentState) bool {
 	limit := state.Config.Limits.MaxTurns
 	if limit <= 0 || state.ForceFinish {
@@ -44,6 +46,7 @@ func overMaxTurns(state AgentState) bool {
 	return false
 }
 
+// finishInstructions 构造一条收束指令。
 func finishInstructions(status RunStatus, reason StopReason) []Instruction {
 	return []Instruction{{
 		Type:    InstructionFinish,

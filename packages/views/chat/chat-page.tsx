@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgentMode, TimelineItem } from "@codedock/core/chat";
+import { Button } from "@codedock/ui";
 import { useState, type ReactNode } from "react";
 
 import { useAgent } from "../provider.tsx";
@@ -67,11 +68,27 @@ export function ChatPage({
         error={list.error}
         onCreate={onNewConversation}
         onSelect={onOpenSession}
+        onRecover={async (runId) => {
+          await timeline.recover(runId);
+          await list.refresh();
+        }}
         brandSrc={brandSrc}
       />
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 items-center gap-3 border-b border-border px-4 text-sm text-muted-foreground">
           <span>{sessionId ? "对话" : "新对话"}</span>
+          {timeline.canRecover ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={async () => {
+                await timeline.recover();
+                await list.refresh();
+              }}
+            >
+              恢复
+            </Button>
+          ) : null}
           {headerActions ? <div className="ml-auto flex items-center gap-2">{headerActions}</div> : null}
         </header>
         {timeline.error || composerError ? (

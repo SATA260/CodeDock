@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -419,5 +421,177 @@ func TestEngineCallLLMHangCancelAndCompact(t *testing.T) {
 	}
 	if got.State.Status != RunRunningLLM {
 		t.Fatalf("compact llm status=%s", got.State.Status)
+	}
+}
+
+type countingGate struct {
+	slots chan struct{}
+	cur   atomic.Int32
+	max   atomic.Int32
+}
+
+func newCountingGate(n int) *countingGate {
+	return &countingGate{slots: make(chan struct{}, n)}
+}
+
+func (g *countingGate) Acquire(ctx context.Context) error {
+	select {
+	case g.slots <- struct{}{}:
+		n := g.cur.Add(1)
+		for {
+			old := g.max.Load()
+			if n <= old || g.max.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (g *countingGate) Release() {
+	g.cur.Add(-1)
+	select {
+	case <-g.slots:
+	default:
+	}
+}
+
+func TestEngineLLMGateLimitsConcurrency(t *testing.T) {
+	engine, _, _ := testEngine(t)
+	gate := newCountingGate(1)
+	engine.SetGates(gate, nil)
+	opts := FakeOptions{Hang: true, Turns: []FakeTurn{{Text: "late"}}}
+	input := func(id string) StepInput {
+		return StepInput{
+			State: AgentState{
+				SessionID: "sess-1",
+				RunID:     id,
+				Config:    DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}),
+			},
+			Job:     StepJob{RunID: id, StepIndex: 1, Phase: PhaseUserInput},
+			History: fakeHistory(id, opts),
+		}
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		id := fmt.Sprintf("run-%d", i)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+			defer cancel()
+			_, _ = engine.Step(ctx, input(id))
+		}()
+	}
+	time.Sleep(40 * time.Millisecond)
+	if gate.max.Load() != 1 {
+		t.Fatalf("llm concurrency=%d want 1", gate.max.Load())
+	}
+	wg.Wait()
+}
+
+type slowTool struct {
+	cur *atomic.Int32
+	max *atomic.Int32
+}
+
+func (slowTool) Definition() tool.Definition {
+	return tool.Definition{Name: "slow", Prompt: "slow", Version: "1"}
+}
+
+func (s slowTool) Execute(_ context.Context, input tool.Input) (tool.Result, error) {
+	n := s.cur.Add(1)
+	for {
+		old := s.max.Load()
+		if n <= old || s.max.CompareAndSwap(old, n) {
+			break
+		}
+	}
+	time.Sleep(30 * time.Millisecond)
+	s.cur.Add(-1)
+	return tool.Result{CallID: input.Call.ID, Name: "slow", Success: true, Output: json.RawMessage(`{}`)}, nil
+}
+
+func TestEngineToolGateLimitsConcurrency(t *testing.T) {
+	facts := &memFacts{}
+	reg := tool.NewRegistry()
+	cur := &atomic.Int32{}
+	max := &atomic.Int32{}
+	if err := reg.Register(slowTool{cur: cur, max: max}); err != nil {
+		t.Fatal(err)
+	}
+	engine := NewEngine(&Brain{}, facts, reg)
+	engine.SetGates(nil, NewSlotLimiter(1))
+	cfg := DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake"})
+	cfg.ToolExecutionMode = tool.ExecutionParallel
+	cfg.Limits.MaxParallelTools = 4
+	_, err := engine.callToolsBatch(context.Background(), StepInput{
+		State: AgentState{
+			SessionID: "sess-1",
+			RunID:     "run-1",
+			Config:    cfg,
+			Checkpoint: ToolCheckpoint{
+				Pending: []tool.Call{
+					{ID: "c1", Name: "slow"},
+					{ID: "c2", Name: "slow"},
+					{ID: "c3", Name: "slow"},
+				},
+			},
+		},
+		Job: StepJob{RunID: "run-1", StepIndex: 1},
+	}, Instruction{Type: InstructionCallToolsBatch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if max.Load() != 1 {
+		t.Fatalf("tool concurrency=%d want 1", max.Load())
+	}
+}
+
+type failGate struct{}
+
+// Acquire 始终返回 Canceled，用于模拟占槽失败。
+func (failGate) Acquire(context.Context) error { return context.Canceled }
+
+// Release 空实现，满足 Gate 接口。
+func (failGate) Release() {}
+
+// TestEngineLLMGateAcquireCancelAndEmptyText 覆盖 LLM 占槽失败收束，以及空文本回复补 StepIndex。
+func TestEngineLLMGateAcquireCancelAndEmptyText(t *testing.T) {
+	engine, _, _ := testEngine(t)
+	engine.SetGates(failGate{}, nil)
+	got, err := engine.callLLM(context.Background(), StepInput{
+		State: AgentState{
+			SessionID: "sess-1",
+			RunID:     "run-1",
+			Config:    DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{Turns: []FakeTurn{{Text: ""}}})}),
+		},
+		Job:     StepJob{RunID: "run-1", StepIndex: 0, Phase: PhaseUserInput},
+		History: History{Messages: []Message{{Role: RoleUser, Content: EncodeText("hi")}}, Prompt: "p"},
+	}, Instruction{Type: InstructionCallLLM})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Status != RunCancelled {
+		t.Fatalf("gate cancel status=%s", got.State.Status)
+	}
+
+	engine.SetGates(nil, nil)
+	got, err = engine.callLLM(context.Background(), StepInput{
+		State: AgentState{
+			SessionID: "sess-1",
+			RunID:     "run-1",
+			Config:    DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{Turns: []FakeTurn{{Text: ""}}})}),
+		},
+		Job:     StepJob{RunID: "run-1", StepIndex: 0, Phase: PhaseUserInput},
+		History: fakeHistory("run-1", FakeOptions{Turns: []FakeTurn{{Text: ""}}}),
+	}, Instruction{Type: InstructionCallLLM})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Status != RunRunningLLM || got.State.StepIndex != 1 {
+		t.Fatalf("empty text %+v", got.State)
 	}
 }

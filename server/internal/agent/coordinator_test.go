@@ -18,6 +18,7 @@ import (
 	"codedock/pkg/db/sqlite"
 )
 
+// testRuntime 打开内存库并装配 Runtime；start 为真时启动 Worker。
 func testRuntime(t *testing.T, start bool) (*Runtime, *sqlite.Queries, context.Context) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -40,6 +41,7 @@ func testRuntime(t *testing.T, start bool) (*Runtime, *sqlite.Queries, context.C
 	return rt, q, ctx
 }
 
+// insertSession 插入一条测试用 Session 并返回 id。
 func insertSession(t *testing.T, q *sqlite.Queries, ctx context.Context) string {
 	t.Helper()
 	now := util.FormatTime(util.Now())
@@ -59,6 +61,7 @@ func insertSession(t *testing.T, q *sqlite.Queries, ctx context.Context) string 
 	return row.ID
 }
 
+// TestCreateClaimLoadAppend 覆盖创建、领取、加载状态与追加事件。
 func TestCreateClaimLoadAppend(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -105,6 +108,7 @@ func TestCreateClaimLoadAppend(t *testing.T) {
 	}
 }
 
+// TestCommitStepAndCancelQueued 覆盖提交完成与取消 queued Run。
 func TestCommitStepAndCancelQueued(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -158,6 +162,7 @@ func TestCommitStepAndCancelQueued(t *testing.T) {
 	}
 }
 
+// TestTryClaimStepAndRecover 覆盖步骤互斥领取与 RecoverActive。
 func TestTryClaimStepAndRecover(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -211,6 +216,7 @@ func TestTryClaimStepAndRecover(t *testing.T) {
 	}
 }
 
+// TestRequestCancelWaitingApproval 覆盖取消 waiting_approval 立即终态。
 func TestRequestCancelWaitingApproval(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -241,6 +247,7 @@ func TestRequestCancelWaitingApproval(t *testing.T) {
 	}
 }
 
+// TestCommitWaitingApprovalInsertsApproval 覆盖提交等待审批时写入 approval 与 Turn 状态。
 func TestCommitWaitingApprovalInsertsApproval(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -310,6 +317,7 @@ func TestCommitWaitingApprovalInsertsApproval(t *testing.T) {
 	}
 }
 
+// TestHoldDequeueBlocksCancelDequeue 覆盖 HoldDequeue 阻止取消后立刻领取下一条 Run。
 func TestHoldDequeueBlocksCancelDequeue(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -356,6 +364,7 @@ func TestHoldDequeueBlocksCancelDequeue(t *testing.T) {
 	}
 }
 
+// TestEnqueueFillsStepIndex 覆盖 StepIndex 为 0 时按已提交步骤补齐。
 func TestEnqueueFillsStepIndex(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -369,6 +378,7 @@ func TestEnqueueFillsStepIndex(t *testing.T) {
 	}
 }
 
+// TestCreateAgentStateValidation 覆盖创建与加载的参数校验。
 func TestCreateAgentStateValidation(t *testing.T) {
 	rt, _, ctx := testRuntime(t, false)
 	if _, err := rt.CreateAgentState(ctx, "", "x", "", pkgagent.RunConfigSnapshot{}); err == nil {
@@ -382,6 +392,7 @@ func TestCreateAgentStateValidation(t *testing.T) {
 	}
 }
 
+// TestLoadMemoryIndexesAndCompact 覆盖装载冻结目录与超限目录压缩。
 func TestLoadMemoryIndexesAndCompact(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
@@ -435,6 +446,7 @@ func TestLoadMemoryIndexesAndCompact(t *testing.T) {
 	}
 }
 
+// TestWorkerSubmitAndCancel 覆盖入队后 Worker 跑完一次文本回复。
 func TestWorkerSubmitAndCancel(t *testing.T) {
 	rt, q, ctx := testRuntime(t, true)
 	sessionID := insertSession(t, q, ctx)
@@ -465,6 +477,7 @@ func TestWorkerSubmitAndCancel(t *testing.T) {
 	t.Fatal("run did not finish")
 }
 
+// TestNilRuntimeGuards 覆盖空 Runtime 上主要入口的防护。
 func TestNilRuntimeGuards(t *testing.T) {
 	var rt *Runtime
 	if _, err := rt.CreateAgentState(context.Background(), "s", "c", "", pkgagent.RunConfigSnapshot{}); err == nil {
@@ -492,6 +505,7 @@ func TestNilRuntimeGuards(t *testing.T) {
 	}
 }
 
+// mustJSON 把值序列化为 RawMessage，失败则 panic。
 func mustJSON(v any) json.RawMessage {
 	body, err := json.Marshal(v)
 	if err != nil {

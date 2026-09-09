@@ -13,6 +13,7 @@ export function SessionSidebar({
   error,
   onCreate,
   onSelect,
+  onRecover,
   brandSrc,
 }: {
   sessions: Session[];
@@ -21,6 +22,7 @@ export function SessionSidebar({
   error: string | null;
   onCreate: () => void;
   onSelect: (id: string) => void;
+  onRecover?: (runId: string) => Promise<void>;
   brandSrc?: string;
 }) {
   return (
@@ -47,23 +49,39 @@ export function SessionSidebar({
               const active = session.id === currentId;
               return (
                 <li key={session.id}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(session.id)}
+                  <div
                     className={cn(
-                      "w-full rounded-md px-2 py-2 text-left transition-colors",
+                      "flex w-full items-start gap-2 rounded-md px-2 py-2 transition-colors",
                       active
                         ? "bg-muted text-foreground"
                         : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                     )}
                   >
-                    <div className="truncate text-sm font-medium">
-                      {sessionTitle(session.id, session.summary)}
-                    </div>
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground/70">
-                      {relativeTime(session.updated_at) || shortId(session.id)}
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(session.id)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="truncate text-sm font-medium">
+                        {sessionTitle(session.id, session.summary)}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground/70">
+                        {relativeTime(session.updated_at) || shortId(session.id)}
+                      </div>
+                    </button>
+                    {session.active_run_id && onRecover ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-6 shrink-0 px-2 text-xs"
+                        onClick={() => {
+                          void onRecover(session.active_run_id as string);
+                        }}
+                      >
+                        恢复
+                      </Button>
+                    ) : null}
+                  </div>
                 </li>
               );
             })}

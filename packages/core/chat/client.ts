@@ -6,6 +6,7 @@ import type {
   DecideApprovalRequest,
   Message,
   PageInfo,
+  Run,
   Session,
   StartRunRequest,
   StartRunResponse,
@@ -116,6 +117,15 @@ export class AgentClient {
         mode: req.mode ?? ("ask_for_approval" satisfies AgentMode),
       },
     });
+  }
+
+  async getRun(runId: string): Promise<Run> {
+    const body = await this.request<{ run: Run }>(`/runs/${runId}`);
+    return body.run;
+  }
+
+  async continueRun(runId: string): Promise<void> {
+    await this.request<{ ok: boolean }>(`/runs/${runId}/continue`, { method: "POST" });
   }
 
   async cancelRun(runId: string): Promise<void> {
