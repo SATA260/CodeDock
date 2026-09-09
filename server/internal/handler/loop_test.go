@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -241,6 +242,30 @@ func firstPendingApproval(t *testing.T, f *fixture, sessionID string) pkgagent.A
 	}
 	t.Fatalf("no pending approval: %+v", resp.Approvals)
 	return pkgagent.Approval{}
+}
+
+func TestContinueRecoversCreatedRun(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	ctx := context.Background()
+	cfg := withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+		Turns: []pkgagent.FakeTurn{{Text: "resumed"}},
+	})
+	runID, err := f.runtime.CreateAgentState(ctx, sessionID, "resume me", pkgagent.ModeAutoApprove, *cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runtime.ClaimSession(ctx, sessionID, runID); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.do(t, http.MethodPost, "/runs/"+runID+"/continue", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("continue %d %s", rec.Code, rec.Body.String())
+	}
+	run := f.waitRun(t, runID, pkgagent.RunCompleted)
+	if run.StopReason == nil || *run.StopReason != pkgagent.StopCompleted {
+		t.Fatalf("stop=%v", run.StopReason)
+	}
 }
 
 func decideApproval(t *testing.T, f *fixture, approvalID string, status pkgagent.ApprovalStatus) {

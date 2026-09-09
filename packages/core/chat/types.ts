@@ -204,6 +204,24 @@ export interface CreateSessionRequest {
   workspace_id?: string;
 }
 
+export interface Run {
+  id: string;
+  session_id: string;
+  status: RunStatus;
+  cancel_requested?: boolean;
+}
+
+export const RECOVERABLE_RUN_STATUSES: readonly RunStatus[] = [
+  "queued",
+  "loading_context",
+  "running_llm",
+  "executing_tools",
+];
+
+export function isRecoverableRun(status: string): boolean {
+  return (RECOVERABLE_RUN_STATUSES as readonly string[]).includes(status);
+}
+
 export interface StartRunRequest {
   content: string;
   input_mode?: "interrupt" | "queue";

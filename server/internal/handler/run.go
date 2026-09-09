@@ -69,7 +69,7 @@ func (a *API) GetRun(w http.ResponseWriter, r *http.Request) {
 // ContinueRun 继续执行已暂停的 Run（审批通过后）。
 func (a *API) ContinueRun(w http.ResponseWriter, r *http.Request) {
 	runID := chi.URLParam(r, "run_id")
-	if err := a.continueRun(r.Context(), runID); err != nil {
+	if err := a.runtime.RecoverRun(r.Context(), runID); err != nil {
 		a.requestLog(r).Error("continue run failed", "run_id", runID, "error", err)
 		writeError(w, err)
 		return
@@ -80,7 +80,7 @@ func (a *API) ContinueRun(w http.ResponseWriter, r *http.Request) {
 // RetryRun 重试当前 Run（与 Continue 同行为）。
 func (a *API) RetryRun(w http.ResponseWriter, r *http.Request) {
 	runID := chi.URLParam(r, "run_id")
-	if err := a.continueRun(r.Context(), runID); err != nil {
+	if err := a.runtime.RecoverRun(r.Context(), runID); err != nil {
 		a.requestLog(r).Error("retry run failed", "run_id", runID, "error", err)
 		writeError(w, err)
 		return
@@ -91,7 +91,7 @@ func (a *API) RetryRun(w http.ResponseWriter, r *http.Request) {
 // CancelRun 请求取消 Run 并取消当前运行中的步骤。
 func (a *API) CancelRun(w http.ResponseWriter, r *http.Request) {
 	runID := chi.URLParam(r, "run_id")
-	if err := a.cancelRun(r.Context(), runID); err != nil {
+	if err := a.runtime.RequestCancel(r.Context(), runID); err != nil {
 		a.requestLog(r).Error("cancel run failed", "run_id", runID, "error", err)
 		writeError(w, err)
 		return
@@ -179,29 +179,4 @@ func (a *API) start(ctx context.Context, sessionID string, req StartRunRequest) 
 	}
 	a.logger().Info("run started", "session_id", sessionID, "run_id", runID, "input_mode", req.InputMode, "claimed", claimed)
 	return StartRunResponse{SessionID: sessionID, RunID: runID}, nil
-}
-
-// continueRun 投递 human_approved 步骤，唤醒 Run 继续执行。
-func (a *API) continueRun(ctx context.Context, runID string) error {
-	if runID == "" {
-		return cderr.Invalid("run id is required")
-	}
-	return a.runtime.Enqueue(ctx, pkgagent.StepJob{
-		RunID: runID,
-		Phase: pkgagent.PhaseHumanApproved,
-	})
-}
-
-// cancelRun 请求取消并取消当前运行中的步骤。
-func (a *API) cancelRun(ctx context.Context, runID string) error {
-	if runID == "" {
-		return cderr.Invalid("run id is required")
-	}
-	if err := a.runtime.RequestCancel(ctx, runID); err != nil {
-		return err
-	}
-	if worker := a.runtime.Worker(); worker != nil {
-		worker.Cancel(runID)
-	}
-	return nil
 }

@@ -6,6 +6,7 @@ import {
   dropOptimisticUser,
   emptyState,
   hydrate,
+  isRecoverableRun,
   isTerminalRun,
   watchEvents,
   type AgentMode,
@@ -60,6 +61,7 @@ export function useSessionTimeline(sessionId: string | undefined) {
     }
     return !timelineCache.has(sessionId);
   });
+  const [recoverableRunId, setRecoverableRunId] = useState<string | null>(null);
   const stateRef = useRef(state);
   const sessionRef = useRef(sessionId);
   stateRef.current = state;
@@ -70,6 +72,7 @@ export function useSessionTimeline(sessionId: string | undefined) {
       setState(emptyState());
       setLoading(false);
       setError(null);
+      setRecoverableRunId(null);
       return;
     }
 
@@ -87,10 +90,27 @@ export function useSessionTimeline(sessionId: string | undefined) {
     let cancelled = false;
     void (async () => {
       try {
-        const [messagesResult, eventsResult] = await Promise.allSettled([
+        const [messagesResult, eventsResult, sessionResult] = await Promise.allSettled([
           client.listMessages(sessionId, ac.signal),
           client.listEvents(sessionId, 0, ac.signal),
+          client.getSession(sessionId),
         ]);
+        if (sessionResult.status === "fulfilled" && sessionResult.value.active_run_id) {
+          try {
+            const run = await client.getRun(sessionResult.value.active_run_id);
+            if (!cancelled && isRecoverableRun(run.status)) {
+              setRecoverableRunId(run.id);
+            } else if (!cancelled) {
+              setRecoverableRunId(null);
+            }
+          } catch {
+            if (!cancelled) {
+              setRecoverableRunId(null);
+            }
+          }
+        } else if (!cancelled) {
+          setRecoverableRunId(null);
+        }
         if (cancelled || ac.signal.aborted) {
           return;
         }
@@ -190,7 +210,26 @@ export function useSessionTimeline(sessionId: string | undefined) {
     [client, userId],
   );
 
-  const running = Boolean(state.runStatus && !isTerminalRun(state.runStatus));
+  const recover = useCallback(async (runId?: string) => {
+    const id = runId ?? recoverableRunId ?? stateRef.current.activeRunId;
+    if (!id) {
+      return;
+    }
+    try {
+      await client.continueRun(id);
+      setRecoverableRunId(null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "恢复失败");
+    }
+  }, [client, recoverableRunId]);
 
-  return { state, error, sending, running, loading, send, cancel, decide };
+  const running = Boolean(state.runStatus && !isTerminalRun(state.runStatus));
+  const canRecover = Boolean(
+    recoverableRunId &&
+      state.runStatus &&
+      isRecoverableRun(state.runStatus),
+  ) || Boolean(recoverableRunId && !state.runStatus);
+
+  return { state, error, sending, running, loading, canRecover, recoverableRunId, send, cancel, decide, recover };
 }

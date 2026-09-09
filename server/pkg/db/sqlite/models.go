@@ -122,6 +122,17 @@ type SessionLease struct {
 	ExpiresAt    string
 }
 
+type StepJob struct {
+	RunID     string
+	StepIndex int64
+	Phase     string
+	Payload   string
+	Status    string
+	Attempt   int64
+	CreatedAt string
+	UpdatedAt string
+}
+
 type TextMemory struct {
 	ID        string
 	Scope     string

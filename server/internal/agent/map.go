@@ -12,6 +12,7 @@ import (
 	"codedock/pkg/db/sqlite"
 )
 
+// wrapDB 把 sql.ErrNoRows 转成 NotFound，其余错误原样返回。
 func wrapDB(err error) error {
 	if err == nil {
 		return nil
@@ -22,6 +23,7 @@ func wrapDB(err error) error {
 	return err
 }
 
+// nullString 把空串转成无效 NullString，非空则 Valid。
 func nullString(value string) sql.NullString {
 	if value == "" {
 		return sql.NullString{}
@@ -29,6 +31,7 @@ func nullString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: true}
 }
 
+// deref 解引用字符串指针，nil 返回空串。
 func deref(value *string) string {
 	if value == nil {
 		return ""
@@ -36,6 +39,7 @@ func deref(value *string) string {
 	return *value
 }
 
+// ptrString 把有效且非空的 NullString 转成 *string。
 func ptrString(value sql.NullString) *string {
 	if !value.Valid || value.String == "" {
 		return nil
@@ -44,6 +48,7 @@ func ptrString(value sql.NullString) *string {
 	return &v
 }
 
+// parseTime 按 RFC3339 解析时间，失败返回零值。
 func parseTime(value string) time.Time {
 	parsed, err := time.Parse(time.RFC3339, value)
 	if err != nil {
@@ -52,6 +57,7 @@ func parseTime(value string) time.Time {
 	return parsed
 }
 
+// ptrTime 把有效时间字符串转成 *time.Time，无效则 nil。
 func ptrTime(value sql.NullString) *time.Time {
 	if !value.Valid || value.String == "" {
 		return nil
@@ -63,6 +69,7 @@ func ptrTime(value sql.NullString) *time.Time {
 	return &parsed
 }
 
+// boolInt 把 bool 编成 SQLite 整型：true=1，false=0。
 func boolInt(ok bool) int64 {
 	if ok {
 		return 1
@@ -70,6 +77,7 @@ func boolInt(ok bool) int64 {
 	return 0
 }
 
+// mapSession 把 sqlc Session 行映射为领域 Session。
 func mapSession(row sqlite.Session) pkgagent.Session {
 	return pkgagent.Session{
 		ID:            row.ID,
@@ -87,6 +95,7 @@ func mapSession(row sqlite.Session) pkgagent.Session {
 	}
 }
 
+// mapRun 把 sqlc Run 行映射为领域 Run，并反序列化 config。
 func mapRun(row sqlite.Run) pkgagent.Run {
 	var config pkgagent.RunConfigSnapshot
 	if row.Config != "" {
@@ -112,6 +121,7 @@ func mapRun(row sqlite.Run) pkgagent.Run {
 	}
 }
 
+// mapMessage 把 sqlc Message 行映射为领域 Message。
 func mapMessage(row sqlite.Message) pkgagent.Message {
 	var attachments []pkgagent.Attachment
 	if row.Attachments.Valid && row.Attachments.String != "" {
@@ -135,6 +145,7 @@ func mapMessage(row sqlite.Message) pkgagent.Message {
 	}
 }
 
+// mapEvent 把 sqlc AgentEvent 行映射为领域事件。
 func mapEvent(row sqlite.AgentEvent) pkgagent.AgentEvent {
 	return pkgagent.AgentEvent{
 		EventID:    row.EventID,
@@ -149,6 +160,7 @@ func mapEvent(row sqlite.AgentEvent) pkgagent.AgentEvent {
 	}
 }
 
+// mapTurn 把 sqlc Turn 行映射为领域 Turn。
 func mapTurn(row sqlite.Turn) pkgagent.Turn {
 	return pkgagent.Turn{
 		ID:             row.ID,
@@ -164,6 +176,7 @@ func mapTurn(row sqlite.Turn) pkgagent.Turn {
 	}
 }
 
+// mapApproval 把 sqlc Approval 行映射为领域审批；无 tool_calls 时回退到 tool_call_id。
 func mapApproval(row sqlite.Approval) pkgagent.Approval {
 	var calls []pkgagent.ApprovalToolCall
 	if row.ToolCalls != "" {
@@ -188,6 +201,7 @@ func mapApproval(row sqlite.Approval) pkgagent.Approval {
 	}
 }
 
+// mapCompaction 把 sqlc 压缩检查点行映射为领域对象。
 func mapCompaction(row sqlite.CompactionCheckpoint) pkgagent.CompactionCheckpoint {
 	return pkgagent.CompactionCheckpoint{
 		ID:           row.ID,
@@ -199,6 +213,7 @@ func mapCompaction(row sqlite.CompactionCheckpoint) pkgagent.CompactionCheckpoin
 	}
 }
 
+// mapToolCheckpoint 把 sqlc 工具检查点行反序列化为 ToolCheckpoint。
 func mapToolCheckpoint(row sqlite.RunToolCheckpoint) pkgagent.ToolCheckpoint {
 	cp := pkgagent.ToolCheckpoint{TurnID: row.TurnID}
 	if row.CompletedCalls != "" {
@@ -219,6 +234,7 @@ func mapToolCheckpoint(row sqlite.RunToolCheckpoint) pkgagent.ToolCheckpoint {
 	return cp
 }
 
+// marshalJSON 序列化值为 JSON 字符串；失败或 null 时写 "[]"。
 func marshalJSON(value any) string {
 	if value == nil {
 		return "[]"
@@ -233,6 +249,7 @@ func marshalJSON(value any) string {
 	return string(body)
 }
 
+// formatTimePtr 把非零时间格式化为 RFC3339 NullString。
 func formatTimePtr(value *time.Time) sql.NullString {
 	if value == nil || value.IsZero() {
 		return sql.NullString{}

@@ -40,6 +40,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.GitRepo != "" {
 		t.Fatalf("GitRepo = %q, want empty", cfg.GitRepo)
 	}
+	if cfg.LLMConcurrency != 4 {
+		t.Fatalf("LLMConcurrency = %d, want 4", cfg.LLMConcurrency)
+	}
+	if cfg.ToolConcurrency != 8 {
+		t.Fatalf("ToolConcurrency = %d, want 8", cfg.ToolConcurrency)
+	}
 }
 
 // TestLoadFromEnv 校验环境变量覆盖默认配置。

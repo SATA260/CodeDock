@@ -171,6 +171,11 @@ func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result,
 		if err := ctx.Err(); err != nil {
 			return failResult(item.call, err.Error()), err
 		}
+		if inv.Gate != nil {
+			if err := inv.Gate.Acquire(ctx); err != nil {
+				return failResult(item.call, err.Error()), err
+			}
+		}
 		emit(inv, "execution_started", item.call, attempt, nil)
 		result, err := item.tool.Execute(ctx, Input{
 			SessionID: inv.SessionID,
@@ -178,6 +183,9 @@ func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result,
 			TurnID:    inv.TurnID,
 			Call:      item.call,
 		})
+		if inv.Gate != nil {
+			inv.Gate.Release()
+		}
 		result.CallID = item.call.ID
 		if result.Name == "" {
 			result.Name = item.call.Name

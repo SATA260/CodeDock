@@ -17,6 +17,18 @@ func TestCanTransition(t *testing.T) {
 	if err := CanTransition(RunWaitingApproval, RunLoadingContext); err == nil {
 		t.Fatal("approval must resume tools, not reload")
 	}
+	if err := CanTransition(RunQueued, RunQueued); err != nil {
+		t.Fatal(err)
+	}
+	if TerminalEvent(RunFailed) != EventRunFailed {
+		t.Fatal("failed event")
+	}
+	if TerminalEvent(RunCancelled) != EventRunCancelled {
+		t.Fatal("cancelled event")
+	}
+	if TerminalEvent(RunCompleted) != EventRunCompleted {
+		t.Fatal("completed event")
+	}
 }
 
 // TestCountTokens 校验 UTF-8 字节 / 4 的估算。

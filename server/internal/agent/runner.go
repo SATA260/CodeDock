@@ -93,10 +93,17 @@ func (r *Runtime) Tools() tool.Registry {
 	return r.tools
 }
 
-// Start 启动 Worker 并尝试恢复活跃作业。
+// SetConcurrency 设置进程级 LLM / 工具并发上限。n<=0 表示不限制。
+func (r *Runtime) SetConcurrency(llm, tools int) {
+	if r == nil || r.engine == nil {
+		return
+	}
+	r.engine.SetGates(pkgagent.NewSlotLimiter(llm), pkgagent.NewSlotLimiter(tools))
+}
+
+// Start 启动 Worker。不自动恢复库里未完成的 Job，需用户显式 RecoverRun。
 func (r *Runtime) Start(ctx context.Context) {
 	if r.worker != nil {
 		r.worker.Start(ctx)
 	}
-	_ = r.RecoverActive(ctx)
 }

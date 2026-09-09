@@ -125,6 +125,12 @@ type Registry interface {
 // DispatchHook 由运行时注入，用于发出工具过程事件。
 type DispatchHook func(kind string, call Call, attempt int, result *Result)
 
+// Gate 是进程级占槽：Acquire 领取，Release 归还。nil 表示不限制。
+type Gate interface {
+	Acquire(ctx context.Context) error
+	Release()
+}
+
 // Invocation 包含处理一组工具调用所需的全部信息。
 type Invocation struct {
 	SessionID        string
@@ -141,6 +147,7 @@ type Invocation struct {
 	ApprovedCallIDs  []string
 	DeniedCallIDs    []string
 	OnEvent          DispatchHook
+	Gate             Gate
 }
 
 // DispatchResult 按模型调用顺序保存结果，并标识是否因审批暂停。

@@ -23,6 +23,7 @@ const sessionSummaryMaxRunes = 200
 
 // CreateAgentState 写入用户消息与 queued Run，并发布 run.created。
 // content 是用户正文，不是已有 message id。
+// 逻辑：事务内写 message/run/首条事件，可选填 Session 摘要 → 提交后 publish 并索引触发消息。
 func (r *Runtime) CreateAgentState(ctx context.Context, sessionID, content string, mode pkgagent.AgentMode, config pkgagent.RunConfigSnapshot) (string, error) {
 	if r == nil || r.db == nil {
 		return "", cderr.Invalid("runtime is not initialized")
@@ -143,9 +144,9 @@ func (r *Runtime) ClaimSession(ctx context.Context, sessionID, runID string) (bo
 	return true, nil
 }
 
-// Enqueue 把 StepJob 投递给 Worker。StepIndex 为 0 时按已提交步骤 + 1 补齐。
+// Enqueue 先把 StepJob 落成 queued，再投递给 Worker。StepIndex 为 0 时按已提交步骤 + 1 补齐。
 func (r *Runtime) Enqueue(ctx context.Context, job pkgagent.StepJob) error {
-	if r == nil || r.worker == nil {
+	if r == nil {
 		return nil
 	}
 	if job.StepIndex <= 0 && job.RunID != "" {
@@ -155,6 +156,12 @@ func (r *Runtime) Enqueue(ctx context.Context, job pkgagent.StepJob) error {
 		} else {
 			job.StepIndex = state.StepIndex + 1
 		}
+	}
+	if err := r.persistStepJob(ctx, job, stepJobQueued); err != nil {
+		return err
+	}
+	if r.worker == nil {
+		return nil
 	}
 	return r.worker.Submit(ctx, job)
 }
@@ -177,6 +184,7 @@ func (r *Runtime) TryClaimStep(_ context.Context, runID string, stepIndex int) (
 	return true, nil
 }
 
+// releaseStep 释放 TryClaimStep 占用的步骤锁。
 func (r *Runtime) releaseStep(runID string, stepIndex int) {
 	if r == nil {
 		return
@@ -186,11 +194,13 @@ func (r *Runtime) releaseStep(runID string, stepIndex int) {
 	delete(r.claimedSteps, stepClaimKey(runID, stepIndex))
 }
 
+// stepClaimKey 返回步骤互斥锁的键：run_id + step_index。
 func stepClaimKey(runID string, stepIndex int) string {
 	return fmt.Sprintf("%s/%d", runID, stepIndex)
 }
 
 // LoadAgentState 从数据库加载 Run、checkpoint、消息、可见工具和冻结目录。
+// 逻辑：读 Run/Session → 装 checkpoint 与审批裁决 → 推算 StepIndex 与下一 Turn → 过滤压缩后的消息 → 拼 History。
 func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.AgentState, pkgagent.History, error) {
 	if r == nil || r.queries == nil {
 		return pkgagent.AgentState{}, pkgagent.History{}, cderr.Invalid("runtime is not initialized")
@@ -323,6 +333,7 @@ func (r *Runtime) AppendFact(ctx context.Context, runID string, fact pkgagent.Fa
 }
 
 // CommitStep 校验状态与步骤序号，持久化 Run / Turn / Message / checkpoint，并投递下一步或出队。
+// 逻辑：终态或旧步骤直接返回 → 事务写 Turn/消息/checkpoint/Run/事件 → 提交后发布、索引、标记 job → Enqueue Next 或 DequeueNext。
 func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.StepResult) error {
 	if r == nil || r.db == nil {
 		return cderr.Invalid("runtime is not initialized")
@@ -552,6 +563,13 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 	for _, msg := range indexed {
 		r.indexMessage(ctx, sessionID, msg)
 	}
+	doneStatus := stepJobDone
+	if terminal && state.Status == pkgagent.RunCancelled {
+		doneStatus = stepJobCancelled
+	}
+	if state.StepIndex > 0 {
+		r.markStepJobStatus(ctx, runID, state.StepIndex, doneStatus)
+	}
 	if result.Next != nil && !terminal && !state.CancelRequested {
 		if err := r.Enqueue(ctx, *result.Next); err != nil {
 			return err
@@ -564,6 +582,7 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 }
 
 // RequestCancel 标记取消；queued / waiting_approval 立即终态并清 active。
+// 逻辑：终态直接返回 → queued/审批中立刻 cancelled 并出队 → 运行中只标 cancel_requested，由 Worker 收束。
 func (r *Runtime) RequestCancel(ctx context.Context, runID string) error {
 	if r == nil || r.db == nil {
 		return cderr.Invalid("runtime is not initialized")
@@ -628,6 +647,7 @@ func (r *Runtime) RequestCancel(ctx context.Context, runID string) error {
 	for _, ev := range published {
 		r.publish(ev)
 	}
+	r.cancelOpenStepJobs(ctx, runID)
 	if r.worker != nil {
 		r.worker.Cancel(runID)
 	}
@@ -637,7 +657,65 @@ func (r *Runtime) RequestCancel(ctx context.Context, runID string) error {
 	return nil
 }
 
-// RecoverActive 启动时恢复非终态 Run：补投步骤；待批仅当 checkpoint 已有裁决时投 human_approved。
+// RecoverRun 把指定 Run 的未完成 Job 重新入队。本进程已在跑则直接返回。
+// waiting_approval 且尚未裁决时不入队。
+// 逻辑：Busy/终态/未裁决审批跳过 → 优先用未完成 step_job（崩溃 running 则 attempt++）→ 未占会话则 Claim，抢不到只落库。
+func (r *Runtime) RecoverRun(ctx context.Context, runID string) error {
+	if r == nil || runID == "" {
+		return cderr.Invalid("run id is required")
+	}
+	if r.worker != nil && r.worker.Busy(runID) {
+		return nil
+	}
+	state, _, err := r.LoadAgentState(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if pkgagent.IsTerminal(state.Status) {
+		return nil
+	}
+	if state.Status == pkgagent.RunWaitingApproval && !checkpointHasDecision(state.Checkpoint) {
+		return nil
+	}
+
+	job := pkgagent.StepJob{
+		RunID:     runID,
+		StepIndex: state.StepIndex + 1,
+		Phase:     recoverPhase(state.Status, state),
+	}
+	if state.Status == pkgagent.RunWaitingApproval {
+		job.Phase = pkgagent.PhaseHumanApproved
+	}
+	if row, ok, err := r.latestOpenStepJob(ctx, runID); err != nil {
+		return err
+	} else if ok {
+		job = stepJobFromRow(row)
+		if state.Status == pkgagent.RunWaitingApproval {
+			job.Phase = pkgagent.PhaseHumanApproved
+		}
+		if row.Status == stepJobRunning {
+			job.Attempt++
+		}
+	}
+
+	sess, err := r.q(ctx).GetSession(ctx, state.SessionID)
+	if err != nil {
+		return wrapDB(err)
+	}
+	active := sess.ActiveRunID.Valid && sess.ActiveRunID.String == runID
+	if !active {
+		claimed, err := r.ClaimSession(ctx, state.SessionID, runID)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			return r.persistStepJob(ctx, job, stepJobQueued)
+		}
+	}
+	return r.Enqueue(ctx, job)
+}
+
+// RecoverActive 扫未完成 Run 并逐个 RecoverRun。仅供测试或内部扫表，启动时不调用。
 func (r *Runtime) RecoverActive(ctx context.Context) error {
 	if r == nil || r.queries == nil {
 		return nil
@@ -648,18 +726,8 @@ func (r *Runtime) RecoverActive(ctx context.Context) error {
 		return err
 	}
 	for _, row := range runs {
-		state, _, err := r.LoadAgentState(ctx, row.ID)
-		if err != nil {
-			r.logger().Error("recover load failed", "run_id", row.ID, "error", err)
-			continue
-		}
-		job := pkgagent.StepJob{
-			RunID:     row.ID,
-			StepIndex: state.StepIndex + 1,
-			Phase:     recoverPhase(pkgagent.RunStatus(row.Status), state),
-		}
-		if err := r.Enqueue(ctx, job); err != nil {
-			r.logger().Error("recover enqueue failed", "run_id", row.ID, "error", err)
+		if err := r.RecoverRun(ctx, row.ID); err != nil {
+			r.logger().Error("recover run failed", "run_id", row.ID, "error", err)
 		}
 	}
 	waiting, err := q.ListWaitingApprovalRuns(ctx)
@@ -667,19 +735,8 @@ func (r *Runtime) RecoverActive(ctx context.Context) error {
 		return err
 	}
 	for _, row := range waiting {
-		state, _, err := r.LoadAgentState(ctx, row.ID)
-		if err != nil {
-			continue
-		}
-		if !checkpointHasDecision(state.Checkpoint) {
-			continue
-		}
-		if err := r.Enqueue(ctx, pkgagent.StepJob{
-			RunID:     row.ID,
-			StepIndex: state.StepIndex + 1,
-			Phase:     pkgagent.PhaseHumanApproved,
-		}); err != nil {
-			r.logger().Error("recover approval enqueue failed", "run_id", row.ID, "error", err)
+		if err := r.RecoverRun(ctx, row.ID); err != nil {
+			r.logger().Error("recover approval failed", "run_id", row.ID, "error", err)
 		}
 	}
 	return nil
@@ -712,6 +769,7 @@ func (r *Runtime) HoldDequeue(sessionID string) func() {
 	}
 }
 
+// dequeueHeld 判断该会话是否被 HoldDequeue 暂停自动出队。
 func (r *Runtime) dequeueHeld(sessionID string) bool {
 	if r == nil {
 		return false
@@ -749,6 +807,7 @@ func (r *Runtime) DequeueNext(ctx context.Context, sessionID, finishedRunID stri
 	})
 }
 
+// insertEventForRun 按 Run 查出 Session，再写入一条 AgentEvent。
 func (r *Runtime) insertEventForRun(ctx context.Context, runID string, fact pkgagent.Fact) (pkgagent.AgentEvent, error) {
 	run, err := r.q(ctx).GetRun(ctx, runID)
 	if err != nil {
@@ -757,6 +816,7 @@ func (r *Runtime) insertEventForRun(ctx context.Context, runID string, fact pkga
 	return r.insertEventTx(ctx, run.SessionID, runID, deref(fact.TurnID), fact)
 }
 
+// insertEventTx 在当前事务内递增 seq 并插入 AgentEvent。
 func (r *Runtime) insertEventTx(ctx context.Context, sessionID, runID, turnID string, fact pkgagent.Fact) (pkgagent.AgentEvent, error) {
 	q := r.q(ctx)
 	nowStr := util.FormatTime(util.Now())
@@ -785,6 +845,7 @@ func (r *Runtime) insertEventTx(ctx context.Context, sessionID, runID, turnID st
 	return mapEvent(row), nil
 }
 
+// publish 把已落库的 AgentEvent 发到进程内总线，供 SSE 订阅。
 func (r *Runtime) publish(ev pkgagent.AgentEvent) {
 	if r == nil || r.bus == nil || ev.EventID == "" {
 		return
@@ -796,6 +857,7 @@ func (r *Runtime) publish(ev pkgagent.AgentEvent) {
 	})
 }
 
+// inferStepIndex 从 run.state_changed 事件推断已提交的最大步骤号。
 func (r *Runtime) inferStepIndex(ctx context.Context, sessionID, runID string) int {
 	rows, err := r.q(ctx).ListSessionEventsAfter(ctx, sqlite.ListSessionEventsAfterParams{SessionID: sessionID, Seq: 0})
 	if err != nil {
@@ -819,6 +881,7 @@ func (r *Runtime) inferStepIndex(ctx context.Context, sessionID, runID string) i
 	return step
 }
 
+// applyApprovalDecisions 把该 Run 的审批表裁决合并进 checkpoint 的 Approved/Denied。
 func (r *Runtime) applyApprovalDecisions(ctx context.Context, sessionID, runID string, state *pkgagent.AgentState) {
 	rows, err := r.q(ctx).ListSessionApprovals(ctx, sqlite.ListSessionApprovalsParams{
 		SessionID: sessionID,
@@ -855,6 +918,7 @@ func (r *Runtime) applyApprovalDecisions(ctx context.Context, sessionID, runID s
 	}
 }
 
+// insertPendingApproval 为等待审批的工具调用插入一条 pending 审批；已存在则跳过。
 func (r *Runtime) insertPendingApproval(ctx context.Context, sessionID, runID string, state pkgagent.AgentState) error {
 	approvalID := deref(state.PendingApproval)
 	if approvalID == "" {
@@ -895,6 +959,7 @@ func (r *Runtime) insertPendingApproval(ctx context.Context, sessionID, runID st
 	return err
 }
 
+// indexPersistedMessage 把该 Run 的触发用户消息写入冷层索引。
 func (r *Runtime) indexPersistedMessage(ctx context.Context, runID string) {
 	row, err := r.q(ctx).GetRun(ctx, runID)
 	if err != nil {
@@ -907,6 +972,7 @@ func (r *Runtime) indexPersistedMessage(ctx context.Context, runID string) {
 	r.indexMessage(ctx, row.SessionID, mapMessage(msg))
 }
 
+// indexMessage 按 Session 工作区把一条已落库消息写入冷层 FTS。
 func (r *Runtime) indexMessage(ctx context.Context, sessionID string, msg pkgagent.Message) {
 	sess, err := r.q(ctx).GetSession(ctx, sessionID)
 	if err != nil {
@@ -915,6 +981,7 @@ func (r *Runtime) indexMessage(ctx context.Context, sessionID string, msg pkgage
 	r.indexPersisted(ctx, sess.WorkspaceID, msg)
 }
 
+// recoverPhase 按 Run 粗状态推断恢复时应投递的 Phase。
 func recoverPhase(status pkgagent.RunStatus, state pkgagent.AgentState) pkgagent.Phase {
 	switch status {
 	case pkgagent.RunQueued, pkgagent.RunLoadingContext:
@@ -931,10 +998,12 @@ func recoverPhase(status pkgagent.RunStatus, state pkgagent.AgentState) pkgagent
 	}
 }
 
+// checkpointHasDecision 判断 checkpoint 是否已有通过或拒绝的工具调用。
 func checkpointHasDecision(cp pkgagent.ToolCheckpoint) bool {
 	return len(cp.Approved) > 0 || len(cp.Denied) > 0
 }
 
+// canReach 判断 from 能否经合法一跳或多跳到达 to，供一次 Commit 跨中间态。
 func canReach(from, to pkgagent.RunStatus) error {
 	if from == to {
 		return nil
@@ -964,6 +1033,7 @@ func canReach(from, to pkgagent.RunStatus) error {
 	return pkgagent.CanTransition(from, to)
 }
 
+// neighbors 返回 from 的合法下一跳状态，供 canReach 做广度搜索。
 func neighbors(from pkgagent.RunStatus) []pkgagent.RunStatus {
 	all := []pkgagent.RunStatus{
 		pkgagent.RunQueued,
@@ -985,6 +1055,7 @@ func neighbors(from pkgagent.RunStatus) []pkgagent.RunStatus {
 	return out
 }
 
+// turnStatusFor 把 Run 终态映射成对应的 Turn 状态。
 func turnStatusFor(status pkgagent.RunStatus) string {
 	switch status {
 	case pkgagent.RunFailed:
@@ -996,6 +1067,7 @@ func turnStatusFor(status pkgagent.RunStatus) string {
 	}
 }
 
+// clipSessionSummary 取用户正文首行并截断，用作 Session 摘要。
 func clipSessionSummary(content string) string {
 	content = strings.TrimSpace(content)
 	if content == "" {
@@ -1011,6 +1083,7 @@ func clipSessionSummary(content string) string {
 	return content
 }
 
+// containsString 判断字符串切片是否包含指定值。
 func containsString(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {

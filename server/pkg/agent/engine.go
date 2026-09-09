@@ -13,9 +13,11 @@ import (
 
 // Engine 执行一步：按 Brain 的指令调用对应执行器，自身不直接写库、不发事件、不调度下一步。
 type Engine struct {
-	brain *Brain
-	facts FactWriter
-	tools tool.Registry
+	brain    *Brain
+	facts    FactWriter
+	tools    tool.Registry
+	llmGate  tool.Gate
+	toolGate tool.Gate
 }
 
 // NewEngine 创建执行引擎。brain 为空时自动构造一个空 Brain。
@@ -24,6 +26,15 @@ func NewEngine(brain *Brain, facts FactWriter, tools tool.Registry) *Engine {
 		brain = &Brain{}
 	}
 	return &Engine{brain: brain, facts: facts, tools: tools}
+}
+
+// SetGates 设置进程级 LLM / 工具占槽。nil 表示不限制。
+func (e *Engine) SetGates(llm, tools tool.Gate) {
+	if e == nil {
+		return
+	}
+	e.llmGate = llm
+	e.toolGate = tools
 }
 
 // Step 执行一步：先让 Brain 决策，再按指令类型分发到对应执行器。
@@ -63,6 +74,8 @@ func (e *Engine) Step(ctx context.Context, in StepInput) (StepResult, error) {
 	return out, nil
 }
 
+// callLLM 占槽后压缩上下文、调模型，把流式增量写成 Fact，再产出 assistant 消息与下一步。
+// 逻辑：校验取消 → 超回合则收束 → CompactIfNeeded + Stream → 收齐文本/工具调用 → 有 Tool 则下一步 llm_result。
 func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (StepResult, error) {
 	if err := ctx.Err(); err != nil {
 		return e.finish(ctx, in, finishInstructions(RunCancelled, StopCancelled)[0])
@@ -88,6 +101,12 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	snapshot, err := Load(ctx, hist)
 	if err != nil {
 		return StepResult{}, err
+	}
+	if e.llmGate != nil {
+		if err := e.llmGate.Acquire(ctx); err != nil {
+			return e.finish(ctx, StepInput{State: state, Job: in.Job}, finishInstructions(RunCancelled, StopCancelled)[0])
+		}
+		defer e.llmGate.Release()
 	}
 	snapshot, err = CompactIfNeeded(ctx, Compaction{Run: hist.Run, Turn: hist.Turn, Snapshot: snapshot})
 	if err != nil {
@@ -186,6 +205,8 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	}, nil
 }
 
+// callToolsBatch 按配置派发本批工具；需审批则暂停，否则写入 tool 消息并进入 tools_batch_result。
+// 逻辑：取 Pending 或指令 payload → Dispatch（受 toolGate 与 MaxParallelTools 约束）→ 审批中则 waiting_approval，否则写结果。
 func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruction) (StepResult, error) {
 	if err := ctx.Err(); err != nil {
 		return e.finish(ctx, in, finishInstructions(RunCancelled, StopCancelled)[0])
@@ -235,6 +256,7 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 		ApprovedCallIDs:  state.Checkpoint.Approved,
 		DeniedCallIDs:    state.Checkpoint.Denied,
 		OnEvent:          e.toolEventHook(state),
+		Gate:             e.toolGate,
 	})
 	if err != nil {
 		if ctx.Err() != nil || state.CancelRequested {
@@ -325,6 +347,7 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 	}, nil
 }
 
+// finish 按指令把 Run 收成终态，并产出对应的终态事件。
 func (e *Engine) finish(_ context.Context, in StepInput, inst Instruction) (StepResult, error) {
 	state := in.State
 	payload := FinishPayload{Status: RunCompleted, Reason: StopCompleted}
@@ -359,6 +382,7 @@ func (e *Engine) finish(_ context.Context, in StepInput, inst Instruction) (Step
 	}, nil
 }
 
+// toolEventHook 把工具派发过程中的进度转成 Fact 写入。
 func (e *Engine) toolEventHook(state AgentState) tool.DispatchHook {
 	return func(kind string, call tool.Call, attempt int, result *tool.Result) {
 		eventType := EventToolExecutionStarted
@@ -393,6 +417,7 @@ func (e *Engine) toolEventHook(state AgentState) tool.DispatchHook {
 	}
 }
 
+// appendFact 通过 FactWriter 落一条步骤内事实；Engine 或 Writer 为空则跳过。
 func (e *Engine) appendFact(ctx context.Context, runID string, fact Fact) error {
 	if e == nil || e.facts == nil || runID == "" {
 		return nil
@@ -400,10 +425,12 @@ func (e *Engine) appendFact(ctx context.Context, runID string, fact Fact) error 
 	return e.facts.Append(ctx, runID, fact)
 }
 
+// newEntityID 生成去掉连字符的 UUID，用作消息/Turn 等实体 id。
 func newEntityID() string {
 	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
+// derefString 解引用字符串指针，nil 返回空串。
 func derefString(value *string) string {
 	if value == nil {
 		return ""
@@ -411,6 +438,7 @@ func derefString(value *string) string {
 	return *value
 }
 
+// ptrValue 把非空字符串转成指针，空串返回 nil。
 func ptrValue(value string) *string {
 	if value == "" {
 		return nil

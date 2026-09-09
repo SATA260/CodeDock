@@ -99,7 +99,7 @@ func (a *API) DecideApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ApprovalResponse{Approval: approval})
 }
 
-// decide 校验审批状态，将裁决写入数据库，并投递 human_approved 步骤以唤醒 Run。
+// decide 校验审批状态，将裁决写入数据库，并用 RecoverRun 唤醒 Run。
 // 已过期审批会被整体拒绝；已裁决的审批再次提交时只重新入队。
 func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.Approval, error) {
 	row, err := a.q(ctx).GetApproval(ctx, req.ApprovalID)
@@ -108,7 +108,11 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 	}
 	approval := mapApproval(row)
 	if approval.Status != pkgagent.ApprovalPending {
-		return a.resubmitDecidedApproval(ctx, approval)
+		a.logger().Info("resubmit decided approval", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID)
+		if err := a.runtime.RecoverRun(ctx, approval.RunID); err != nil {
+			return pkgagent.Approval{}, err
+		}
+		return approval, nil
 	}
 	if req.Scope != "" {
 		approval.Scope = req.Scope
@@ -162,27 +166,10 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 		return pkgagent.Approval{}, err
 	}
 	a.logger().Info("approval decided", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID, "status", approval.Status)
-	if err := a.submitDecidedRun(ctx, approval.RunID); err != nil {
+	if err := a.runtime.RecoverRun(ctx, approval.RunID); err != nil {
 		return pkgagent.Approval{}, err
 	}
 	return approval, nil
-}
-
-// resubmitDecidedApproval 对已经非 pending 的审批只重新投递 human_approved 步骤。
-func (a *API) resubmitDecidedApproval(ctx context.Context, approval pkgagent.Approval) (pkgagent.Approval, error) {
-	a.logger().Info("resubmit decided approval", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID)
-	if err := a.submitDecidedRun(ctx, approval.RunID); err != nil {
-		return pkgagent.Approval{}, err
-	}
-	return approval, nil
-}
-
-// submitDecidedRun 投递 human_approved 步骤，让 Run 从等待审批处继续。
-func (a *API) submitDecidedRun(ctx context.Context, runID string) error {
-	return a.runtime.Enqueue(ctx, pkgagent.StepJob{
-		RunID: runID,
-		Phase: pkgagent.PhaseHumanApproved,
-	})
 }
 
 // normalizeDecisions 校验请求中的裁决覆盖全部 tool_call，且状态合法、无重复。
