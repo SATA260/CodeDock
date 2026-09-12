@@ -73,6 +73,13 @@ export function ChatPage({
           await timeline.recover(runId);
           await list.refresh();
         }}
+        onDelete={async (session) => {
+          const deletedId = session.id;
+          await list.removeSession(session);
+          if (sessionId === deletedId) {
+            onNewConversation();
+          }
+        }}
         canRecoverCurrent={timeline.canRecover}
         brandSrc={brandSrc}
       />

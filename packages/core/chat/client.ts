@@ -74,6 +74,13 @@ export class AgentClient {
     return body.session;
   }
 
+  async archiveSession(sessionId: string): Promise<Session> {
+    const body = await this.request<{ session: Session }>(`/sessions/${sessionId}/archive`, {
+      method: "POST",
+    });
+    return body.session;
+  }
+
   async listMessages(sessionId: string, signal?: AbortSignal): Promise<Message[]> {
     const messages: Message[] = [];
     let page = 1;
