@@ -54,6 +54,7 @@ CodeDock/
 │   ├── ui/                      # 无业务语义；components / lib / styles，不要 src/
 │   └── views/                   # 组合层；按业务域拆（现有 chat/），不要 src/
 ├── docs/
+├── data/                    # 运行时文件（sqlite 等），gitignore
 ├── server/
 │   ├── cmd/server/              # 服务启动、配置、Router 和依赖装配
 │   ├── internal/
@@ -261,7 +262,7 @@ Worker
 
 ## 配置
 
-`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
+`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。未设 `DB_DSN` 时 SQLite 写仓根 `data/codedock.db`，不写 `server/`。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
 
 HTTP 出站领域对象使用 snake_case JSON。Router 只对本地回环 Origin 放行 CORS，便于本机 Web 直连 `:8080`。Web 用 `NEXT_PUBLIC_API_BASE`（默认 `http://localhost:8080`）和 `NEXT_PUBLIC_USER_ID`（默认 `local`）。
 

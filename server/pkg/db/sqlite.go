@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
 	"strings"
 
 	dbsqlite "codedock/pkg/db/sqlite"
@@ -19,6 +21,11 @@ type sqliteClient struct {
 func openSQLite(ctx context.Context, cfg Config) (Client, error) {
 	if cfg.DSN == "" {
 		return nil, ErrDSNRequired
+	}
+	if path, ok := sqliteFilePath(cfg.DSN); ok {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, err
+		}
 	}
 
 	database, err := sql.Open("sqlite", cfg.DSN)
@@ -74,6 +81,20 @@ func SQLiteQueries(client Client) *dbsqlite.Queries {
 // Close 关闭数据库连接。
 func (c *sqliteClient) Close() error {
 	return c.db.Close()
+}
+
+func sqliteFilePath(dsn string) (string, bool) {
+	if strings.Contains(dsn, "mode=memory") {
+		return "", false
+	}
+	path, ok := strings.CutPrefix(dsn, "file:")
+	if !ok || path == "" {
+		return "", false
+	}
+	if i := strings.Index(path, "?"); i >= 0 {
+		path = path[:i]
+	}
+	return path, path != ""
 }
 
 type txContextKey struct{}

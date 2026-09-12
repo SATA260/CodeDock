@@ -28,7 +28,7 @@ func Load() Config {
 		HTTPAddr:        env("HTTP_ADDR", ":8080"),
 		LogLevel:        env("LOG_LEVEL", "debug"),
 		DBEngine:        env("DB_ENGINE", "sqlite"),
-		DBDSN:           env("DB_DSN", "file:codedock.db"),
+		DBDSN:           env("DB_DSN", defaultSQLiteDSN()),
 		LLMProvider:     env("LLM_PROVIDER", "fake"),
 		LLMModel:        env("LLM_MODEL", "fake"),
 		LLMAPIKey:       env("LLM_API_KEY", ""),
@@ -37,6 +37,46 @@ func Load() Config {
 		LLMConcurrency:  envInt("LLM_CONCURRENCY", 4),
 		ToolConcurrency: envInt("TOOL_CONCURRENCY", 8),
 	}
+}
+
+// defaultSQLiteDSN 默认库文件在仓根 data/，不写进 server/。
+func defaultSQLiteDSN() string {
+	return "file:" + filepath.Join(DataDir(), "codedock.db")
+}
+
+// DataDir 运行时文件目录：仓根下的 data/。找不到仓根则用 cwd/data。
+func DataDir() string {
+	return filepath.Join(repoRoot(), "data")
+}
+
+func repoRoot() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	dir := cwd
+	for i := 0; i <= 4; i++ {
+		if isRepoRoot(dir) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return cwd
+}
+
+func isRepoRoot(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "pnpm-workspace.yaml")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err != nil {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(dir, "server", "go.mod"))
+	return err == nil
 }
 
 // DefaultRoot 进程默认工作目录：GIT_REPO 的绝对路径，未设则 cwd。
