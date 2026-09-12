@@ -2,14 +2,14 @@ package tool
 
 // PipelineInput 是一次调用进入审批流水线的输入。
 type PipelineInput struct {
-	Default           Effect       // 工具默认，只能是 allow 或 ask
-	InspectErr        error        // 第 1 层参数校验失败
-	Bound             bool         // 是否在本 Agent 的 Names 里；未绑定则 deny
-	OutsideWorkspace  bool         // 路径落在会话工作区外；本会话权限管不到
-	AgentEffect       Effect       // 第 2 层覆盖；空表示无记录
-	HasAgentEffect    bool         // 表里是否有该工具
-	Approval          ApprovalMode // 第 3 层
-	Approved          bool         // 审批单已批准本调用
+	Default          Effect       // 工具默认，只能是 allow 或 ask
+	InspectErr       error        // 第 1 层参数校验失败
+	Bound            bool         // 是否在本 Agent 的 Names 里；未绑定则 deny
+	OutsideWorkspace bool         // 路径落在会话工作区外；本会话权限管不到
+	AgentEffect      Effect       // 第 2 层覆盖；空表示无记录
+	HasAgentEffect   bool         // 表里是否有该工具
+	Approval         ApprovalMode // 第 3 层
+	Approved         bool         // 审批单已批准本调用
 }
 
 // Pipeline 按工具校验 → Agent 绑定/表 → 审批模式依次裁定。

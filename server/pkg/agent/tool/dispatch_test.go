@@ -353,7 +353,7 @@ type retryTool struct {
 	fails atomic.Int32
 }
 
-func (retryTool) Definition() Definition {
+func (*retryTool) Definition() Definition {
 	return Definition{
 		Name:             "retry",
 		Permission:       Permission{Effect: EffectAllow},

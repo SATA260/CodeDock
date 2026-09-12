@@ -10,10 +10,10 @@ import (
 )
 
 type CreateMessageRequest struct {
-	Content string                      `json:"content"`
-	Mode     pkgagent.WorkMode     `json:"mode"`
-	Approval pkgagent.ApprovalMode `json:"approval"`
-	Config  *pkgagent.RunConfigSnapshot `json:"config,omitempty"`
+	Content  string                      `json:"content"`
+	Mode     pkgagent.WorkMode           `json:"mode"`
+	Approval pkgagent.ApprovalMode       `json:"approval"`
+	Config   *pkgagent.RunConfigSnapshot `json:"config,omitempty"`
 }
 
 type MessageResponse struct {

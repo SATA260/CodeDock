@@ -17,16 +17,16 @@ type PromptConfig struct {
 
 // ToolConfig 描述 Agent 暴露的工具集及覆盖表。
 type ToolConfig struct {
-	Names   []string               `json:"names,omitempty"`   // 本 Agent 可执行的工具名；不在列表里 Dispatch 拒绝
+	Names   []string               `json:"names,omitempty"` // 本 Agent 可执行的工具名；不在列表里 Dispatch 拒绝
 	Version string                 `json:"version,omitempty"`
 	Effects map[string]tool.Effect `json:"effects,omitempty"` // 第 2 层覆盖表；只审第 1 层仍为 ask 的调用
 }
 
 // Config 是一份内置 Agent 的配置。
 type Config struct {
-	ID      string       `json:"id"`                // ask / plan / agent
+	ID      string       `json:"id"` // ask / plan / agent
 	Version string       `json:"version,omitempty"`
-	Mode    string       `json:"mode,omitempty"`    // 与 ID 相同，标识这份配置对应的工作模式
+	Mode    string       `json:"mode,omitempty"` // 与 ID 相同，标识这份配置对应的工作模式
 	Prompt  PromptConfig `json:"prompt"`
 	Tools   ToolConfig   `json:"tools"`
 }

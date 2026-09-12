@@ -2,13 +2,13 @@ package handler
 
 import (
 	"bytes"
-	"context"
 	"codedock/internal/config"
 	cderr "codedock/internal/errors"
 	"codedock/internal/events"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/db/sqlite"
 	"codedock/pkg/git"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"

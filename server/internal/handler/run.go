@@ -12,10 +12,10 @@ import (
 )
 
 type StartRunRequest struct {
-	Content  string                      `json:"content"`            // 用户输入
-	Mode     pkgagent.WorkMode           `json:"mode"`               // 选出哪个内置 Agent：ask / plan / agent
-	Approval pkgagent.ApprovalMode       `json:"approval"`           // 流水线第三层：manual / auto / yolo
-	Config   *pkgagent.RunConfigSnapshot `json:"config,omitempty"`   // 测试可覆盖快照；线上通常不传
+	Content  string                      `json:"content"`          // 用户输入
+	Mode     pkgagent.WorkMode           `json:"mode"`             // 选出哪个内置 Agent：ask / plan / agent
+	Approval pkgagent.ApprovalMode       `json:"approval"`         // 流水线第三层：manual / auto / yolo
+	Config   *pkgagent.RunConfigSnapshot `json:"config,omitempty"` // 测试可覆盖快照；线上通常不传
 }
 
 type StartRunResponse struct {
