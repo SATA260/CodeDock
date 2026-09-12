@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	dbsqlite "codedock/pkg/db/sqlite"
 
@@ -28,6 +29,12 @@ func openSQLite(ctx context.Context, cfg Config) (Client, error) {
 	if _, err := database.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
 		_ = database.Close()
 		return nil, err
+	}
+	if !strings.Contains(cfg.DSN, "mode=memory") {
+		if _, err := database.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
+			_ = database.Close()
+			return nil, err
+		}
 	}
 	if err := database.PingContext(ctx); err != nil {
 		_ = database.Close()

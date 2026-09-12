@@ -1,16 +1,16 @@
 package agent
 
 import (
+	"codedock/pkg/agent/tool"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"codedock/pkg/agent/tool"
 )
 
 type memFacts struct {
@@ -31,7 +31,7 @@ func (stubPing) Definition() tool.Definition {
 	return tool.Definition{
 		Name:       "ping",
 		Prompt:     "ping",
-		Permission: tool.Permission{RequiresApproval: true},
+		Permission: tool.Permission{Effect: tool.EffectAsk},
 		Version:    "1",
 	}
 }
@@ -51,7 +51,7 @@ func testEngine(t *testing.T) (*Engine, *memFacts, tool.Registry) {
 }
 
 func fakeHistory(runID string, opts FakeOptions) History {
-	cfg := DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)})
+	cfg := DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)})
 	return History{
 		Run: Run{
 			ID:        runID,
@@ -93,7 +93,7 @@ func TestEngineCallLLMText(t *testing.T) {
 	state := AgentState{
 		SessionID: "sess-1",
 		RunID:     "run-1",
-		Config:    DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{Turns: []FakeTurn{{Text: "hello"}}})}),
+		Config:    DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{Turns: []FakeTurn{{Text: "hello"}}})}),
 	}
 	got, err := engine.Step(context.Background(), StepInput{
 		State:   state,
@@ -123,7 +123,7 @@ func TestEngineCallLLMToolsThenBatch(t *testing.T) {
 	state := AgentState{
 		SessionID: "sess-1",
 		RunID:     "run-1",
-		Config:    DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}),
+		Config:    DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}),
 	}
 	llm, err := engine.Step(context.Background(), StepInput{
 		State:   state,
@@ -159,7 +159,7 @@ func TestEngineCallToolsWaitingApproval(t *testing.T) {
 	state := AgentState{
 		SessionID: "sess-1",
 		RunID:     "run-1",
-		Config:    DefaultRunConfig(ModeAskForApproval, ModelConfig{Provider: "fake", Model: "fake"}),
+		Config:    DefaultRunConfig(WorkAgent, ModelConfig{Provider: "fake", Model: "fake"}),
 		Checkpoint: ToolCheckpoint{
 			Pending: []tool.Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}},
 		},
@@ -191,7 +191,7 @@ func TestEngineCallToolsApprovalEventListsWholeBatch(t *testing.T) {
 		State: AgentState{
 			SessionID: "sess-1",
 			RunID:     "run-1",
-			Config:    DefaultRunConfig(ModeAskForApproval, ModelConfig{Provider: "fake", Model: "fake"}),
+			Config:    DefaultRunConfig(WorkAgent, ModelConfig{Provider: "fake", Model: "fake"}),
 			Checkpoint: ToolCheckpoint{
 				Pending: []tool.Call{
 					{ID: "c0", Name: "echo", Arguments: json.RawMessage(`{}`)},
@@ -239,7 +239,7 @@ func TestEngineFinishAndCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	got, err = engine.Step(ctx, StepInput{
-		State: AgentState{RunID: "run-1", Config: DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake"})},
+		State: AgentState{RunID: "run-1", Config: DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake"})},
 		Job:   StepJob{RunID: "run-1", StepIndex: 1, Phase: PhaseUserInput},
 	})
 	if err != nil {
@@ -261,7 +261,7 @@ func TestEngineNilAndMaxTurns(t *testing.T) {
 	state := AgentState{
 		RunID: "run-1",
 		Config: RunConfigSnapshot{
-			Mode:   ModeAutoApprove,
+			Mode:   WorkAgent,
 			Model:  ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{Turns: []FakeTurn{{Text: "x"}}})},
 			Limits: RunLimits{MaxTurns: 1},
 		},
@@ -284,7 +284,7 @@ func TestEngineHumanApprovedUsesCheckpoint(t *testing.T) {
 	state := AgentState{
 		SessionID: "sess-1",
 		RunID:     "run-1",
-		Config:    DefaultRunConfig(ModeAskForApproval, ModelConfig{Provider: "fake", Model: "fake"}),
+		Config:    DefaultRunConfig(WorkAgent, ModelConfig{Provider: "fake", Model: "fake"}),
 		Checkpoint: ToolCheckpoint{
 			Pending:  []tool.Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}},
 			Approved: []string{"c1"},
@@ -308,7 +308,7 @@ func TestEngineCallLLMFail(t *testing.T) {
 	_, err := engine.Step(context.Background(), StepInput{
 		State: AgentState{
 			RunID:  "run-1",
-			Config: DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}),
+			Config: DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}),
 		},
 		Job:     StepJob{RunID: "run-1", StepIndex: 1, Phase: PhaseUserInput},
 		History: fakeHistory("run-1", opts),
@@ -367,7 +367,7 @@ func TestEngineCallToolsBatchPayloadAndErrors(t *testing.T) {
 		State: AgentState{
 			SessionID: "sess-1",
 			RunID:     "run-1",
-			Config:    DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake"}),
+			Config:    DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake"}),
 		},
 		Job: StepJob{RunID: "run-1", StepIndex: 2},
 	}, Instruction{Type: InstructionCallToolsBatch, Payload: payload})
@@ -381,7 +381,7 @@ func TestEngineCallToolsBatchPayloadAndErrors(t *testing.T) {
 	denied, err := engine.callToolsBatch(context.Background(), StepInput{
 		State: AgentState{
 			RunID:  "run-1",
-			Config: DefaultRunConfig(ModeAskForApproval, ModelConfig{Provider: "fake", Model: "fake"}),
+			Config: DefaultRunConfig(WorkAgent, ModelConfig{Provider: "fake", Model: "fake"}),
 			Checkpoint: ToolCheckpoint{
 				Pending: []tool.Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}},
 				Denied:  []string{"c1"},
@@ -433,7 +433,7 @@ func TestEngineCallLLMHangCancelAndCompact(t *testing.T) {
 		State: AgentState{
 			SessionID: "sess-1",
 			RunID:     "run-1",
-			Config:    DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}),
+			Config:    DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}),
 		},
 		Job:     StepJob{RunID: "run-1", StepIndex: 1, Phase: PhaseUserInput},
 		History: fakeHistory("run-1", opts),
@@ -446,7 +446,7 @@ func TestEngineCallLLMHangCancelAndCompact(t *testing.T) {
 	}
 
 	compactOpts := FakeOptions{Turns: []FakeTurn{{Text: "sum"}}, CompactSummary: "earlier"}
-	cfg := DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(compactOpts)})
+	cfg := DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(compactOpts)})
 	cfg.Limits.MaxInputTokens = 1
 	got, err = engine.callLLM(context.Background(), StepInput{
 		State: AgentState{SessionID: "sess-1", RunID: "run-1", Config: cfg},
@@ -509,7 +509,7 @@ func TestEngineLLMGateLimitsConcurrency(t *testing.T) {
 			State: AgentState{
 				SessionID: "sess-1",
 				RunID:     id,
-				Config:    DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}),
+				Config:    DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}),
 			},
 			Job:     StepJob{RunID: id, StepIndex: 1, Phase: PhaseUserInput},
 			History: fakeHistory(id, opts),
@@ -565,7 +565,8 @@ func TestEngineToolGateLimitsConcurrency(t *testing.T) {
 	}
 	engine := NewEngine(&Brain{}, facts, reg)
 	engine.SetGates(nil, NewSlotLimiter(1))
-	cfg := DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake"})
+	cfg := DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake"})
+	cfg.Profile.Tools.Names = []string{"slow"}
 	cfg.ToolExecutionMode = tool.ExecutionParallel
 	cfg.Limits.MaxParallelTools = 4
 	_, err := engine.callToolsBatch(context.Background(), StepInput{
@@ -607,7 +608,7 @@ func TestEngineLLMGateAcquireCancelAndEmptyText(t *testing.T) {
 		State: AgentState{
 			SessionID: "sess-1",
 			RunID:     "run-1",
-			Config:    DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{Turns: []FakeTurn{{Text: ""}}})}),
+			Config:    DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{Turns: []FakeTurn{{Text: ""}}})}),
 		},
 		Job:     StepJob{RunID: "run-1", StepIndex: 0, Phase: PhaseUserInput},
 		History: History{Messages: []Message{{Role: RoleUser, Content: EncodeText("hi")}}, Prompt: "p"},
@@ -624,7 +625,7 @@ func TestEngineLLMGateAcquireCancelAndEmptyText(t *testing.T) {
 		State: AgentState{
 			SessionID: "sess-1",
 			RunID:     "run-1",
-			Config:    DefaultRunConfig(ModeAutoApprove, ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{Turns: []FakeTurn{{Text: ""}}})}),
+			Config:    DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{Turns: []FakeTurn{{Text: ""}}})}),
 		},
 		Job:     StepJob{RunID: "run-1", StepIndex: 0, Phase: PhaseUserInput},
 		History: fakeHistory("run-1", FakeOptions{Turns: []FakeTurn{{Text: ""}}}),
@@ -634,5 +635,219 @@ func TestEngineLLMGateAcquireCancelAndEmptyText(t *testing.T) {
 	}
 	if got.State.Status != RunRunningLLM || got.State.StepIndex != 1 {
 		t.Fatalf("empty text %+v", got.State)
+	}
+}
+
+func TestRetryHelpers(t *testing.T) {
+	if Retryable(nil) || Retryable(context.Canceled) || Retryable(ErrNonRetryable) || Retryable(ErrPermissionDenied) || Retryable(ErrInvalidArguments) || Retryable(ErrApprovalRequired) {
+		t.Fatal("non-retryable")
+	}
+	if !Retryable(errors.New("temp")) {
+		t.Fatal("retryable")
+	}
+	cfg := RetryConfig{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: 10 * time.Millisecond, Multiplier: 2}
+	if Backoff(cfg, 0) <= 0 || Backoff(RetryConfig{InitialBackoff: 0, Multiplier: 0}, 1) <= 0 {
+		t.Fatal("backoff")
+	}
+	if Backoff(cfg, 8) != 10*time.Millisecond {
+		t.Fatal("max backoff")
+	}
+	if ShouldRetry(cfg, 3, errors.New("x")) || !ShouldRetry(RetryConfig{}, 0, errors.New("x")) {
+		t.Fatal("should retry")
+	}
+}
+
+func TestContentAndPayloadHelpers(t *testing.T) {
+	if DecodeText(nil) != "" || DecodeText(json.RawMessage(`"plain"`)) != "plain" || DecodeText(json.RawMessage(`not-json`)) != "not-json" {
+		t.Fatal("decode")
+	}
+	if got := EncodeToolError("", ""); !strings.Contains(string(got), "tool failed") {
+		t.Fatalf("%s", got)
+	}
+	if got := EncodeToolResult("c1", nil); !strings.Contains(string(got), "null") {
+		t.Fatalf("%s", got)
+	}
+	if string(MarshalPayload(nil)) != "{}" {
+		t.Fatal(MarshalPayload(nil))
+	}
+	got := CompleteToolResults(nil)
+	if got != nil && len(got) != 0 {
+		t.Fatalf("%+v", got)
+	}
+	msgs := CompleteToolResults([]Message{
+		{Role: RoleAssistant, Content: EncodeText("no tools")},
+		{Role: RoleSystem, Content: EncodeText("sys")},
+		{Role: RoleAssistant, Content: EncodeText("call"), ToolCalls: []tool.Call{{ID: "c1", Name: "ping"}}},
+		{Role: RoleTool, Content: EncodeToolResult("c1", json.RawMessage(`{"ok":true}`))},
+	})
+	if len(msgs) < 4 {
+		t.Fatalf("%d", len(msgs))
+	}
+}
+
+func TestDefaultsContextPromptStatus(t *testing.T) {
+	cfg := DefaultRunConfig("", ModelConfig{})
+	if cfg.Mode != WorkAgent || cfg.Approval != ApprovalManual || cfg.Model.Provider != "fake" || cfg.Model.Model != "fake" {
+		t.Fatalf("%+v", cfg)
+	}
+	if ParseFakeOptions(nil).Turns[0].Text != "ok" {
+		t.Fatal("empty opts")
+	}
+	if ParseFakeOptions(json.RawMessage(`not-json`)).Turns[0].Text != "ok" {
+		t.Fatal("bad opts")
+	}
+
+	snap, err := Load(context.Background(), History{
+		Run:           Run{SessionID: "s"},
+		Checkpoint:    &CompactionCheckpoint{ID: "cp", Summary: "old", BaseEventSeq: 3},
+		Messages:      []Message{{Role: RoleUser, Content: EncodeText("hi"), EventSeq: 2}},
+		Prompt:        "sys",
+		Tools:         []tool.Definition{{Name: "ping", Prompt: "p"}},
+		MemoryIndexes: []string{"idx"},
+	})
+	if err != nil || snap.Summary == nil || snap.BaseEventSeq != 3 || snap.EstimatedTokens == 0 {
+		t.Fatalf("%+v %v", snap, err)
+	}
+	need, err := NeedsCompaction(context.Background(), Compaction{Run: Run{Config: RunConfigSnapshot{Limits: RunLimits{MaxInputTokens: 0}}}, Snapshot: snap})
+	if err != nil || need {
+		t.Fatal(need, err)
+	}
+	need, err = NeedsCompaction(context.Background(), Compaction{Run: Run{Config: RunConfigSnapshot{Limits: RunLimits{MaxInputTokens: 1}}}, Snapshot: ContextSnapshot{}})
+	if err != nil || need {
+		t.Fatal("empty snapshot should not exceed 1 if tokens=0? wait EstimateTokens of empty is 0")
+	}
+	compacted, err := CompactIfNeeded(context.Background(), Compaction{
+		Run:      Run{Config: RunConfigSnapshot{Model: ModelConfig{Provider: "fake", Options: mustRaw(FakeOptions{CompactSummary: "sum"})}, Limits: RunLimits{MaxInputTokens: 1}}},
+		Snapshot: ContextSnapshot{Messages: []Message{{Role: RoleUser, Content: EncodeText(strings.Repeat("x", 20)), EventSeq: 9}}},
+	})
+	if err != nil || compacted.Summary == nil || compacted.Summary.Content != "sum" || len(compacted.Messages) != 0 {
+		t.Fatalf("%+v %v", compacted, err)
+	}
+	fallback, err := CompactIfNeeded(context.Background(), Compaction{
+		Run:      Run{Config: RunConfigSnapshot{Model: ModelConfig{Provider: "fake"}, Limits: RunLimits{MaxInputTokens: 1}}},
+		Snapshot: ContextSnapshot{Messages: []Message{{Role: RoleUser, Content: EncodeText(strings.Repeat("keep me ", 20)), EventSeq: 4}}},
+	})
+	if err != nil || fallback.Summary == nil || !strings.Contains(fallback.Summary.Content, "keep me") {
+		t.Fatalf("%+v %v", fallback, err)
+	}
+	emptySum, err := CompactIfNeeded(context.Background(), Compaction{
+		Run:      Run{Config: RunConfigSnapshot{Model: ModelConfig{Provider: "fake"}, Limits: RunLimits{MaxInputTokens: 1}}},
+		Snapshot: ContextSnapshot{EstimatedTokens: 10, Messages: []Message{{Role: RoleUser}}},
+	})
+	if err != nil || emptySum.Summary == nil || emptySum.Summary.Content == "" {
+		t.Fatalf("%+v %v", emptySum, err)
+	}
+	if got, err := CompactIndex(context.Background(), ModelConfig{Provider: "fake"}, "  "); err != nil || got != "" {
+		t.Fatal(got, err)
+	}
+	if got, err := CompactIndex(context.Background(), ModelConfig{Provider: "fake", Options: mustRaw(FakeOptions{IndexCompactSummary: "short"})}, "long"); err != nil || got != "short" {
+		t.Fatal(got, err)
+	}
+
+	chat, err := Build(context.Background(), Prompt{Run: Run{Config: DefaultRunConfig(WorkAgent, ModelConfig{})}, Context: ContextSnapshot{}})
+	if err != nil || chat.SystemPrompt == "" {
+		t.Fatal(chat, err)
+	}
+	if ComposeSystemPrompt("", []tool.Definition{{Name: "ping", Prompt: "p"}}) == "" {
+		t.Fatal("tools only")
+	}
+	if !NeedsUserRecover(RunQueued, false) || NeedsUserRecover(RunCompleted, false) || NeedsUserRecover(RunQueued, true) {
+		t.Fatal("recover")
+	}
+	if lastMessageSeq(nil) != 0 {
+		t.Fatal("seq")
+	}
+}
+
+func TestReviewCoverAndParse(t *testing.T) {
+	calls := []ApprovalToolCall{{ID: "c1"}, {ID: "c2"}}
+	if _, ok := parseReviewContent("", calls); ok {
+		t.Fatal("empty")
+	}
+	if coverReview([]ApprovalDecision{{ToolCallID: "c1", Status: "weird"}, {ToolCallID: "c2", Status: ApprovalDenied}}, calls) {
+		t.Fatal("invalid status")
+	}
+	if coverReview([]ApprovalDecision{{ToolCallID: "z", Status: ApprovalApproved}, {ToolCallID: "c2", Status: ApprovalDenied}}, calls) {
+		t.Fatal("unknown")
+	}
+	if coverReview([]ApprovalDecision{{ToolCallID: "c1", Status: ApprovalApproved}, {ToolCallID: "c1", Status: ApprovalDenied}}, calls) {
+		t.Fatal("dup")
+	}
+	incomplete, err := Review(context.Background(), ModelConfig{Provider: "fake", Options: mustRaw(FakeOptions{Review: &FakeReview{
+		Decisions: []ApprovalDecision{{ToolCallID: "c1", Status: ApprovalApproved}},
+	}})}, calls)
+	if err != nil || !incomplete.Escalate {
+		t.Fatalf("%+v %v", incomplete, err)
+	}
+}
+
+func TestFakeTurnsFollowLastUser(t *testing.T) {
+	opts := FakeOptions{Turns: []FakeTurn{
+		{ToolCalls: []FakeToolCall{{Name: "ping"}}},
+		{Text: "second"},
+	}}
+	cfg := ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}
+	prior := []Message{
+		{Role: RoleUser, Content: EncodeText("old")},
+		{Role: RoleAssistant, Content: EncodeText("old-a")},
+		{Role: RoleAssistant, Content: EncodeText("old-b")},
+		{Role: RoleUser, Content: EncodeText("now")},
+	}
+	first, err := Stream(context.Background(), Chat{Model: cfg, TurnID: "t1", Messages: prior})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := first.Result(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ToolCalls) != 1 || got.ToolCalls[0].Name != "ping" {
+		t.Fatalf("first turn should be ping: %+v", got)
+	}
+	second, err := Stream(context.Background(), Chat{
+		Model:  cfg,
+		TurnID: "t2",
+		Messages: append(append([]Message{}, prior...), Message{
+			Role: RoleAssistant, Content: EncodeText(""), ToolCalls: []tool.Call{{ID: "c1", Name: "ping"}},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = second.Result(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if DecodeText(got.Message.Content) != "second" || len(got.ToolCalls) != 0 {
+		t.Fatalf("second turn should be text: %+v", got)
+	}
+}
+
+func TestStreamUnsupportedAndToOpenAI(t *testing.T) {
+	if _, err := Stream(context.Background(), Chat{Model: ModelConfig{Provider: "other"}}); err == nil {
+		t.Fatal("unsupported")
+	}
+	applyOutputLimit(nil, "x", 1)
+	applyOutputLimit(&openaiChatRequest{}, "x", 0)
+	msgs := toOpenAIMessages(Chat{
+		SystemPrompt: "sys",
+		Messages: []Message{
+			{Role: RoleAssistant, Content: EncodeText("a"), ToolCalls: []tool.Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}}},
+			{Role: RoleTool, Content: EncodeToolResult("c1", json.RawMessage(`{"ok":true}`))},
+			{Role: RoleSystem, Content: EncodeText("s")},
+			{Role: RoleUser, Content: EncodeText("u")},
+			{Role: RoleTool, Content: EncodeText("plain tool")},
+			{Role: RoleDeveloper, Content: EncodeText("mode")},
+		},
+	})
+	if len(msgs) != 7 || msgs[0].Role != "system" || msgs[0].Content != "sys" || msgs[1].Role != "developer" || msgs[1].Content != "mode" {
+		t.Fatalf("%+v", msgs)
+	}
+	tools := toOpenAITools([]tool.Definition{{Name: "ping", Prompt: "p"}, {Name: "x"}})
+	if len(tools) != 2 || string(tools[1].Function.Parameters) == "" {
+		t.Fatalf("%+v", tools)
+	}
+	if toOpenAITools(nil) != nil {
+		t.Fatal("empty tools")
 	}
 }

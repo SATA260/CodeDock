@@ -67,7 +67,7 @@ func TestListMessagesPagination(t *testing.T) {
 	sessionID := f.createSession(t)
 	runID := f.start(t, sessionID, handler.StartRunRequest{
 		Content: "page me",
-		Mode:    pkgagent.ModeAutoApprove,
+		Mode:    pkgagent.WorkAgent,
 	})
 	f.waitRun(t, runID, pkgagent.RunCompleted)
 
@@ -104,7 +104,7 @@ func TestListEventsReplay(t *testing.T) {
 	sessionID := f.createSession(t)
 	runID := f.start(t, sessionID, handler.StartRunRequest{
 		Content: "events",
-		Mode:    pkgagent.ModeAutoApprove,
+		Mode:    pkgagent.WorkAgent,
 	})
 	f.waitRun(t, runID, pkgagent.RunCompleted)
 

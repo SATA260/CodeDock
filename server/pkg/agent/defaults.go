@@ -9,25 +9,25 @@ import (
 )
 
 const (
-	DefaultSystemPrompt = `你是 CodeDock，一个冷静、靠谱的工作助手。像思路清楚的同事那样说话：直接、具体、留有余地，不卖萌，不端着。
-
-写作要求：
-- 用用户的语言回复。默认简洁，需要时再展开。
-- 不要输出 emoji、颜文字、表情符号，也不要用它们当语气词。
-- 不要用空泛开场或自我介绍，除非用户问你是谁。
-- 不要堆砌感叹号，不要加油打气，不要用网络流行语。
-
-需要做事时再调用当前提供的工具，不要为了调用而调用。一次回复里的工具会按批次审批，只提出当前必要的调用。`
-	DefaultToolSet = "ping-memory-1"
+	DefaultSystemPrompt = `你是 CodeDock 里的编程助手。`
+	DefaultToolSet      = "agent-7"
 )
 
 // FakeOptions 控制 fake 模型的确定性输出，供测试与离线闭环使用。
 type FakeOptions struct {
-	Turns               []FakeTurn `json:"turns"`
-	FailTimes           int        `json:"fail_times"`
-	Hang                bool       `json:"hang"`
-	CompactSummary      string     `json:"compact_summary"`
-	IndexCompactSummary string     `json:"index_compact_summary"`
+	Turns               []FakeTurn  `json:"turns"`
+	FailTimes           int         `json:"fail_times"`
+	Hang                bool        `json:"hang"`
+	CompactSummary      string      `json:"compact_summary"`
+	IndexCompactSummary string      `json:"index_compact_summary"`
+	Review              *FakeReview `json:"review,omitempty"`
+}
+
+// FakeReview 控制 fake 复审模型的输出。
+type FakeReview struct {
+	Decisions []ApprovalDecision `json:"decisions,omitempty"`
+	Escalate  bool               `json:"escalate,omitempty"`
+	Fail      bool               `json:"fail,omitempty"`
 }
 
 // FakeTurn 是 fake 模型一轮输出。
@@ -53,10 +53,10 @@ func DefaultRetryConfig() RetryConfig {
 	}
 }
 
-// DefaultRunConfig 冻结一份可运行的默认 Run 配置。
-func DefaultRunConfig(mode AgentMode, model ModelConfig) RunConfigSnapshot {
+// DefaultRunConfig 冻结一份可运行的默认 Run 配置：指定工作模式，审批默认 manual。
+func DefaultRunConfig(mode WorkMode, model ModelConfig) RunConfigSnapshot {
 	if mode == "" {
-		mode = ModeAskForApproval
+		mode = WorkAgent
 	}
 	if model.Provider == "" {
 		model.Provider = "fake"
@@ -64,19 +64,14 @@ func DefaultRunConfig(mode AgentMode, model ModelConfig) RunConfigSnapshot {
 	if model.Model == "" {
 		model.Model = "fake"
 	}
+	prof := profile.For(string(mode))
 	retry := DefaultRetryConfig()
 	return RunConfigSnapshot{
 		Mode:             mode,
-		SystemPromptHash: "default-v3",
+		Approval:         ApprovalManual,
+		SystemPromptHash: prof.Prompt.Version,
 		Model:            model,
-		ToolSetVersion:   DefaultToolSet,
-		PermissionPolicy: tool.PermissionPolicy{
-			Version: "1",
-		},
-		ApprovalPolicy: tool.ApprovalPolicy{
-			Version:       "1",
-			DefaultExpiry: time.Hour,
-		},
+		ToolSetVersion:   prof.Tools.Version,
 		RetryPolicy: RetryPolicy{
 			Context: retry,
 			Model:   retry,
@@ -92,24 +87,15 @@ func DefaultRunConfig(mode AgentMode, model ModelConfig) RunConfigSnapshot {
 		},
 		ToolExecutionMode: tool.ExecutionSerial,
 		ToolFailurePolicy: tool.FailureBestEffort,
-		Profile: profile.Config{
-			ID:      "default",
-			Version: "1",
-			Mode:    string(mode),
-			Prompt: profile.PromptConfig{
-				Source:    "inline",
-				Inline:    DefaultSystemPrompt,
-				Version:   "3",
-				Reference: "default",
-			},
-			Tools: profile.ToolConfig{
-				Names:            []string{"ping", "memory_read", "memory_write", "memory_search"},
-				Version:          DefaultToolSet,
-				PermissionPolicy: tool.PermissionPolicy{Version: "1"},
-				ApprovalPolicy:   tool.ApprovalPolicy{Version: "1", DefaultExpiry: time.Hour},
-			},
-		},
+		Profile:           prof,
 	}
+}
+
+// DefaultYoloConfig 给测试用：agent + yolo，写类工具不暂停。
+func DefaultYoloConfig(model ModelConfig) RunConfigSnapshot {
+	cfg := DefaultRunConfig(WorkAgent, model)
+	cfg.Approval = ApprovalYolo
+	return cfg
 }
 
 // ParseFakeOptions 从 ModelConfig.Options 解析 fake 脚本。

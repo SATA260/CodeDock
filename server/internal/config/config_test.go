@@ -72,6 +72,18 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 }
 
+func TestDefaultRoot(t *testing.T) {
+	dir := t.TempDir()
+	got := Config{GitRepo: dir}.DefaultRoot()
+	want, _ := filepath.Abs(dir)
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if (Config{}).DefaultRoot() == "" {
+		t.Fatal("empty git repo should fall back to cwd")
+	}
+}
+
 // TestParseDotEnvFile 校验注释、引号、export 与行尾注释。
 func TestParseDotEnvFile(t *testing.T) {
 	dir := t.TempDir()

@@ -11,7 +11,8 @@ import (
 
 type CreateMessageRequest struct {
 	Content string                      `json:"content"`
-	Mode    pkgagent.AgentMode          `json:"mode"`
+	Mode     pkgagent.WorkMode     `json:"mode"`
+	Approval pkgagent.ApprovalMode `json:"approval"`
 	Config  *pkgagent.RunConfigSnapshot `json:"config,omitempty"`
 }
 
@@ -38,9 +39,10 @@ func (a *API) CreateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := a.start(r.Context(), sessionID, StartRunRequest{
-		Content: req.Content,
-		Mode:    req.Mode,
-		Config:  req.Config,
+		Content:  req.Content,
+		Mode:     req.Mode,
+		Approval: req.Approval,
+		Config:   req.Config,
 	})
 	if err != nil {
 		writeError(w, err)

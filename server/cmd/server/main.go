@@ -55,13 +55,15 @@ func main() {
 		Model:    cfg.LLMModel,
 		Options:  modelOptions(cfg),
 	}
-	runtime := agent.New(client, queries, bus, nil, logger.NewLogger("agent"), agenttools.Ports{})
+	runtime := agent.New(client, queries, bus, nil, logger.NewLogger("agent"), agenttools.Ports{
+		WorkspaceRoot: cfg.DefaultRoot(), // 进程回落；会话工作区由 Handler 创建时冻结
+	})
 	runtime.SetModel(model)
 	runtime.SetConcurrency(cfg.LLMConcurrency, cfg.ToolConcurrency)
 	log.Info("concurrency", "llm", cfg.LLMConcurrency, "tool", cfg.ToolConcurrency)
 	runtime.Start(ctx)
 
-	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, model)
+	defaults := pkgagent.DefaultRunConfig(pkgagent.WorkAgent, model)
 	api := handler.New(client, queries, runtime, bus, defaults, cfg, logger.NewLogger("handler"))
 
 	server := &http.Server{

@@ -17,10 +17,10 @@ func TestNeedsRecoverHTTP(t *testing.T) {
 	ctx := context.Background()
 
 	orphanedSess := f.createSession(t)
-	cfg := withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+	cfg := withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 		Turns: []pkgagent.FakeTurn{{Text: "resumed"}},
 	})
-	orphaned, err := f.runtime.CreateAgentState(ctx, orphanedSess, "resume me", pkgagent.ModeAutoApprove, *cfg)
+	orphaned, err := f.runtime.CreateAgentState(ctx, orphanedSess, "resume me", pkgagent.WorkAgent, *cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,8 +50,8 @@ func TestNeedsRecoverHTTP(t *testing.T) {
 	liveSess := f.createSession(t)
 	liveID := f.start(t, liveSess, handler.StartRunRequest{
 		Content: "hang",
-		Mode:    pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 			Hang:  true,
 			Turns: []pkgagent.FakeTurn{{Text: "late"}},
 		}),
@@ -74,8 +74,8 @@ func TestNeedsRecoverHTTP(t *testing.T) {
 	doneSess := f.createSession(t)
 	doneID := f.start(t, doneSess, handler.StartRunRequest{
 		Content: "done",
-		Mode:    pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 			Turns: []pkgagent.FakeTurn{{Text: "ok"}},
 		}),
 	})

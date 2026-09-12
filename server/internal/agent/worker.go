@@ -210,6 +210,7 @@ func (w *Worker) execute(parent context.Context, job pkgagent.StepJob) {
 			_ = w.runtime.CommitStep(ctx, job.RunID, result)
 			return
 		}
+		w.runtime.logger().Error("worker step failed", "run_id", job.RunID, "step_index", job.StepIndex, "phase", job.Phase, "error", err)
 		failed := failState(state, err)
 		_ = w.runtime.CommitStep(ctx, job.RunID, pkgagent.StepResult{
 			State: failed,

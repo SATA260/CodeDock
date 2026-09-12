@@ -13,10 +13,10 @@ import (
 )
 
 type CreateSessionRequest struct {
-	TenantID    string `json:"tenant_id"`
-	UserID      string `json:"user_id"`
-	AgentID     string `json:"agent_id"`
-	WorkspaceID string `json:"workspace_id"`
+	TenantID    string `json:"tenant_id"`    // 租户；空则 default
+	UserID      string `json:"user_id"`      // 用户，必填
+	AgentID     string `json:"agent_id"`     // 会话容器上的逻辑 Agent ID，不随发送改成 ask/plan/agent
+	WorkspaceID string `json:"workspace_id"` // 工作目录；创建时冻结。显式路径必须已存在，否则 400；空或 default 则 GIT_REPO / cwd
 }
 
 type UpdateSessionRequest struct {
@@ -50,9 +50,12 @@ func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.AgentID == "" {
 		req.AgentID = "default"
 	}
-	if req.WorkspaceID == "" {
-		req.WorkspaceID = "default"
+	root, err := freezeSessionWorkspace(req.WorkspaceID, a.cfg.DefaultRoot())
+	if err != nil {
+		writeError(w, err)
+		return
 	}
+	req.WorkspaceID = root
 	now := util.FormatTime(util.Now())
 	row, err := a.q(r.Context()).InsertSession(r.Context(), sqlite.InsertSessionParams{
 		ID:          util.NewID(),
@@ -169,11 +172,18 @@ func (a *API) ArchiveSession(w http.ResponseWriter, r *http.Request) {
 
 // loadSession 从路径参数读取并映射会话。
 func (a *API) loadSession(r *http.Request) (pkgagent.Session, error) {
-	id := chi.URLParam(r, "session_id")
+	return a.loadSessionByID(r.Context(), chi.URLParam(r, "session_id"))
+}
+
+func (a *API) loadSessionByID(ctx context.Context, id string) (pkgagent.Session, error) {
 	if id == "" {
 		return pkgagent.Session{}, cderr.Invalid("session_id is required")
 	}
-	row, err := a.q(r.Context()).GetSession(r.Context(), id)
+	q := a.q(ctx)
+	if q == nil {
+		return pkgagent.Session{}, cderr.Unavailable("database is required")
+	}
+	row, err := q.GetSession(ctx, id)
 	if err != nil {
 		return pkgagent.Session{}, wrapHandlerDB(err)
 	}
