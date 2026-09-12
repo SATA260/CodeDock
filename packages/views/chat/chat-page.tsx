@@ -33,7 +33,7 @@ export function ChatPage({
   const [starting, setStarting] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
 
-  const pendingApproval = timeline.state.items.find(
+  const pendingApprovals = timeline.state.items.filter(
     (item): item is Extract<TimelineItem, { kind: "approval" }> =>
       item.kind === "approval" && item.status === "pending",
   );
@@ -72,6 +72,7 @@ export function ChatPage({
           await timeline.recover(runId);
           await list.refresh();
         }}
+        canRecoverCurrent={timeline.canRecover}
         brandSrc={brandSrc}
       />
       <main className="flex min-w-0 flex-1 flex-col">
@@ -100,14 +101,17 @@ export function ChatPage({
           state={timeline.state}
           loading={timeline.loading}
           scrollKey={sessionId}
+          onEditQueued={timeline.editQueued}
         />
-        <ApprovalDock item={pendingApproval} onDecide={timeline.decide} />
-        <PromptBar
-          running={timeline.running}
-          sending={timeline.sending || starting}
-          onSend={onSend}
-          onCancel={timeline.cancel}
-        />
+        <div className="relative z-30">
+          <ApprovalDock items={pendingApprovals} onDecide={timeline.decide} />
+          <PromptBar
+            running={timeline.running}
+            sending={timeline.sending || starting}
+            onSend={onSend}
+            onCancel={timeline.cancel}
+          />
+        </div>
       </main>
     </div>
   );

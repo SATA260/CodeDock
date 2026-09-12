@@ -14,7 +14,7 @@ cp apps/web/.env.example apps/web/.env.local
 pnpm install
 ```
 
-一次起 API + Web。若已有 `tmp/git-sandbox`，API 默认指到沙箱，避免在本仓上试撤回：
+一条命令同时起 Go API 和 Web。日志带 `api` / `web` 前缀；Ctrl+C 会一起停。若已有 `tmp/git-sandbox`，API 默认指到沙箱，避免在本仓上试撤回：
 
 ```bash
 pnpm dev

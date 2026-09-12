@@ -178,6 +178,7 @@ type Session struct {
 	WorkspaceID   string        `json:"workspace_id"`            // 工作区 ID
 	Status        SessionStatus `json:"status"`                  // 会话状态
 	ActiveRunID   *string       `json:"active_run_id,omitempty"` // 当前正在执行的 Run ID
+	NeedsRecover  bool          `json:"needs_recover,omitempty"` // Handler 计算：active Run 已中断、需用户恢复；不入库
 	LastEventSeq  int64         `json:"last_event_seq"`          // 已分配的最大事件序号
 	CompactionSeq int64         `json:"compaction_seq"`          // 上次压缩对应的事件序号
 	Summary       string        `json:"summary"`                 // 会话列表摘要（首条用户输入首行）
@@ -193,6 +194,7 @@ type Run struct {
 	Mode             AgentMode         `json:"mode"`                    // 运行模式
 	Config           RunConfigSnapshot `json:"config"`                  // 启动配置快照
 	Status           RunStatus         `json:"status"`                  // 当前状态
+	NeedsRecover     bool              `json:"needs_recover,omitempty"`  // Handler 计算：执行已中断且 Worker 不在跑；不入库
 	CurrentTurnID    *string           `json:"current_turn_id,omitempty"` // 当前 Turn ID
 	StopReason       *StopReason       `json:"stop_reason,omitempty"`     // 结束原因
 	CancelRequested  bool              `json:"cancel_requested"`        // 是否已请求取消

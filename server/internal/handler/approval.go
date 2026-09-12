@@ -99,7 +99,7 @@ func (a *API) DecideApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ApprovalResponse{Approval: approval})
 }
 
-// decide 校验审批状态，将裁决写入数据库，并用 RecoverRun 唤醒 Run。
+// decide 校验审批状态，将裁决与 tool.approval_decided 同事务写入，再用 RecoverRun 唤醒 Run。
 // 已过期审批会被整体拒绝；已裁决的审批再次提交时只重新入队。
 func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.Approval, error) {
 	row, err := a.q(ctx).GetApproval(ctx, req.ApprovalID)
@@ -149,6 +149,7 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 		}
 	}
 
+	var decided pkgagent.AgentEvent
 	err = a.db.WithTx(ctx, func(ctx context.Context) error {
 		updated, err := a.q(ctx).UpdateApproval(ctx, sqlite.UpdateApprovalParams{
 			Scope:     string(approval.Scope),
@@ -160,11 +161,17 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 			return wrapHandlerDB(err)
 		}
 		approval = mapApproval(updated)
+		ev, err := a.runtime.AppendFact(ctx, approval.RunID, approvalDecidedFact(approval))
+		if err != nil {
+			return err
+		}
+		decided = ev
 		return nil
 	})
 	if err != nil {
 		return pkgagent.Approval{}, err
 	}
+	a.publishEvent(decided)
 	a.logger().Info("approval decided", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID, "status", approval.Status)
 	if err := a.runtime.RecoverRun(ctx, approval.RunID); err != nil {
 		return pkgagent.Approval{}, err
@@ -172,12 +179,39 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 	return approval, nil
 }
 
-// normalizeDecisions 校验请求中的裁决覆盖全部 tool_call，且状态合法、无重复。
+// approvalDecidedFact 把整单裁决编成 tool.approval_decided 事实。
+func approvalDecidedFact(approval pkgagent.Approval) pkgagent.Fact {
+	decisions := make([]pkgagent.ApprovalDecision, 0, len(approval.ToolCalls))
+	for _, call := range approval.ToolCalls {
+		decisions = append(decisions, pkgagent.ApprovalDecision{
+			ToolCallID: call.ID,
+			Status:     call.Status,
+			Reason:     call.Reason,
+		})
+	}
+	return pkgagent.Fact{
+		Type: pkgagent.EventApprovalDecided,
+		Payload: pkgagent.MarshalPayload(pkgagent.ApprovalDecidedPayload{
+			ApprovalID: approval.ID,
+			ToolCallID: approval.ToolCallID,
+			Status:     approval.Status,
+			Scope:      approval.Scope,
+			Decisions:  decisions,
+			ToolCalls:  approval.ToolCalls,
+		}),
+	}
+}
+
+// normalizeDecisions 校验裁决状态合法；整单同一裁定时补齐未列出的 tool_call。
 func normalizeDecisions(req DecideApprovalRequest, calls []pkgagent.ApprovalToolCall) ([]ToolDecision, error) {
 	decisions := req.Decisions
-	if len(decisions) == 0 && req.Status != "" && len(calls) == 1 {
-		decisions = []ToolDecision{{ToolCallID: calls[0].ID, Status: req.Status, Reason: req.Reason}}
+	if len(decisions) == 0 && req.Status != "" && len(calls) > 0 {
+		decisions = make([]ToolDecision, 0, len(calls))
+		for _, call := range calls {
+			decisions = append(decisions, ToolDecision{ToolCallID: call.ID, Status: req.Status, Reason: req.Reason})
+		}
 	}
+	decisions = fillBatchDecisions(decisions, calls)
 	if len(decisions) != len(calls) {
 		return nil, cderr.Invalid("decisions must cover every tool call")
 	}
@@ -202,4 +236,37 @@ func normalizeDecisions(req DecideApprovalRequest, calls []pkgagent.ApprovalTool
 		return nil, cderr.Invalid("decisions must cover every tool call")
 	}
 	return decisions, nil
+}
+
+// fillBatchDecisions 在整单同一裁决时，把未点到的 tool_call 补成相同状态。
+func fillBatchDecisions(decisions []ToolDecision, calls []pkgagent.ApprovalToolCall) []ToolDecision {
+	if len(decisions) == 0 || len(calls) == 0 || len(decisions) == len(calls) {
+		return decisions
+	}
+	status := decisions[0].Status
+	reason := decisions[0].Reason
+	for _, item := range decisions[1:] {
+		if item.Status != status {
+			return decisions
+		}
+	}
+	seen := make(map[string]struct{}, len(decisions))
+	out := make([]ToolDecision, 0, len(calls))
+	for _, item := range decisions {
+		if item.ToolCallID == "" {
+			continue
+		}
+		if _, dup := seen[item.ToolCallID]; dup {
+			continue
+		}
+		seen[item.ToolCallID] = struct{}{}
+		out = append(out, item)
+	}
+	for _, call := range calls {
+		if _, ok := seen[call.ID]; ok {
+			continue
+		}
+		out = append(out, ToolDecision{ToolCallID: call.ID, Status: status, Reason: reason})
+	}
+	return out
 }

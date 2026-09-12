@@ -123,3 +123,49 @@ func TestRecoverRunResetsCrashedRunningJob(t *testing.T) {
 	}
 	waitStatus(t, q, ctx, runID, pkgagent.RunCompleted)
 }
+
+// TestNeedsRecoverOrphanedAndBusy 校验中断的 queued Run 需要恢复，Worker 仍在跑则不需要。
+func TestNeedsRecoverOrphanedAndBusy(t *testing.T) {
+	rt, q, ctx := testRuntime(t, true)
+	orphanedSess := insertSession(t, q, ctx)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
+		Provider: "fake",
+		Model:    "fake",
+		Options:  mustJSON(pkgagent.FakeOptions{Hang: true, Turns: []pkgagent.FakeTurn{{Text: "late"}}}),
+	})
+	orphaned, err := rt.CreateAgentState(ctx, orphanedSess, "orphaned", cfg.Mode, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.ClaimSession(ctx, orphanedSess, orphaned); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := rt.NeedsRecover(ctx, orphaned)
+	if err != nil || !ok {
+		t.Fatalf("orphaned queued run should need recover, ok=%v err=%v", ok, err)
+	}
+
+	liveSess := insertSession(t, q, ctx)
+	liveID, err := rt.CreateAgentState(ctx, liveSess, "live", cfg.Mode, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.ClaimSession(ctx, liveSess, liveID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Enqueue(ctx, pkgagent.StepJob{RunID: liveID, StepIndex: 1, Phase: pkgagent.PhaseUserInput}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		ok, err = rt.NeedsRecover(ctx, liveID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("live hanging run should not need recover")
+}

@@ -14,6 +14,7 @@ export function SessionSidebar({
   onCreate,
   onSelect,
   onRecover,
+  canRecoverCurrent = false,
   brandSrc,
 }: {
   sessions: Session[];
@@ -23,6 +24,7 @@ export function SessionSidebar({
   onCreate: () => void;
   onSelect: (id: string) => void;
   onRecover?: (runId: string) => Promise<void>;
+  canRecoverCurrent?: boolean;
   brandSrc?: string;
 }) {
   return (
@@ -69,7 +71,10 @@ export function SessionSidebar({
                         {relativeTime(session.updated_at) || shortId(session.id)}
                       </div>
                     </button>
-                    {session.active_run_id && onRecover ? (
+                    {session.needs_recover &&
+                    session.active_run_id &&
+                    onRecover &&
+                    (session.id !== currentId || canRecoverCurrent) ? (
                       <Button
                         size="sm"
                         variant="secondary"

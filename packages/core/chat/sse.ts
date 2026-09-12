@@ -32,6 +32,7 @@ export interface WatchEventsOptions {
   sessionId: string;
   getAfterSeq: () => number;
   onEvent: (event: AgentEvent) => void;
+  onStreamEnd?: () => void | Promise<void>;
   signal: AbortSignal;
   fetch?: typeof fetch;
   retryDelayMs?: number;
@@ -66,6 +67,16 @@ export async function watchEvents(options: WatchEventsOptions): Promise<void> {
     if (options.signal.aborted) {
       return;
     }
+    if (options.onStreamEnd) {
+      try {
+        await options.onStreamEnd();
+      } catch {
+        // 重连探测失败不打断 SSE 重试
+      }
+    }
+    if (options.signal.aborted) {
+      return;
+    }
     await sleep(retryDelayMs, options.signal);
   }
 }
@@ -88,6 +99,9 @@ async function readSSEStream(
       const parsed = parseSSEChunk(buffer);
       buffer = parsed.rest;
       for (const event of parsed.events) {
+        if (signal.aborted) {
+          return;
+        }
         onEvent(event);
       }
     }

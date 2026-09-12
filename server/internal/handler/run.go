@@ -63,10 +63,12 @@ func (a *API) GetRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, wrapHandlerDB(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, RunResponse{Run: mapRun(row)})
+	run := mapRun(row)
+	run.NeedsRecover = a.runNeedsRecover(r.Context(), run.ID)
+	writeJSON(w, http.StatusOK, RunResponse{Run: run})
 }
 
-// ContinueRun 继续执行已暂停的 Run（审批通过后）。
+// ContinueRun 恢复已中断的 Run，或在审批写入后继续执行。
 func (a *API) ContinueRun(w http.ResponseWriter, r *http.Request) {
 	runID := chi.URLParam(r, "run_id")
 	if err := a.runtime.RecoverRun(r.Context(), runID); err != nil {

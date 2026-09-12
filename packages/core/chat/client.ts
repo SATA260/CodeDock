@@ -69,8 +69,8 @@ export class AgentClient {
     };
   }
 
-  async getSession(sessionId: string): Promise<Session> {
-    const body = await this.request<{ session: Session }>(`/sessions/${sessionId}`);
+  async getSession(sessionId: string, signal?: AbortSignal): Promise<Session> {
+    const body = await this.request<{ session: Session }>(`/sessions/${sessionId}`, { signal });
     return body.session;
   }
 
@@ -99,6 +99,14 @@ export class AgentClient {
     return messages;
   }
 
+  async updateMessage(sessionId: string, messageId: string, content: string): Promise<Message> {
+    const body = await this.request<{ message: Message }>(
+      `/sessions/${sessionId}/messages/${messageId}`,
+      { method: "PATCH", json: { content } },
+    );
+    return body.message;
+  }
+
   async listEvents(sessionId: string, after = 0, signal?: AbortSignal): Promise<AgentEvent[]> {
     const query = new URLSearchParams({ after: String(after) });
     const body = await this.request<{ events: AgentEvent[] }>(
@@ -119,8 +127,8 @@ export class AgentClient {
     });
   }
 
-  async getRun(runId: string): Promise<Run> {
-    const body = await this.request<{ run: Run }>(`/runs/${runId}`);
+  async getRun(runId: string, signal?: AbortSignal): Promise<Run> {
+    const body = await this.request<{ run: Run }>(`/runs/${runId}`, { signal });
     return body.run;
   }
 
@@ -130,6 +138,23 @@ export class AgentClient {
 
   async cancelRun(runId: string): Promise<void> {
     await this.request<{ ok: boolean }>(`/runs/${runId}/cancel`, { method: "POST" });
+  }
+
+  async listApprovals(sessionId: string, signal?: AbortSignal): Promise<Approval[]> {
+    const query = new URLSearchParams({
+      page: "1",
+      page_size: "100",
+    });
+    const body = await this.request<{ approvals: Approval[] }>(
+      `/sessions/${sessionId}/approvals?${query}`,
+      { signal },
+    );
+    return body.approvals ?? [];
+  }
+
+  async getApproval(approvalId: string, signal?: AbortSignal): Promise<Approval> {
+    const body = await this.request<{ approval: Approval }>(`/approvals/${approvalId}`, { signal });
+    return body.approval;
   }
 
   async decideApproval(approvalId: string, req: DecideApprovalRequest): Promise<Approval> {

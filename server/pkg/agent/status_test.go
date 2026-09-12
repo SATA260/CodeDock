@@ -31,6 +31,32 @@ func TestCanTransition(t *testing.T) {
 	}
 }
 
+// TestNeedsUserRecover 校验只有中断的执行态才需要用户恢复。
+func TestNeedsUserRecover(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		status RunStatus
+		busy   bool
+		want   bool
+	}{
+		{RunQueued, false, true},
+		{RunLoadingContext, false, true},
+		{RunRunningLLM, false, true},
+		{RunExecutingTools, false, true},
+		{RunRunningLLM, true, false},
+		{RunWaitingApproval, false, false},
+		{RunCancelling, false, false},
+		{RunCompleted, false, false},
+		{RunFailed, false, false},
+		{RunCancelled, false, false},
+	}
+	for _, tc := range cases {
+		if got := NeedsUserRecover(tc.status, tc.busy); got != tc.want {
+			t.Fatalf("NeedsUserRecover(%s, busy=%v)=%v want %v", tc.status, tc.busy, got, tc.want)
+		}
+	}
+}
+
 // TestCountTokens 校验 UTF-8 字节 / 4 的估算。
 func TestCountTokens(t *testing.T) {
 	t.Parallel()

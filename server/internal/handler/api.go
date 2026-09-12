@@ -60,6 +60,18 @@ func (a *API) q(ctx context.Context) *sqlite.Queries {
 	return a.queries
 }
 
+// publishEvent 把已落库的 AgentEvent 发到进程内总线，供 SSE 订阅。
+func (a *API) publishEvent(ev pkgagent.AgentEvent) {
+	if a == nil || a.bus == nil || ev.EventID == "" {
+		return
+	}
+	a.bus.Publish(events.Event{
+		Type:          string(ev.Type),
+		ChatSessionID: ev.SessionID,
+		Payload:       ev,
+	})
+}
+
 // writeJSON 以 JSON 写出 HTTP 响应。
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")

@@ -280,24 +280,19 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 		if state.Checkpoint.TurnID == "" {
 			state.Checkpoint.TurnID = turnID
 		}
-		toolCalls := make([]ApprovalToolCall, 0, len(out.ApprovalCalls))
-		for _, call := range out.ApprovalCalls {
+		// 与 insertPendingApproval 一致：整批复检暂停时，审批行和事件都带上本批全部调用。
+		src := out.PendingCalls
+		if len(src) == 0 {
+			src = out.ApprovalCalls
+		}
+		toolCalls := make([]ApprovalToolCall, 0, len(src))
+		for _, call := range src {
 			toolCalls = append(toolCalls, ApprovalToolCall{
 				ID:        call.ID,
 				Name:      call.Name,
 				Arguments: call.Arguments,
 				Status:    ApprovalPending,
 			})
-		}
-		if len(toolCalls) == 0 {
-			for _, call := range out.PendingCalls {
-				toolCalls = append(toolCalls, ApprovalToolCall{
-					ID:        call.ID,
-					Name:      call.Name,
-					Arguments: call.Arguments,
-					Status:    ApprovalPending,
-				})
-			}
 		}
 		return StepResult{
 			State: state,
