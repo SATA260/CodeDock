@@ -2,28 +2,25 @@
 
 import { GitClient } from "@codedock/core/git";
 import { GitPage, GitProvider } from "@codedock/views/git";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 
 import { apiBase } from "@/lib/env";
 import { readCurrentSession } from "@/lib/session";
 
+function subscribeSession(onStoreChange: () => void) {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+  window.addEventListener("storage", onStoreChange);
+  return () => window.removeEventListener("storage", onStoreChange);
+}
+
 export function GitHost() {
-  const [sessionId, setSessionId] = useState<string | undefined>(undefined);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    setSessionId(readCurrentSession());
-    setReady(true);
-  }, []);
-
+  const sessionId = useSyncExternalStore(subscribeSession, readCurrentSession, () => undefined);
   const client = useMemo(
     () => new GitClient({ baseUrl: apiBase, sessionId }),
     [sessionId],
   );
-
-  if (!ready) {
-    return <p className="px-3 py-2 text-xs text-muted-foreground">正在读取仓库…</p>;
-  }
 
   return (
     <GitProvider client={client} sessionId={sessionId}>
