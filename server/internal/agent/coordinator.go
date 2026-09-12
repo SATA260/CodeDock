@@ -102,6 +102,7 @@ func (r *Runtime) CreateAgentState(ctx context.Context, sessionID, content strin
 				TriggerMessageID: msgID,
 				Mode:             mode,
 				Status:           pkgagent.RunQueued,
+				Text:             content,
 				Config:           config,
 			}),
 		})
@@ -715,6 +716,27 @@ func (r *Runtime) RecoverRun(ctx context.Context, runID string) error {
 	return r.Enqueue(ctx, job)
 }
 
+// NeedsRecover 判断指定 Run 是否因执行中断而需要用户显式恢复。
+// Worker 仍在跑、等审批、取消中、已终态，或只是排在当前 active Run 之后时返回 false。
+func (r *Runtime) NeedsRecover(ctx context.Context, runID string) (bool, error) {
+	if r == nil || runID == "" {
+		return false, nil
+	}
+	busy := r.worker != nil && r.worker.Busy(runID)
+	row, err := r.q(ctx).GetRun(ctx, runID)
+	if err != nil {
+		return false, wrapDB(err)
+	}
+	if !pkgagent.NeedsUserRecover(pkgagent.RunStatus(row.Status), busy) {
+		return false, nil
+	}
+	sess, err := r.q(ctx).GetSession(ctx, row.SessionID)
+	if err != nil {
+		return false, wrapDB(err)
+	}
+	return sess.ActiveRunID.Valid && sess.ActiveRunID.String == runID, nil
+}
+
 // RecoverActive 扫未完成 Run 并逐个 RecoverRun。仅供测试或内部扫表，启动时不调用。
 func (r *Runtime) RecoverActive(ctx context.Context) error {
 	if r == nil || r.queries == nil {
@@ -957,6 +979,14 @@ func (r *Runtime) insertPendingApproval(ctx context.Context, sessionID, runID st
 		ExpiresAt:  util.FormatTime(expiry),
 	})
 	return err
+}
+
+// ReindexMessage 按 Session 工作区更新一条消息的冷层索引。
+func (r *Runtime) ReindexMessage(ctx context.Context, sessionID string, msg pkgagent.Message) {
+	if r == nil || sessionID == "" || msg.ID == "" {
+		return
+	}
+	r.indexMessage(ctx, sessionID, msg)
 }
 
 // indexPersistedMessage 把该 Run 的触发用户消息写入冷层索引。

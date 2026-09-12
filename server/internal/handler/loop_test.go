@@ -77,6 +77,9 @@ func TestLoopAskForApprovalApproveAndDeny(t *testing.T) {
 		approval := firstPendingApproval(t, f, sessionID)
 		decideApproval(t, f, approval.ID, pkgagent.ApprovalApproved)
 		f.waitRun(t, runID, pkgagent.RunCompleted)
+		if !hasEventType(t, f, sessionID, pkgagent.EventApprovalDecided) {
+			t.Fatal("expected tool.approval_decided after approve")
+		}
 	})
 	t.Run("deny", func(t *testing.T) {
 		f := newFixture(t)
@@ -88,6 +91,9 @@ func TestLoopAskForApprovalApproveAndDeny(t *testing.T) {
 		run := f.waitRun(t, runID)
 		if !pkgagent.IsTerminal(run.Status) {
 			t.Fatalf("deny should not kill-lock run: %s", run.Status)
+		}
+		if !hasEventType(t, f, sessionID, pkgagent.EventApprovalDecided) {
+			t.Fatal("expected tool.approval_decided after deny")
 		}
 	})
 }
@@ -277,4 +283,23 @@ func decideApproval(t *testing.T, f *fixture, approvalID string, status pkgagent
 	if rec.Code != http.StatusOK {
 		t.Fatalf("decide %d %s", rec.Code, rec.Body.String())
 	}
+}
+
+// hasEventType 判断会话事件日志是否包含指定类型。
+func hasEventType(t *testing.T, f *fixture, sessionID string, typ pkgagent.EventType) bool {
+	t.Helper()
+	rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/event-log?after=0", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("event-log %d %s", rec.Code, rec.Body.String())
+	}
+	var resp handler.ListEventsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range resp.Events {
+		if ev.Type == typ {
+			return true
+		}
+	}
+	return false
 }

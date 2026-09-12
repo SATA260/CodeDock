@@ -1,8 +1,12 @@
 export {
   AgentClient,
   AgentClientError,
+  applyApprovalRecord,
+  applyApprovals,
   applyEvent,
+  decisionsForApproval,
   applyOptimisticUser,
+  applyUserText,
   decodeText,
   emptyState,
   firstLine,

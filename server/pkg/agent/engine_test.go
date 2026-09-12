@@ -182,6 +182,47 @@ func TestEngineCallToolsWaitingApproval(t *testing.T) {
 	}
 }
 
+func TestEngineCallToolsApprovalEventListsWholeBatch(t *testing.T) {
+	engine, _, reg := testEngine(t)
+	if err := reg.Register(stubEcho{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := engine.Step(context.Background(), StepInput{
+		State: AgentState{
+			SessionID: "sess-1",
+			RunID:     "run-1",
+			Config:    DefaultRunConfig(ModeAskForApproval, ModelConfig{Provider: "fake", Model: "fake"}),
+			Checkpoint: ToolCheckpoint{
+				Pending: []tool.Call{
+					{ID: "c0", Name: "echo", Arguments: json.RawMessage(`{}`)},
+					{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)},
+				},
+			},
+		},
+		Job: StepJob{RunID: "run-1", StepIndex: 2, Phase: PhaseLLMResult},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload ApprovalRequiredPayload
+	if err := json.Unmarshal(got.Facts[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.ToolCalls) != 2 {
+		t.Fatalf("tool_calls=%+v", payload.ToolCalls)
+	}
+}
+
+type stubEcho struct{}
+
+func (stubEcho) Definition() tool.Definition {
+	return tool.Definition{Name: "echo", Prompt: "echo", Version: "1"}
+}
+
+func (stubEcho) Execute(_ context.Context, input tool.Input) (tool.Result, error) {
+	return tool.Result{CallID: input.Call.ID, Name: "echo", Success: true, Output: json.RawMessage(`{}`)}, nil
+}
+
 func TestEngineFinishAndCancel(t *testing.T) {
 	engine, _, _ := testEngine(t)
 	got, err := engine.Step(context.Background(), StepInput{

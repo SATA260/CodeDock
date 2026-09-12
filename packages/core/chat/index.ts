@@ -1,8 +1,12 @@
 export { AgentClient, AgentClientError, type AgentClientOptions } from "./client.ts";
 export { decodeText, firstLine, parseDelta } from "./content.ts";
 export {
+  applyApprovalRecord,
+  applyApprovals,
   applyEvent,
+  decisionsForApproval,
   applyOptimisticUser,
+  applyUserText,
   dropOptimisticUser,
   emptyState,
   hydrate,

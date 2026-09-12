@@ -61,6 +61,8 @@ export interface Session {
   workspace_id: string;
   status: SessionStatus;
   active_run_id?: string;
+  /** 当前 active Run 已中断且 Worker 不在跑，界面才应显示「恢复」。 */
+  needs_recover?: boolean;
   last_event_seq: number;
   compaction_seq: number;
   summary?: string;
@@ -132,6 +134,7 @@ export interface RunCreatedPayload {
   trigger_message_id: string;
   mode: AgentMode;
   status: RunStatus;
+  text?: string;
 }
 
 export interface RunStateChangedPayload {
@@ -209,8 +212,10 @@ export interface Run {
   session_id: string;
   status: RunStatus;
   cancel_requested?: boolean;
+  needs_recover?: boolean;
 }
 
+/** RecoverRun 能接着跑的状态；界面是否显示「恢复」还要看 needs_recover（Worker 已不在跑）。 */
 export const RECOVERABLE_RUN_STATUSES: readonly RunStatus[] = [
   "queued",
   "loading_context",
@@ -247,6 +252,7 @@ export type TimelineItem =
       runId: string;
       messageId: string;
       text: string;
+      queued?: boolean;
       seq: number;
     }
   | {

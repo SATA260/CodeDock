@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -95,7 +96,7 @@ func (a *API) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions := make([]pkgagent.Session, 0, len(rows))
 	for _, row := range rows {
-		sessions = append(sessions, mapSession(row))
+		sessions = append(sessions, a.attachNeedsRecover(r.Context(), mapSession(row)))
 	}
 	writeJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions, PageInfo: page.Info(total)})
 }
@@ -107,7 +108,7 @@ func (a *API) GetSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, SessionResponse{Session: session})
+	writeJSON(w, http.StatusOK, SessionResponse{Session: a.attachNeedsRecover(r.Context(), session)})
 }
 
 // UpdateSession 更新会话。
@@ -141,7 +142,7 @@ func (a *API) UpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, SessionResponse{Session: mapSession(row)})
+	writeJSON(w, http.StatusOK, SessionResponse{Session: a.attachNeedsRecover(r.Context(), mapSession(row))})
 }
 
 // ArchiveSession 归档会话。
@@ -177,4 +178,22 @@ func (a *API) loadSession(r *http.Request) (pkgagent.Session, error) {
 		return pkgagent.Session{}, wrapHandlerDB(err)
 	}
 	return mapSession(row), nil
+}
+
+// attachNeedsRecover 按 Worker 是否仍在执行，给 Session 填 needs_recover。
+func (a *API) attachNeedsRecover(ctx context.Context, session pkgagent.Session) pkgagent.Session {
+	if session.ActiveRunID == nil || *session.ActiveRunID == "" {
+		return session
+	}
+	session.NeedsRecover = a.runNeedsRecover(ctx, *session.ActiveRunID)
+	return session
+}
+
+// runNeedsRecover 查询 Runtime：该 Run 是否已中断且需要用户恢复。
+func (a *API) runNeedsRecover(ctx context.Context, runID string) bool {
+	if a == nil || a.runtime == nil || runID == "" {
+		return false
+	}
+	ok, err := a.runtime.NeedsRecover(ctx, runID)
+	return err == nil && ok
 }
