@@ -2,12 +2,12 @@
 
 修改 CodeDock 代码前，先阅读 [`docs/architecture.md`](docs/architecture.md)。该文档是当前目录归属和模块边界的依据。
 
-Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping` 与记忆工具 `memory_read` / `memory_write` / `memory_search`，不实现文件 / Shell / Git **工具**。Git 用户操作走 HTTP + `pkg/git`，不经过 Agent Tool。前端 Git 在 `packages/core/git`、`packages/views/git` 与 `apps/web` 的 `/git`，不扩 `AgentClient`。
+Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping`、记忆工具、编码八工具与 `plan_*`。Git 用户操作走 HTTP + `pkg/git`，不经过 Agent Tool。仓库根是当前会话冻结的工作目录（请求带 `session_id`）；未带会话才回落 `GIT_REPO` / cwd。前端 Git 在 `packages/core/git`、`packages/views/git` 与 `apps/web` 的 `/git`，不扩 `AgentClient`。
 
 ## 目录放置规则
 
 - 服务启动、配置读取、Router 和依赖装配放在 `server/cmd/server`。
-- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，用户侧记忆查看/删除，以及 Git（直接调 `pkg/git`）。
+- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，用户侧记忆查看/删除，以及 Git（直接调 `pkg/git`）。创建 Session 时在本包冻结 `workspace_id`。不 import `internal/agent/tools`。新对话选目录由 web 弹出目录浏览框（`apps/web` 列本机目录），不走 Agent Tool。
 - Agent 运行时编排和 sqlc 持久化放在 `server/internal/agent`。
 - Markdown 记忆（热层目录+专题）与 context message 索引（冷层按工作区 FTS）放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`，不定义 Tool。
 - 具体工具定义放在 `server/internal/agent/tools`。工具名、入参/出参、schema、权限和编排都在本包；Execute 若要调外部能力，只通过 `Ports` 里的接口。Runtime `New` 时由 `cmd/server` 注入 `Ports` 的具体实现，再 `Register`。每个工具只定义入参/出参结构体，执行用 `encoding/json`，schema 从类型推断。`tools` 可 import `memory`，不 import 父包 `internal/agent`。
@@ -29,7 +29,7 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 模型由 `pkg/agent` 在 `Stream` / `CompactIfNeeded` 内按 `ModelConfig` 创建：`provider=fake` 走脚本化假模型（测试用），`provider=openai` 走 OpenAI 兼容 HTTP。不由 Runtime 注入模型实例。
 - Handler 直接使用 `*sqlite.Queries` 做 CRUD、SSE 回放、Run 的 Start / Continue / Cancel 和审批裁决；领取后的 Loop 才进入 `internal/agent`。
 - `internal/agent` 负责把 pkg 的计算结果持久化为 Run、Turn、消息、用量和事件。`AgentEvent` 必须先同事务写入并递增 `sessions.last_event_seq`，提交后再 `events.Bus.Publish`。
-- 示例 Tool 为 `ping`，另注册记忆工具；定义都在 `internal/agent/tools`。外部模块只实现 `Ports` 上的接口，由 `cmd/server` 在初始化时注入。Agent 绑定 `Profile.Tools.Names`；运行模式提供 `read` / `write` / `memory`，须覆盖工具全部能力才可调用。记忆工具声明 `memory`。审批由工具声明，模式决定是否暂停。一次模型回复的待批 Tool 合成一条审批，一次提交审完再流转；拒绝或单个工具失败不打死 Run。业务 Tool（文件 / Shell / Git）本阶段不实现。
+- 工具定义都在 `internal/agent/tools`（`ping`、记忆、编码八工具、`plan_*`）。外部模块只实现 `Ports` 上的接口，由 `cmd/server` 在初始化时注入。三个内置 Agent（ask / plan / agent）各自一份 `Profile`：底座 system 与发给模型的工具表共用全量注册表，`mode` 冻进 Run 的是可执行 `Names` 与一条 developer 模式规则（发给网关时紧跟底座 system）。工作区在创建 Session 时冻结到 `workspace_id`（用户指定的已存在目录；未指定则 `GIT_REPO` / cwd。指定了但不存在则创建失败）；本会话权限只覆盖该目录，目录外的文件操作必须审批（Agent 表和 yolo 都不能直接放行）。审批是流水线：工具默认+参数校验 → 本 Agent `Names`（未绑定 deny，yolo 不能抬）→ Agent `Effects` 表 → `approval`（manual / auto / yolo）；每层只审上一层的 `ask`，任一层 `deny` 则不可调用。`auto` 开单后由独立复审模型填单，失败则升级给人。一次模型回复的待批 Tool 合成一条审批；拒绝或单个工具失败不打死 Run。Git 用户操作仍走 HTTP + `pkg/git`，不经过 Agent Tool。
 - `internal/agent/memory` 负责 TextMemory 的 Get / Upsert / Delete / List、`SearchMessages` 和 `IndexMessage`；用户侧只看/删目录与专题。不负责 Prompt / Context Packet / 对话压缩，不自动建专题，不定义 Tool。Loop 在新 Session / 对话压缩后装冻结目录；写 message 时 `IndexMessage`。超限目录由 Runtime 后台 `CompactIndex` 改短盖写，不改当前 Session 冻结前缀。
 - 不要使用 Store 接口包装 sqlc。
 - Agent 契约不得依赖 React、UI 包或路由框架。
