@@ -26,7 +26,7 @@ pnpm dev
 pnpm dev:api
 ```
 
-从 `server/` 直接 `go run` 时，未设 `GIT_REPO` 会用进程 cwd（`server/` 不是仓根）。服务会从当前目录向上查找 `.env`。
+从 `server/` 直接 `go run` 时，未设 `GIT_REPO` 会用进程 cwd（`server/` 不是仓根）。未设 `DB_DSN` 时 SQLite 写仓根 `data/`。服务会从当前目录向上查找 `.env`。
 
 Web（默认 `http://localhost:3000`）：
 

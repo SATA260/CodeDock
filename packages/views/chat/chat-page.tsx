@@ -10,8 +10,16 @@ import { ConversationTimeline } from "./conversation-timeline.tsx";
 import { PendingDock } from "./pending-dock.tsx";
 import { useSessionList } from "./hooks/use-session-list.ts";
 import { useSessionTimeline } from "./hooks/use-session-timeline.ts";
+import { shortWorkspace } from "./lib/format.ts";
+import {
+  clearLastWorkspace,
+  createSessionError,
+  readLastWorkspace,
+  writeLastWorkspace,
+} from "./lib/workspace.ts";
 import { PromptBar } from "./prompt-bar.tsx";
 import { SessionSidebar } from "./session-sidebar.tsx";
+import { WorkspacePicker } from "./workspace-picker.tsx";
 
 export type ChatPageProps = {
   sessionId?: string;
@@ -28,11 +36,22 @@ export function ChatPage({
   brandSrc,
   headerActions,
 }: ChatPageProps) {
-  const { client } = useAgent();
+  const { client, listDirectories } = useAgent();
   const list = useSessionList();
   const timeline = useSessionTimeline(sessionId);
   const [starting, setStarting] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
+  const [workspaceDraft, setWorkspaceDraft] = useState(readLastWorkspace);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const frozenWorkspace =
+    list.sessions.find((session) => session.id === sessionId)?.workspace_id ?? "";
+  const workspaceTitle = sessionId ? frozenWorkspace : workspaceDraft.trim() || "默认仓库目录";
+  const workspaceLabel = sessionId
+    ? frozenWorkspace
+      ? shortWorkspace(frozenWorkspace)
+      : ""
+    : shortWorkspace(workspaceTitle);
 
   const pendingApprovals = timeline.state.items.filter(
     (item): item is Extract<TimelineItem, { kind: "approval" }> =>
@@ -48,12 +67,14 @@ export function ChatPage({
     }
     setStarting(true);
     try {
-      const session = await list.createSession();
+      const session = await list.createSession(workspaceDraft);
+      writeLastWorkspace(session.workspace_id);
+      setWorkspaceDraft(session.workspace_id);
       await client.startRun(session.id, { content: text, mode });
       await list.refresh();
       onOpenSession(session.id);
     } catch (err) {
-      setComposerError(err instanceof Error ? err.message : "发送失败");
+      setComposerError(createSessionError(err, "发送失败"));
       await list.refresh();
     } finally {
       setStarting(false);
@@ -86,6 +107,11 @@ export function ChatPage({
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm leading-5 text-muted-foreground">
           <span>{sessionId ? "对话" : "新对话"}</span>
+          {workspaceLabel ? (
+            <span className="min-w-0 truncate font-mono text-[11px]" title={workspaceTitle}>
+              {workspaceLabel}
+            </span>
+          ) : null}
           {timeline.canRecover ? (
             <Button
               size="sm"
@@ -124,11 +150,39 @@ export function ChatPage({
           <PromptBar
             running={timeline.running}
             sending={timeline.sending || starting}
+            workspace={sessionId ? undefined : workspaceDraft}
+            onPickWorkspace={
+              sessionId || !listDirectories
+                ? undefined
+                : async () => {
+                    setPickerOpen(true);
+                  }
+            }
+            onClearWorkspace={
+              sessionId
+                ? undefined
+                : () => {
+                    clearLastWorkspace();
+                    setWorkspaceDraft("");
+                  }
+            }
             onSend={onSend}
             onCancel={timeline.cancel}
           />
         </div>
       </main>
+      {pickerOpen && listDirectories ? (
+        <WorkspacePicker
+          initialPath={workspaceDraft || undefined}
+          listDirectories={listDirectories}
+          onCancel={() => setPickerOpen(false)}
+          onSelect={(path) => {
+            writeLastWorkspace(path);
+            setWorkspaceDraft(path);
+            setPickerOpen(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

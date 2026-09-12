@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -37,5 +39,20 @@ func TestOpenSQLite(t *testing.T) {
 	}
 	if client.DB() == nil {
 		t.Fatal("DB() is nil")
+	}
+}
+
+func TestOpenSQLiteCreatesParentDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime", "data", "app.db")
+	client, err := Open(context.Background(), Config{
+		Engine: EngineSQLite,
+		DSN:    "file:" + path,
+	})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("db file: %v", err)
 	}
 }

@@ -1,5 +1,6 @@
 export { cn } from "./lib/cn.ts";
 export { formatJSON } from "./lib/json.ts";
+export { isImeConfirm, useImeGuard } from "./lib/ime.ts";
 export { Button, type ButtonProps } from "./components/ui/button.tsx";
 export {
   Collapsible,

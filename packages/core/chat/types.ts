@@ -204,6 +204,7 @@ export interface CreateSessionRequest {
   tenant_id?: string;
   user_id: string;
   agent_id?: string;
+  /** 工作目录。显式路径必须已存在，服务端冻结为绝对路径；省略则 GIT_REPO / cwd。 */
   workspace_id?: string;
 }
 

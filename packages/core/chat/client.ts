@@ -43,7 +43,7 @@ export class AgentClient {
         tenant_id: req.tenant_id ?? "default",
         user_id: req.user_id,
         agent_id: req.agent_id ?? "default",
-        workspace_id: req.workspace_id ?? "default",
+        workspace_id: req.workspace_id?.trim() || undefined,
       },
     });
     return body.session;

@@ -1,6 +1,9 @@
 .env
 .env.local
+/data/
 *.db
+*.db-shm
+*.db-wal
 tmp/
 .DS_Store
 node_modules

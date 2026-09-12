@@ -3,11 +3,16 @@
 import { ChatPage } from "@codedock/views/chat";
 import { usePathname, useRouter } from "next/navigation";
 
+import { rememberSession } from "@/lib/session";
+
 export function ChatHost() {
   const pathname = usePathname();
   const router = useRouter();
   const match = pathname.match(/^\/s\/([^/]+)/);
   const sessionId = match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  if (sessionId) {
+    rememberSession(sessionId);
+  }
 
   return (
     <ChatPage
