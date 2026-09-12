@@ -99,22 +99,22 @@ type WriteInput struct {
 
 type GrepInput struct {
 	Pattern    string   `json:"pattern"`
-	Path       *string  `json:"path,omitempty"`       // 搜索起点；空则工作区根
+	Path       *string  `json:"path,omitempty"` // 搜索起点；空则工作区根
 	Glob       *string  `json:"glob,omitempty"`
 	IgnoreCase *bool    `json:"ignoreCase,omitempty"`
-	Literal    *bool    `json:"literal,omitempty"`    // 按字面量而不是正则
-	Context    *float64 `json:"context,omitempty"`    // 匹配行上下各取几行
+	Literal    *bool    `json:"literal,omitempty"` // 按字面量而不是正则
+	Context    *float64 `json:"context,omitempty"` // 匹配行上下各取几行
 	Limit      *float64 `json:"limit,omitempty"`
 }
 
 type FindInput struct {
 	Pattern string   `json:"pattern"`
-	Path    *string  `json:"path,omitempty"`  // 搜索起点；空则工作区根
+	Path    *string  `json:"path,omitempty"` // 搜索起点；空则工作区根
 	Limit   *float64 `json:"limit,omitempty"`
 }
 
 type LSInput struct {
-	Path  *string  `json:"path,omitempty"`  // 要列出的目录；空则工作区根
+	Path  *string  `json:"path,omitempty"` // 要列出的目录；空则工作区根
 	Limit *float64 `json:"limit,omitempty"`
 }
 
