@@ -19,6 +19,12 @@ INSERT INTO messages (
 )
 RETURNING *;
 
+-- name: UpdateMessageContent :one
+UPDATE messages
+SET content = ?
+WHERE id = ?
+RETURNING *;
+
 -- name: DeleteMessage :exec
 DELETE FROM messages
 WHERE id = ?;

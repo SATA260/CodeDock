@@ -11,6 +11,7 @@ type RunCreatedPayload struct {
 	TriggerMessageID string            `json:"trigger_message_id"`
 	Mode             AgentMode         `json:"mode"`
 	Status           RunStatus         `json:"status"`
+	Text             string            `json:"text,omitempty"` // 用户触发正文，供前端展示排队消息
 	Config           RunConfigSnapshot `json:"config"`
 }
 

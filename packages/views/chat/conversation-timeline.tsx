@@ -2,6 +2,7 @@
 
 import type { SessionState, ThinkingPhase, TimelineItem } from "@codedock/core/chat";
 import {
+  Button,
   Conversation,
   ConversationContent,
   ConversationEmptyState,
@@ -17,6 +18,7 @@ import {
   ToolInput,
   ToolOutput,
 } from "@codedock/ui";
+import { useEffect, useState } from "react";
 
 const thinkingCopy: Record<ThinkingPhase, string> = {
   queued: "排队中",
@@ -28,10 +30,12 @@ export function ConversationTimeline({
   state,
   loading = false,
   scrollKey,
+  onEditQueued,
 }: {
   state: SessionState;
   loading?: boolean;
   scrollKey?: string;
+  onEditQueued?: (messageId: string, text: string) => Promise<void>;
 }) {
   const items = state.items.filter(
     (item) =>
@@ -57,23 +61,23 @@ export function ConversationTimeline({
     <Conversation>
       <ConversationContent scrollKey={scrollKey}>
         {items.map((item) => (
-          <TimelineRow key={item.id} item={item} />
+          <TimelineRow key={item.id} item={item} onEditQueued={onEditQueued} />
         ))}
       </ConversationContent>
     </Conversation>
   );
 }
 
-function TimelineRow({ item }: { item: TimelineItem }) {
+function TimelineRow({
+  item,
+  onEditQueued,
+}: {
+  item: TimelineItem;
+  onEditQueued?: (messageId: string, text: string) => Promise<void>;
+}) {
   switch (item.kind) {
     case "user":
-      return (
-        <Message from="user">
-          <MessageContent>
-            <p className="whitespace-pre-wrap break-words">{item.text}</p>
-          </MessageContent>
-        </Message>
-      );
+      return <UserRow item={item} onEditQueued={onEditQueued} />;
     case "thinking":
       return (
         <Reasoning isStreaming>
@@ -127,4 +131,106 @@ function TimelineRow({ item }: { item: TimelineItem }) {
     default:
       return null;
   }
+}
+
+function UserRow({
+  item,
+  onEditQueued,
+}: {
+  item: Extract<TimelineItem, { kind: "user" }>;
+  onEditQueued?: (messageId: string, text: string) => Promise<void>;
+}) {
+  const persisted = !item.messageId.startsWith("pending:");
+  const canEdit = Boolean(item.queued && onEditQueued && persisted);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.text);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(item.text);
+    }
+  }, [item.text, editing]);
+
+  useEffect(() => {
+    if (!item.queued && editing) {
+      setEditing(false);
+    }
+  }, [item.queued, editing]);
+
+  const save = async () => {
+    const next = draft.trim();
+    if (!next || !onEditQueued || next === item.text) {
+      setEditing(false);
+      setDraft(item.text);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onEditQueued(item.messageId, next);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Message from="user">
+      <MessageContent>
+        {item.queued ? (
+          <div className="mb-1.5 text-[11px] text-muted-foreground">排队，当前轮结束后发送</div>
+        ) : null}
+        {editing ? (
+          <div className="space-y-2">
+            <textarea
+              value={draft}
+              disabled={saving}
+              rows={3}
+              className="w-full resize-none rounded-md border border-border bg-background px-2.5 py-2 text-sm leading-6 text-foreground outline-none focus:border-ring"
+              onChange={(event) => setDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void save();
+                }
+                if (event.key === "Escape") {
+                  setEditing(false);
+                  setDraft(item.text);
+                }
+              }}
+            />
+            <div className="flex justify-end gap-1.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={saving}
+                onClick={() => {
+                  setEditing(false);
+                  setDraft(item.text);
+                }}
+              >
+                取消
+              </Button>
+              <Button size="sm" disabled={saving || !draft.trim()} onClick={() => void save()}>
+                保存
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <p className="whitespace-pre-wrap break-words">{item.text}</p>
+            {canEdit ? (
+              <button
+                type="button"
+                className="mt-1.5 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                onClick={() => setEditing(true)}
+              >
+                改内容
+              </button>
+            ) : null}
+          </div>
+        )}
+      </MessageContent>
+    </Message>
+  );
 }
