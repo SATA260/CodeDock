@@ -27,8 +27,6 @@ type Runtime struct {
 	compactWG    sync.WaitGroup
 	claimMu      sync.Mutex
 	claimedSteps map[string]struct{}
-	dequeueMu    sync.Mutex
-	holdDequeue  map[string]int
 }
 
 // New 创建 Runtime 及其 Worker。工具定义在 tools 包注册；ports 只注入工具 Execute 所需的外部实现。
@@ -47,7 +45,6 @@ func New(client db.Client, queries *sqlite.Queries, bus *events.Bus, tools tool.
 		log:          log,
 		model:        pkgagent.ModelConfig{Provider: "fake", Model: "fake"},
 		claimedSteps: map[string]struct{}{},
-		holdDequeue:  map[string]int{},
 	}
 	runtime.engine = pkgagent.NewEngine(&pkgagent.Brain{}, runtime, tools)
 	agenttools.Register(tools, queries, runtime.EnqueueIndexCompact, ports)

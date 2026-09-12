@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	cderr "codedock/internal/errors"
@@ -333,8 +332,8 @@ func (r *Runtime) AppendFact(ctx context.Context, runID string, fact pkgagent.Fa
 	return ev, nil
 }
 
-// CommitStep 校验状态与步骤序号，持久化 Run / Turn / Message / checkpoint，并投递下一步或出队。
-// 逻辑：终态或旧步骤直接返回 → 事务写 Turn/消息/checkpoint/Run/事件 → 提交后发布、索引、标记 job → Enqueue Next 或 DequeueNext。
+// CommitStep 校验状态与步骤序号，持久化 Run / Turn / Message / checkpoint，并投递下一步。
+// 逻辑：终态或旧步骤直接返回 → 事务写 Turn/消息/checkpoint/Run/事件 → 提交后发布、索引、标记 job → Enqueue Next。
 func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.StepResult) error {
 	if r == nil || r.db == nil {
 		return cderr.Invalid("runtime is not initialized")
@@ -576,9 +575,6 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 			return err
 		}
 	}
-	if terminal {
-		return r.DequeueNext(ctx, sessionID, runID)
-	}
 	return nil
 }
 
@@ -651,9 +647,6 @@ func (r *Runtime) RequestCancel(ctx context.Context, runID string) error {
 	r.cancelOpenStepJobs(ctx, runID)
 	if r.worker != nil {
 		r.worker.Cancel(runID)
-	}
-	if immediate {
-		return r.DequeueNext(ctx, run.SessionID, runID)
 	}
 	return nil
 }
@@ -762,71 +755,6 @@ func (r *Runtime) RecoverActive(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// HoldDequeue 暂停该会话自动领取下一条 queued Run。返回的释放函数可重复调用。
-// interrupt 取消当前 Run 时使用，避免 DequeueNext 抢先领走排队 Run。
-func (r *Runtime) HoldDequeue(sessionID string) func() {
-	if r == nil || sessionID == "" {
-		return func() {}
-	}
-	r.dequeueMu.Lock()
-	if r.holdDequeue == nil {
-		r.holdDequeue = map[string]int{}
-	}
-	r.holdDequeue[sessionID]++
-	r.dequeueMu.Unlock()
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			r.dequeueMu.Lock()
-			defer r.dequeueMu.Unlock()
-			n := r.holdDequeue[sessionID] - 1
-			if n <= 0 {
-				delete(r.holdDequeue, sessionID)
-				return
-			}
-			r.holdDequeue[sessionID] = n
-		})
-	}
-}
-
-// dequeueHeld 判断该会话是否被 HoldDequeue 暂停自动出队。
-func (r *Runtime) dequeueHeld(sessionID string) bool {
-	if r == nil {
-		return false
-	}
-	r.dequeueMu.Lock()
-	defer r.dequeueMu.Unlock()
-	return r.holdDequeue[sessionID] > 0
-}
-
-// DequeueNext 当前 Run 结束后，领取该会话下一条 queued Run 并投递 user_input。
-func (r *Runtime) DequeueNext(ctx context.Context, sessionID, finishedRunID string) error {
-	_ = finishedRunID
-	if r == nil || r.queries == nil || sessionID == "" {
-		return nil
-	}
-	if r.dequeueHeld(sessionID) {
-		return nil
-	}
-	queued, err := r.q(ctx).ListQueuedRuns(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	if len(queued) == 0 {
-		return nil
-	}
-	next := queued[0]
-	claimed, err := r.ClaimSession(ctx, sessionID, next.ID)
-	if err != nil || !claimed {
-		return err
-	}
-	return r.Enqueue(ctx, pkgagent.StepJob{
-		RunID:     next.ID,
-		StepIndex: 1,
-		Phase:     pkgagent.PhaseUserInput,
-	})
 }
 
 // insertEventForRun 按 Run 查出 Session，再写入一条 AgentEvent。

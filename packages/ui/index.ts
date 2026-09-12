@@ -22,6 +22,9 @@ export { Reasoning, ReasoningContent, ReasoningTrigger } from "./components/reas
 export {
   Tool,
   ToolContent,
+  ToolGroup,
+  ToolGroupContent,
+  ToolGroupHeader,
   ToolHeader,
   ToolInput,
   ToolOutput,

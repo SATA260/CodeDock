@@ -99,14 +99,6 @@ export class AgentClient {
     return messages;
   }
 
-  async updateMessage(sessionId: string, messageId: string, content: string): Promise<Message> {
-    const body = await this.request<{ message: Message }>(
-      `/sessions/${sessionId}/messages/${messageId}`,
-      { method: "PATCH", json: { content } },
-    );
-    return body.message;
-  }
-
   async listEvents(sessionId: string, after = 0, signal?: AbortSignal): Promise<AgentEvent[]> {
     const query = new URLSearchParams({ after: String(after) });
     const body = await this.request<{ events: AgentEvent[] }>(
@@ -121,7 +113,6 @@ export class AgentClient {
       method: "POST",
       json: {
         content: req.content,
-        input_mode: req.input_mode ?? "queue",
         mode: req.mode ?? ("ask_for_approval" satisfies AgentMode),
       },
     });

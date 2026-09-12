@@ -6,16 +6,16 @@ import {
   applyEvent,
   decisionsForApproval,
   applyOptimisticUser,
-  applyUserText,
-  decodeText,
   dropOptimisticUser,
   emptyState,
   hydrate,
   isTerminalRun,
+  joinQueuedTexts,
   watchEvents,
   type AgentMode,
   type ApprovalDecision,
   type SessionState,
+  type TimelineItem,
 } from "@codedock/core/chat";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -23,6 +23,13 @@ import { useAgent } from "../../provider.tsx";
 
 const CACHE_LIMIT = 30;
 const timelineCache = new Map<string, SessionState>();
+const pendingCache = new Map<string, PendingFollowup[]>();
+
+export type PendingFollowup = {
+  id: string;
+  text: string;
+  mode: AgentMode;
+};
 
 function snapshot(state: SessionState): SessionState {
   return {
@@ -52,6 +59,18 @@ function cacheSet(sessionId: string, state: SessionState) {
   }
 }
 
+function pendingGet(sessionId: string): PendingFollowup[] {
+  return pendingCache.get(sessionId)?.map((item) => ({ ...item })) ?? [];
+}
+
+function pendingSet(sessionId: string, items: PendingFollowup[]) {
+  pendingCache.set(sessionId, items.map((item) => ({ ...item })));
+}
+
+function isRunning(state: SessionState): boolean {
+  return Boolean(state.runStatus && !isTerminalRun(state.runStatus));
+}
+
 export function useSessionTimeline(sessionId: string | undefined) {
   const { client, userId } = useAgent();
   const [state, setState] = useState<SessionState>(() =>
@@ -66,10 +85,36 @@ export function useSessionTimeline(sessionId: string | undefined) {
     return !timelineCache.has(sessionId);
   });
   const [recoverableRunId, setRecoverableRunId] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingFollowup[]>(() =>
+    sessionId ? pendingGet(sessionId) : [],
+  );
+  const [editingId, setEditingId] = useState<string | null>(null);
   const stateRef = useRef(state);
   const sessionRef = useRef(sessionId);
+  const pendingRef = useRef(pending);
+  const editingRef = useRef(editingId);
+  const flushingRef = useRef(false);
   stateRef.current = state;
   sessionRef.current = sessionId;
+  pendingRef.current = pending;
+  editingRef.current = editingId;
+
+  const writePending = useCallback(
+    (items: PendingFollowup[]) => {
+      if (sessionId) {
+        pendingSet(sessionId, items);
+      }
+      pendingRef.current = items;
+      setPending(items);
+    },
+    [sessionId],
+  );
+
+  useEffect(() => {
+    writePending(sessionId ? pendingGet(sessionId) : []);
+    setEditingId(null);
+    editingRef.current = null;
+  }, [sessionId, writePending]);
 
   useEffect(() => {
     setRecoverableRunId(null);
@@ -182,7 +227,7 @@ export function useSessionTimeline(sessionId: string | undefined) {
     };
   }, [client, sessionId]);
 
-  const send = useCallback(
+  const startTurn = useCallback(
     async (content: string, mode: AgentMode) => {
       if (!sessionId || !content.trim()) {
         return;
@@ -211,11 +256,66 @@ export function useSessionTimeline(sessionId: string | undefined) {
           return next;
         });
         setError(err instanceof Error ? err.message : "发送失败");
+        throw err;
       } finally {
         setSending(false);
       }
     },
     [client, sessionId],
+  );
+
+  const send = useCallback(
+    async (content: string, mode: AgentMode) => {
+      if (!sessionId || !content.trim()) {
+        return;
+      }
+      if (isRunning(stateRef.current)) {
+        writePending([...pendingRef.current, { id: crypto.randomUUID(), text: content, mode }]);
+        return;
+      }
+      try {
+        await startTurn(content, mode);
+      } catch {
+        // 错误已写入 state
+      }
+    },
+    [sessionId, startTurn, writePending],
+  );
+
+  const beginEditPending = useCallback((id: string) => {
+    setEditingId(id);
+    editingRef.current = id;
+  }, []);
+
+  const cancelEditPending = useCallback(() => {
+    setEditingId(null);
+    editingRef.current = null;
+  }, []);
+
+  const savePending = useCallback(
+    (id: string, text: string) => {
+      const next = text.trim();
+      if (!next) {
+        return;
+      }
+      writePending(
+        pendingRef.current.map((item) => (item.id === id ? { ...item, text: next } : item)),
+      );
+      setEditingId(null);
+      editingRef.current = null;
+    },
+    [writePending],
+  );
+
+  const deletePending = useCallback(
+    (id: string) => {
+      writePending(pendingRef.current.filter((item) => item.id !== id));
+      if (editingRef.current === id) {
+        setEditingId(null);
+        editingRef.current = null;
+      }
+    },
+    [writePending],
   );
 
   const cancel = useCallback(async () => {
@@ -263,29 +363,92 @@ export function useSessionTimeline(sessionId: string | undefined) {
     [client, sessionId, userId],
   );
 
-  const editQueued = useCallback(
-    async (messageId: string, content: string) => {
-      if (!sessionId) {
-        return;
+  const denyPendingApprovals = useCallback(async () => {
+    if (!sessionId) {
+      return;
+    }
+    const pendingApprovals = stateRef.current.items.filter(
+      (item): item is Extract<TimelineItem, { kind: "approval" }> =>
+        item.kind === "approval" && item.status === "pending",
+    );
+    for (const item of pendingApprovals) {
+      const decisions: ApprovalDecision[] = item.toolCalls
+        .filter((call) => call.id)
+        .map((call) => ({
+          tool_call_id: call.id,
+          status: "denied",
+          reason: "发送排队消息，已中断审批",
+        }));
+      if (decisions.length === 0) {
+        continue;
       }
       try {
-        const message = await client.updateMessage(sessionId, messageId, content);
-        setState((current) => {
-          if (sessionRef.current !== sessionId) {
-            return current;
-          }
-          const next = applyUserText(current, messageId, decodeText(message.content), true);
-          cacheSet(sessionId, next);
-          return next;
-        });
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "无法改排队消息");
-        throw err;
+        await decide(item.approvalId, decisions);
+      } catch {
+        // 单条审批失败不挡住后续拒绝与发送
       }
-    },
-    [client, sessionId],
-  );
+    }
+  }, [decide, sessionId]);
+
+  const flushPending = useCallback(async () => {
+    if (!sessionId || flushingRef.current || editingRef.current) {
+      return;
+    }
+    const items = pendingRef.current;
+    const joined = joinQueuedTexts(items.map((item) => item.text));
+    if (!joined) {
+      return;
+    }
+    const mode = items[items.length - 1]?.mode ?? "ask_for_approval";
+    flushingRef.current = true;
+    writePending([]);
+    try {
+      await denyPendingApprovals();
+      await startTurn(joined, mode);
+    } catch {
+      writePending(items);
+    } finally {
+      flushingRef.current = false;
+    }
+  }, [denyPendingApprovals, sessionId, startTurn, writePending]);
+
+  useEffect(() => {
+    if (!sessionId || !state.runStatus || !isTerminalRun(state.runStatus)) {
+      return;
+    }
+    if (editingId || pending.length === 0) {
+      return;
+    }
+    void flushPending();
+  }, [editingId, flushPending, pending.length, sessionId, state.runStatus]);
+
+  const sendNow = useCallback(async () => {
+    if (!sessionId || flushingRef.current || editingRef.current) {
+      return;
+    }
+    const items = pendingRef.current;
+    const joined = joinQueuedTexts(items.map((item) => item.text));
+    if (!joined) {
+      return;
+    }
+    const mode = items[items.length - 1]?.mode ?? "ask_for_approval";
+    flushingRef.current = true;
+    writePending([]);
+    try {
+      const runId = stateRef.current.activeRunId;
+      if (runId && isRunning(stateRef.current)) {
+        // 先取消，避免拒绝审批后 RecoverRun 把旧轮拉起来再 409
+        await client.cancelRun(runId);
+      }
+      await denyPendingApprovals();
+      await startTurn(joined, mode);
+    } catch (err) {
+      writePending(items);
+      setError(err instanceof Error ? err.message : "发送失败");
+    } finally {
+      flushingRef.current = false;
+    }
+  }, [client, denyPendingApprovals, sessionId, startTurn, writePending]);
 
   const recover = useCallback(async (runId?: string) => {
     const id = runId ?? recoverableRunId ?? stateRef.current.activeRunId;
@@ -303,7 +466,7 @@ export function useSessionTimeline(sessionId: string | undefined) {
     }
   }, [client, recoverableRunId]);
 
-  const running = Boolean(state.runStatus && !isTerminalRun(state.runStatus));
+  const running = isRunning(state);
   const canRecover = Boolean(
     recoverableRunId &&
       state.runStatus !== "waiting_approval" &&
@@ -312,5 +475,24 @@ export function useSessionTimeline(sessionId: string | undefined) {
       (!state.activeRunId || state.activeRunId === recoverableRunId),
   );
 
-  return { state, error, sending, running, loading, canRecover, recoverableRunId, send, cancel, decide, editQueued, recover };
+  return {
+    state,
+    error,
+    sending,
+    running,
+    loading,
+    canRecover,
+    recoverableRunId,
+    pending,
+    editingId,
+    send,
+    sendNow,
+    beginEditPending,
+    cancelEditPending,
+    savePending,
+    deletePending,
+    cancel,
+    decide,
+    recover,
+  };
 }

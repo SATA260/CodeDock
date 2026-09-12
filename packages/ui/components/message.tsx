@@ -28,7 +28,7 @@ export function Message({
       <div
         className={cn(
           "w-full",
-          from === "user" && "max-w-lg rounded-2xl bg-muted px-3.5 py-2.5 text-foreground",
+          from === "user" && "max-w-lg rounded-2xl bg-muted px-3 py-2 text-foreground",
         )}
       >
         {children}
@@ -38,7 +38,7 @@ export function Message({
 }
 
 export function MessageContent({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("text-sm leading-7", className)} {...props} />;
+  return <div className={cn("text-sm leading-5", className)} {...props} />;
 }
 
 const plugins = { cjk, code, math, mermaid };
@@ -50,11 +50,13 @@ export const MessageResponse = memo(
     return (
       <Streamdown
         className={cn(
-          "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          "size-full space-y-1 leading-5 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          "[&_[data-streamdown^='heading']]:mt-2.5 [&_[data-streamdown^='heading']]:mb-1",
+          "[&_li]:py-0",
           "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
-          "[&_h1]:mt-3 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:font-semibold",
-          "[&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5",
-          "[&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3",
+          "[&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:font-semibold",
+          "[&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5",
+          "[&_pre]:my-1.5 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3",
           "[&_code]:font-mono [&_code]:text-[13px]",
           className,
         )}

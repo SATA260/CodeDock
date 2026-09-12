@@ -479,23 +479,13 @@ func TestLoadForceFinishPromptAndInfer(t *testing.T) {
 	}
 }
 
-// TestRuntimeHelperEdges 覆盖 HoldDequeue、publish、索引与目录压缩的边界路径。
+// TestRuntimeHelperEdges 覆盖 publish、索引与目录压缩的边界路径。
 func TestRuntimeHelperEdges(t *testing.T) {
 	empty := &Runtime{}
 	ok, _ := empty.TryClaimStep(context.Background(), "r", 1)
 	if !ok {
 		t.Fatal("empty claim should init map")
 	}
-	rel := empty.HoldDequeue("s")
-	rel2 := empty.HoldDequeue("s")
-	rel()
-	rel2()
-	if empty.dequeueHeld("s") {
-		t.Fatal("released hold")
-	}
-	(*Runtime)(nil).HoldDequeue("")
-	(*Runtime)(nil).HoldDequeue("s")
-	(*Runtime)(nil).dequeueHeld("s")
 	empty.publish(pkgagent.AgentEvent{EventID: "e1"})
 	empty.indexPersisted(context.Background(), "", pkgagent.Message{ID: "m"})
 	empty.indexPersisted(context.Background(), "ws", pkgagent.Message{ID: "m"})
@@ -580,7 +570,6 @@ func TestClosedDBErrorPaths(t *testing.T) {
 	_, _ = rt.CreateAgentState(ctx, sessionID, "after close", cfg.Mode, cfg)
 	_, _ = rt.AppendFact(ctx, runID, pkgagent.Fact{Type: pkgagent.EventAssistantDelta, Payload: []byte(`{}`)})
 	_ = rt.CommitStep(ctx, runID, pkgagent.StepResult{State: pkgagent.AgentState{Status: pkgagent.RunCompleted, StepIndex: 1}})
-	_ = rt.DequeueNext(ctx, sessionID, runID)
 	rt.indexPersisted(ctx, "default", pkgagent.Message{ID: util.NewID(), Content: pkgagent.EncodeText("hi")})
 	rt.compactIndex(ctx, memory.TextMemoryKey{Scope: memory.ScopeUser, ScopeID: "u1", Kind: memory.KindIndex, Name: memory.NameIndex})
 }

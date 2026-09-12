@@ -29,7 +29,7 @@ export function SessionSidebar({
 }) {
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-background">
-      <div className="flex items-center justify-between gap-2 px-3 py-3">
+      <div className="flex items-center justify-between gap-2 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           {brandSrc ? (
             <img src={brandSrc} alt="" className="size-6 shrink-0" />
@@ -53,7 +53,7 @@ export function SessionSidebar({
                 <li key={session.id}>
                   <div
                     className={cn(
-                      "flex w-full items-start gap-2 rounded-md px-2 py-2 transition-colors",
+                      "flex w-full items-start gap-2 rounded-md px-2 py-1.5 leading-5 transition-colors",
                       active
                         ? "bg-muted text-foreground"
                         : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",

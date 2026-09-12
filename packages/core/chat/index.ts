@@ -1,5 +1,6 @@
 export { AgentClient, AgentClientError, type AgentClientOptions } from "./client.ts";
 export { decodeText, firstLine, parseDelta } from "./content.ts";
+export { joinQueuedTexts } from "./queue.ts";
 export {
   applyApprovalRecord,
   applyApprovals,

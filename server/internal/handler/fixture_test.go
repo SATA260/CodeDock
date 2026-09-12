@@ -80,7 +80,6 @@ func testRouter(api *handler.API) http.Handler {
 	r.Post("/sessions/{session_id}/runs", api.StartRun)
 	r.Post("/sessions/{session_id}/messages", api.CreateMessage)
 	r.Get("/sessions/{session_id}/messages", api.ListMessages)
-	r.Patch("/sessions/{session_id}/messages/{message_id}", api.UpdateMessage)
 	r.Get("/sessions/{session_id}/event-log", api.ListEvents)
 	r.Get("/sessions/{session_id}/events", api.SubscribeEvents)
 	r.Get("/sessions/{session_id}/usage", api.GetSessionUsage)
