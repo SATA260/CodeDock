@@ -36,7 +36,7 @@ const emptyDiffs = (): { staged: DiffFile[]; worktree: DiffFile[] } => ({
 });
 
 export function useGitSite() {
-  const { client } = useGit();
+  const { client, sessionId } = useGit();
   const [state, setState] = useState<SiteState>(emptyState);
   const [branches, setBranches] = useState<BranchView>(emptyBranches);
   const [diffs, setDiffs] = useState(emptyDiffs);
@@ -48,6 +48,15 @@ export function useGitSite() {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
+    if (!sessionId) {
+      setState(emptyState());
+      setBranches(emptyBranches());
+      setDiffs(emptyDiffs());
+      setCommits([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     try {
       const nextState = await client.status();
       setState(nextState);
@@ -86,13 +95,17 @@ export function useGitSite() {
     } finally {
       setLoading(false);
     }
-  }, [client]);
+  }, [client, sessionId]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   useEffect(() => {
+    if (!sessionId) {
+      setPrompt(null);
+      return;
+    }
     let cancelled = false;
     void client
       .messagePrompt()
@@ -109,7 +122,7 @@ export function useGitSite() {
     return () => {
       cancelled = true;
     };
-  }, [client]);
+  }, [client, sessionId]);
 
   const run = useCallback(
     async (action: () => Promise<unknown>) => {
@@ -197,6 +210,7 @@ export function useGitSite() {
     diffs,
     commits,
     prompt,
+    sessionId,
     error,
     busy,
     generating,
