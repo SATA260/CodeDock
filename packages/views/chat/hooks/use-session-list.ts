@@ -13,8 +13,22 @@ export function useSessionList() {
 
   const refresh = useCallback(async () => {
     try {
-      const listed = await client.listSessions();
-      setSessions(listed.sessions.filter((session) => session.last_event_seq > 0));
+      const visible: Session[] = [];
+      let page = 1;
+      while (true) {
+        const listed = await client.listSessions(page, 50);
+        visible.push(
+          ...listed.sessions.filter(
+            (session) => session.status !== "archived" && session.last_event_seq > 0,
+          ),
+        );
+        const pageSize = listed.page.page_size || listed.sessions.length || 50;
+        if (listed.sessions.length === 0 || page * pageSize >= listed.page.total) {
+          break;
+        }
+        page += 1;
+      }
+      setSessions(visible);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "无法加载会话");
@@ -36,5 +50,29 @@ export function useSessionList() {
     }
   }, [client, refresh, userId]);
 
-  return { sessions, error, busy, refresh, createSession };
+  const removeSession = useCallback(
+    async (session: Session) => {
+      setBusy(true);
+      try {
+        if (session.active_run_id) {
+          try {
+            await client.cancelRun(session.active_run_id);
+          } catch {
+            // 已结束则继续归档
+          }
+        }
+        await client.archiveSession(session.id);
+        await refresh();
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "删除失败");
+        throw err;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [client, refresh],
+  );
+
+  return { sessions, error, busy, refresh, createSession, removeSession };
 }
