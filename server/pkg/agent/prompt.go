@@ -1,6 +1,11 @@
 package agent
 
-import "context"
+import (
+	"context"
+	"strings"
+
+	"codedock/pkg/agent/tool"
+)
 
 // Prompt 包含组装模型调用所需的已准备数据。
 type Prompt struct {
@@ -9,7 +14,35 @@ type Prompt struct {
 	Context ContextSnapshot
 }
 
-// Build 将上下文组装为模型调用。
+// ComposeSystemPrompt 把静态系统提示与当前可见工具各自维护的描述拼成一次调用用的提示词。
+func ComposeSystemPrompt(base string, tools []tool.Definition) string {
+	base = strings.TrimSpace(base)
+	var b strings.Builder
+	for _, def := range tools {
+		name := strings.TrimSpace(def.Name)
+		desc := strings.TrimSpace(def.Prompt)
+		if name == "" || desc == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("- ")
+		b.WriteString(name)
+		b.WriteString("：")
+		b.WriteString(desc)
+	}
+	extra := b.String()
+	if extra == "" {
+		return base
+	}
+	if base == "" {
+		return "工具：\n" + extra
+	}
+	return base + "\n\n工具：\n" + extra
+}
+
+// Build 将上下文组装为模型调用。工具描述由各工具自己维护，这里只做统一拼接。
 func Build(_ context.Context, req Prompt) (Chat, error) {
 	system := req.Context.SystemPrompt
 	if system == "" {
@@ -18,6 +51,7 @@ func Build(_ context.Context, req Prompt) (Chat, error) {
 	if system == "" {
 		system = DefaultSystemPrompt
 	}
+	system = ComposeSystemPrompt(system, req.Context.Tools)
 	var prefix []Message
 	for _, index := range req.Context.MemoryIndexes {
 		if index == "" {

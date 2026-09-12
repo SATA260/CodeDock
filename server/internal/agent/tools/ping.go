@@ -23,7 +23,7 @@ func Ping() tool.Tool {
 func (pingTool) Definition() tool.Definition {
 	return tool.Definition{
 		Name:             "ping",
-		Prompt:           "Health-check tool that returns ok. No arguments are required.",
+		Prompt:           "连通性检查，无参数，返回 ok。",
 		ParametersSchema: schemaOf[pingInput](),
 		OutputSchema:     schemaOf[pingOutput](),
 		Permission: tool.Permission{
