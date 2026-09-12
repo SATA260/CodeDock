@@ -129,19 +129,21 @@ func TestLoopInterrupt(t *testing.T) {
 		}),
 	})
 	f.waitRun(t, oldID, pkgagent.RunRunningLLM, pkgagent.RunLoadingContext, pkgagent.RunQueued)
+	if rec := f.do(t, http.MethodPost, "/runs/"+oldID+"/cancel", nil); rec.Code != http.StatusOK {
+		t.Fatalf("cancel %d %s", rec.Code, rec.Body.String())
+	}
+	f.waitRun(t, oldID, pkgagent.RunCancelled)
 	newID := f.start(t, sessionID, handler.StartRunRequest{
-		Content:   "take over",
-		InputMode: handler.InputInterrupt,
-		Mode:      pkgagent.ModeAutoApprove,
+		Content: "take over",
+		Mode:    pkgagent.ModeAutoApprove,
 		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 			Turns: []pkgagent.FakeTurn{{Text: "new"}},
 		}),
 	})
-	f.waitRun(t, oldID, pkgagent.RunCancelled)
 	f.waitRun(t, newID, pkgagent.RunCompleted)
 }
 
-func TestLoopInterruptWithQueued(t *testing.T) {
+func TestLoopStartWhileActiveConflicts(t *testing.T) {
 	f := newFixture(t)
 	sessionID := f.createSession(t)
 	first := f.start(t, sessionID, handler.StartRunRequest{
@@ -153,68 +155,13 @@ func TestLoopInterruptWithQueued(t *testing.T) {
 		}),
 	})
 	f.waitRun(t, first, pkgagent.RunRunningLLM, pkgagent.RunLoadingContext, pkgagent.RunQueued)
-	queued := f.start(t, sessionID, handler.StartRunRequest{
-		Content:   "wait your turn",
-		InputMode: handler.InputQueue,
-		Mode:      pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
-			Turns: []pkgagent.FakeTurn{{Text: "queued"}},
-		}),
-	})
-	interrupt := f.start(t, sessionID, handler.StartRunRequest{
-		Content:   "take over now",
-		InputMode: handler.InputInterrupt,
-		Mode:      pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
-			Turns: []pkgagent.FakeTurn{{Text: "interrupt"}},
-		}),
-	})
-	f.waitRun(t, first, pkgagent.RunCancelled)
-	f.waitRun(t, interrupt, pkgagent.RunCompleted)
-	rec := f.do(t, http.MethodGet, "/runs/"+queued, nil)
-	var queuedResp handler.RunResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &queuedResp); err != nil {
-		t.Fatal(err)
-	}
-	if queuedResp.Run.Status != pkgagent.RunQueued && !pkgagent.IsTerminal(queuedResp.Run.Status) {
-		t.Fatalf("queued run should stay queued until interrupt finishes, status=%s", queuedResp.Run.Status)
-	}
-	f.waitRun(t, queued, pkgagent.RunCompleted)
-}
-
-func TestLoopQueueThenDequeue(t *testing.T) {
-	f := newFixture(t)
-	sessionID := f.createSession(t)
-	first := f.start(t, sessionID, handler.StartRunRequest{
-		Content: "hang",
+	rec := f.do(t, http.MethodPost, "/sessions/"+sessionID+"/runs", handler.StartRunRequest{
+		Content: "should not start",
 		Mode:    pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
-			Hang:  true,
-			Turns: []pkgagent.FakeTurn{{Text: "first"}},
-		}),
 	})
-	f.waitRun(t, first, pkgagent.RunRunningLLM, pkgagent.RunLoadingContext, pkgagent.RunQueued)
-	second := f.start(t, sessionID, handler.StartRunRequest{
-		Content:   "next please",
-		InputMode: handler.InputQueue,
-		Mode:      pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
-			Turns: []pkgagent.FakeTurn{{Text: "second"}},
-		}),
-	})
-	rec := f.do(t, http.MethodGet, "/runs/"+second, nil)
-	var resp handler.RunResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d %s", rec.Code, rec.Body.String())
 	}
-	if resp.Run.Status != pkgagent.RunQueued {
-		t.Fatalf("queued run status=%s", resp.Run.Status)
-	}
-	if rec := f.do(t, http.MethodPost, "/runs/"+first+"/cancel", nil); rec.Code != http.StatusOK {
-		t.Fatalf("cancel first %d %s", rec.Code, rec.Body.String())
-	}
-	f.waitRun(t, first, pkgagent.RunCancelled)
-	f.waitRun(t, second, pkgagent.RunCompleted)
 }
 
 func startPingApproval(t *testing.T, f *fixture, sessionID string) string {

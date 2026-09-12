@@ -50,7 +50,7 @@ export function Reasoning({
       <Collapsible
         open={open}
         onOpenChange={setOpen}
-        className={cn("w-full text-sm text-muted-foreground", className)}
+        className={cn("w-full text-sm leading-5 text-muted-foreground", className)}
       >
         {children}
       </Collapsible>

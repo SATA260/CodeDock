@@ -30,7 +30,6 @@ func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 			r.Post("/{session_id}/runs", api.StartRun)
 			r.Post("/{session_id}/messages", api.CreateMessage)
 			r.Get("/{session_id}/messages", api.ListMessages)
-			r.Patch("/{session_id}/messages/{message_id}", api.UpdateMessage)
 			r.Delete("/{session_id}/messages/{message_id}", api.DeleteMessage)
 			r.Get("/{session_id}/event-log", api.ListEvents)
 			r.Get("/{session_id}/events", api.SubscribeEvents)

@@ -229,7 +229,6 @@ export function isRecoverableRun(status: string): boolean {
 
 export interface StartRunRequest {
   content: string;
-  input_mode?: "interrupt" | "queue";
   mode?: AgentMode;
 }
 

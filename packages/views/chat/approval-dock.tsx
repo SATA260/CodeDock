@@ -98,42 +98,42 @@ export function ApprovalDock({
   };
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-full z-40 flex justify-center px-4 pb-2">
+    <div className="flex justify-center px-4 pb-1.5">
       <div
-        className="pointer-events-auto w-full max-w-3xl rounded-2xl border border-white/10 bg-zinc-950/40 px-3 py-3 shadow-[0_12px_40px_-16px_rgba(0,0,0,0.45)] backdrop-blur-md"
+        className="w-full max-w-3xl rounded-xl border border-white/10 bg-zinc-950/40 px-2.5 py-1.5 shadow-[0_12px_40px_-16px_rgba(0,0,0,0.45)] backdrop-blur-md"
         role="dialog"
         aria-label="工具审批"
       >
         <div className="flex items-center justify-between gap-2">
-          <div className="text-xs font-medium text-muted-foreground">需要批准才能继续</div>
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <div className="text-[10px] leading-3.5 font-medium text-muted-foreground">需要批准才能继续</div>
+          <div className="flex items-center gap-0.5 text-[10px] leading-3.5 text-muted-foreground">
             <Button
               size="sm"
               variant="ghost"
-              className="size-7 px-0"
+              className="size-6 px-0"
               disabled={index <= 0}
               aria-label="上一条"
               onClick={() => go(index - 1)}
             >
-              <ChevronLeft className="size-4" />
+              <ChevronLeft className="size-3.5" />
             </Button>
-            <span className="min-w-10 text-center tabular-nums">
+            <span className="min-w-8 text-center tabular-nums">
               {index + 1} / {pages.length}
             </span>
             <Button
               size="sm"
               variant="ghost"
-              className="size-7 px-0"
+              className="size-6 px-0"
               disabled={index >= pages.length - 1}
               aria-label="下一条"
               onClick={() => go(index + 1)}
             >
-              <ChevronRight className="size-4" />
+              <ChevronRight className="size-3.5" />
             </Button>
           </div>
         </div>
         {pages.length > 1 ? (
-          <div className="mt-2 flex flex-wrap gap-1">
+          <div className="mt-1 flex flex-wrap gap-1">
             {pages.map((item, cursor) => {
               const status = choiceOf(item, choices);
               return (
@@ -141,7 +141,7 @@ export function ApprovalDock({
                   key={pageKey(item)}
                   type="button"
                   className={cn(
-                    "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                    "rounded-full border px-1.5 py-px text-[10px] leading-3.5 transition-colors",
                     cursor === index
                       ? "border-white/25 bg-white/10 text-foreground"
                       : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground",
@@ -155,21 +155,22 @@ export function ApprovalDock({
             })}
           </div>
         ) : null}
-        <div className="mt-2 rounded-xl border border-white/10 bg-zinc-950/25 px-3 py-2.5">
+        <div className="mt-1 rounded-lg border border-white/10 bg-zinc-950/25 px-2 py-1">
           <div className="flex items-center justify-between gap-2">
-            <div className="font-mono text-sm text-foreground">{page.call.name || "工具调用"}</div>
-            <div className={cn("text-[11px]", statusTone(currentChoice))}>{statusLabel(currentChoice)}</div>
+            <div className="font-mono text-[11px] leading-4 text-foreground">{page.call.name || "工具调用"}</div>
+            <div className={cn("text-[10px] leading-3.5", statusTone(currentChoice))}>{statusLabel(currentChoice)}</div>
           </div>
           {page.call.arguments != null ? (
-            <pre className="mt-1 max-h-28 overflow-auto font-mono text-xs leading-5 text-muted-foreground">
+            <pre className="mt-0.5 max-h-16 overflow-auto font-mono text-[11px] leading-4 text-muted-foreground">
               {formatJSON(page.call.arguments)}
             </pre>
           ) : null}
         </div>
-        <div className="mt-3 flex justify-end gap-2">
+        <div className="mt-1.5 flex justify-end gap-1.5">
           <Button
             size="sm"
             variant={currentChoice === "denied" ? "secondary" : "outline"}
+            className="h-6 px-2 text-[11px]"
             disabled={submitting}
             onClick={() => void decideCurrent("denied")}
           >
@@ -178,6 +179,7 @@ export function ApprovalDock({
           <Button
             size="sm"
             variant={currentChoice === "approved" ? "default" : "secondary"}
+            className="h-6 px-2 text-[11px]"
             disabled={submitting}
             onClick={() => void decideCurrent("approved")}
           >

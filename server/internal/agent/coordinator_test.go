@@ -184,9 +184,6 @@ func TestTryClaimStepAndRecover(t *testing.T) {
 	if err := rt.RecoverActive(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.DequeueNext(ctx, sessionID, ""); err != nil {
-		t.Fatal(err)
-	}
 
 	waitID, err := rt.CreateAgentState(ctx, sessionID, "wait", pkgagent.ModeAskForApproval, pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{Provider: "fake", Model: "fake"}))
 	if err != nil {
@@ -314,53 +311,6 @@ func TestCommitWaitingApprovalInsertsApproval(t *testing.T) {
 	}
 	if turn.FinishedAt.Valid {
 		t.Fatalf("waiting approval turn should not set finished_at: %s", turn.FinishedAt.String)
-	}
-}
-
-// TestHoldDequeueBlocksCancelDequeue 覆盖 HoldDequeue 阻止取消后立刻领取下一条 Run。
-func TestHoldDequeueBlocksCancelDequeue(t *testing.T) {
-	rt, q, ctx := testRuntime(t, false)
-	sessionID := insertSession(t, q, ctx)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
-	active, err := rt.CreateAgentState(ctx, sessionID, "active", cfg.Mode, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rt.ClaimSession(ctx, sessionID, active); err != nil {
-		t.Fatal(err)
-	}
-	queued, err := rt.CreateAgentState(ctx, sessionID, "queued", cfg.Mode, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	release := rt.HoldDequeue(sessionID)
-	if err := rt.RequestCancel(ctx, active); err != nil {
-		t.Fatal(err)
-	}
-	sess, err := q.GetSession(ctx, sessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sess.ActiveRunID.Valid {
-		t.Fatalf("active should be cleared while held, got %s", sess.ActiveRunID.String)
-	}
-	queuedRow, err := q.GetRun(ctx, queued)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if queuedRow.Status != string(pkgagent.RunQueued) {
-		t.Fatalf("queued status=%s", queuedRow.Status)
-	}
-	release()
-	if err := rt.DequeueNext(ctx, sessionID, active); err != nil {
-		t.Fatal(err)
-	}
-	sess, err = q.GetSession(ctx, sessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !sess.ActiveRunID.Valid || sess.ActiveRunID.String != queued {
-		t.Fatalf("after release dequeue active=%v", sess.ActiveRunID)
 	}
 }
 
@@ -495,9 +445,6 @@ func TestNilRuntimeGuards(t *testing.T) {
 	}
 	rt.releaseStep("r", 1)
 	if err := rt.RecoverActive(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := rt.DequeueNext(context.Background(), "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.AppendFact(context.Background(), "r", pkgagent.Fact{}); err == nil {

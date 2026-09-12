@@ -47,7 +47,7 @@ export function PromptInputTextarea({
       name="message"
       rows={3}
       className={cn(
-        "field-sizing-content w-full resize-none bg-transparent px-3 pt-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/50",
+        "field-sizing-content w-full resize-none bg-transparent px-3 pt-2 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground/50",
         className,
       )}
       {...props}

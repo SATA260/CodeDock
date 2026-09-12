@@ -7,6 +7,7 @@ import { useState, type ReactNode } from "react";
 import { useAgent } from "../provider.tsx";
 import { ApprovalDock } from "./approval-dock.tsx";
 import { ConversationTimeline } from "./conversation-timeline.tsx";
+import { PendingDock } from "./pending-dock.tsx";
 import { useSessionList } from "./hooks/use-session-list.ts";
 import { useSessionTimeline } from "./hooks/use-session-timeline.ts";
 import { PromptBar } from "./prompt-bar.tsx";
@@ -76,7 +77,7 @@ export function ChatPage({
         brandSrc={brandSrc}
       />
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 items-center gap-3 border-b border-border px-4 text-sm text-muted-foreground">
+        <header className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm leading-5 text-muted-foreground">
           <span>{sessionId ? "对话" : "新对话"}</span>
           {timeline.canRecover ? (
             <Button
@@ -101,9 +102,17 @@ export function ChatPage({
           state={timeline.state}
           loading={timeline.loading}
           scrollKey={sessionId}
-          onEditQueued={timeline.editQueued}
         />
-        <div className="relative z-30">
+        <div className="relative z-30 shrink-0">
+          <PendingDock
+            items={timeline.pending}
+            editingId={timeline.editingId}
+            onBeginEdit={timeline.beginEditPending}
+            onCancelEdit={timeline.cancelEditPending}
+            onSave={timeline.savePending}
+            onDelete={timeline.deletePending}
+            onSendNow={timeline.sendNow}
+          />
           <ApprovalDock items={pendingApprovals} onDecide={timeline.decide} />
           <PromptBar
             running={timeline.running}

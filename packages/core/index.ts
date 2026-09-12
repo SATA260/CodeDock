@@ -12,6 +12,7 @@ export {
   firstLine,
   hydrate,
   indexMessages,
+  joinQueuedTexts,
   isRecoverableRun,
   isTerminalRun,
   isThinkingPhase,

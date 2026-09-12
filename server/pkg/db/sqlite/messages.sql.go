@@ -190,33 +190,3 @@ func (q *Queries) ListSessionMessages(ctx context.Context, sessionID string) ([]
 	}
 	return items, nil
 }
-
-const updateMessageContent = `-- name: UpdateMessageContent :one
-UPDATE messages
-SET content = ?
-WHERE id = ?
-RETURNING id, session_id, run_id, turn_id, role, content, attachments, tool_calls, event_seq, created_at
-`
-
-type UpdateMessageContentParams struct {
-	Content string
-	ID      string
-}
-
-func (q *Queries) UpdateMessageContent(ctx context.Context, arg UpdateMessageContentParams) (Message, error) {
-	row := q.db.QueryRowContext(ctx, updateMessageContent, arg.Content, arg.ID)
-	var i Message
-	err := row.Scan(
-		&i.ID,
-		&i.SessionID,
-		&i.RunID,
-		&i.TurnID,
-		&i.Role,
-		&i.Content,
-		&i.Attachments,
-		&i.ToolCalls,
-		&i.EventSeq,
-		&i.CreatedAt,
-	)
-	return i, err
-}

@@ -9,7 +9,6 @@ import {
   applyApprovals,
   applyEvent,
   applyOptimisticUser,
-  applyUserText,
   decisionsForApproval,
   emptyState,
   hydrate,
@@ -470,7 +469,7 @@ test("optimistic user is replaced when run.created arrives", () => {
   assert.equal(users[0]?.kind === "user" && users[0].text, "hi");
 });
 
-test("queued follow-up keeps the executing run and stays editable", () => {
+test("a later run.created does not steal the executing run", () => {
   let state = applyEvent(
     emptyState(),
     ev({
@@ -489,8 +488,6 @@ test("queued follow-up keeps the executing run and stays editable", () => {
       payload: { from: "queued", to: "running_llm", reason: "" },
     }),
   );
-  state = applyOptimisticUser(state, { runId: "local-a", text: "second" });
-  state = applyOptimisticUser(state, { runId: "local-b", text: "third" });
   state = applyEvent(
     state,
     ev({
@@ -500,40 +497,13 @@ test("queued follow-up keeps the executing run and stays editable", () => {
       payload: { trigger_message_id: "m2", mode: "auto_approve", status: "queued", text: "second" },
     }),
   );
-  state = applyEvent(
-    state,
-    ev({
-      seq: 4,
-      run_id: "r3",
-      type: "run.created",
-      payload: { trigger_message_id: "m3", mode: "auto_approve", status: "queued", text: "third" },
-    }),
-  );
+  assert.equal(state.activeRunId, "r1");
+  assert.equal(state.runStatus, "running_llm");
   const users = state.items.filter((item) => item.kind === "user");
   assert.deepEqual(
     users.map((item) => (item.kind === "user" ? item.text : "")),
-    ["first", "second", "third"],
+    ["first", "second"],
   );
-  assert.equal(users[1]?.kind === "user" && users[1].queued, true);
-  assert.equal(users[2]?.kind === "user" && users[2].queued, true);
-  assert.equal(state.activeRunId, "r1");
-  assert.equal(state.runStatus, "running_llm");
-  state = applyUserText(state, "m2", "second edited");
-  const edited = state.items.find((item) => item.kind === "user" && item.messageId === "m2");
-  assert.equal(edited?.kind === "user" && edited.text, "second edited");
-  state = applyEvent(
-    state,
-    ev({
-      seq: 5,
-      run_id: "r2",
-      type: "run.state_changed",
-      payload: { from: "queued", to: "loading_context", reason: "" },
-    }),
-  );
-  const second = state.items.find((item) => item.kind === "user" && item.messageId === "m2");
-  assert.equal(second?.kind === "user" && second.queued, false);
-  const third = state.items.find((item) => item.kind === "user" && item.messageId === "m3");
-  assert.equal(third?.kind === "user" && third.queued, true);
 });
 
 test("context compacted becomes a timeline item", () => {

@@ -390,8 +390,8 @@ func TestTxQueriesAndNilAccessors(t *testing.T) {
 	}
 }
 
-// TestRequestCancelRunningAndDequeueBusy 覆盖取消运行中 Run 不立刻出队下一条。
-func TestRequestCancelRunningAndDequeueBusy(t *testing.T) {
+// TestRequestCancelRunning 覆盖取消运行中 Run 只标 cancel_requested。
+func TestRequestCancelRunning(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
 	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
@@ -415,13 +415,6 @@ func TestRequestCancelRunningAndDequeueBusy(t *testing.T) {
 	if row.CancelRequested == 0 || row.Status != string(pkgagent.RunRunningLLM) {
 		t.Fatalf("running cancel %+v", row)
 	}
-	queued, err := rt.CreateAgentState(ctx, sessionID, "next", cfg.Mode, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rt.DequeueNext(ctx, sessionID, runID); err != nil {
-		t.Fatal(err)
-	}
 	sess, err := q.GetSession(ctx, sessionID)
 	if err != nil {
 		t.Fatal(err)
@@ -429,7 +422,6 @@ func TestRequestCancelRunningAndDequeueBusy(t *testing.T) {
 	if sess.ActiveRunID.String != runID {
 		t.Fatalf("should keep active %s", sess.ActiveRunID.String)
 	}
-	_ = queued
 }
 
 // TestMapHelpers 覆盖时间/JSON/审批映射等纯函数。
