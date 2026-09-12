@@ -1,11 +1,8 @@
 export type SessionStatus = "active" | "archived";
 
-export type AgentMode =
-  | "ask_for_approval"
-  | "auto_approve"
-  | "yolo"
-  | "ask"
-  | "plan";
+export type WorkMode = "ask" | "plan" | "agent";
+
+export type ApprovalMode = "manual" | "auto" | "yolo";
 
 export type RunStatus =
   | "queued"
@@ -58,6 +55,7 @@ export interface Session {
   tenant_id: string;
   user_id: string;
   agent_id: string;
+  /** 创建会话时冻结的工作目录（绝对路径）；本会话权限只覆盖该目录。 */
   workspace_id: string;
   status: SessionStatus;
   active_run_id?: string;
@@ -132,7 +130,8 @@ export interface AgentEvent<T = unknown> {
 
 export interface RunCreatedPayload {
   trigger_message_id: string;
-  mode: AgentMode;
+  mode: WorkMode;
+  approval?: ApprovalMode;
   status: RunStatus;
   text?: string;
 }
@@ -204,6 +203,7 @@ export interface CreateSessionRequest {
   tenant_id?: string;
   user_id: string;
   agent_id?: string;
+  /** 工作目录。显式路径必须已存在，服务端冻结为绝对路径；省略则 GIT_REPO / cwd。 */
   workspace_id?: string;
 }
 
@@ -211,6 +211,8 @@ export interface Run {
   id: string;
   session_id: string;
   status: RunStatus;
+  mode?: WorkMode;
+  approval?: ApprovalMode;
   cancel_requested?: boolean;
   needs_recover?: boolean;
 }
@@ -229,7 +231,8 @@ export function isRecoverableRun(status: string): boolean {
 
 export interface StartRunRequest {
   content: string;
-  mode?: AgentMode;
+  mode?: WorkMode;
+  approval?: ApprovalMode;
 }
 
 export interface StartRunResponse {

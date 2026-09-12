@@ -4,6 +4,7 @@ import type { Session } from "@codedock/core/chat";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAgent } from "../../provider.tsx";
+import { createSessionError } from "../lib/workspace.ts";
 
 export function useSessionList() {
   const { client, userId } = useAgent();
@@ -39,16 +40,26 @@ export function useSessionList() {
     void refresh();
   }, [refresh]);
 
-  const createSession = useCallback(async () => {
-    setBusy(true);
-    try {
-      const session = await client.createSession({ user_id: userId });
-      await refresh();
-      return session;
-    } finally {
-      setBusy(false);
-    }
-  }, [client, refresh, userId]);
+  const createSession = useCallback(
+    async (workspaceId?: string) => {
+      setBusy(true);
+      try {
+        const session = await client.createSession({
+          user_id: userId,
+          workspace_id: workspaceId?.trim() || undefined,
+        });
+        setError(null);
+        await refresh();
+        return session;
+      } catch (err) {
+        setError(createSessionError(err));
+        throw err;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [client, refresh, userId],
+  );
 
   const removeSession = useCallback(
     async (session: Session) => {

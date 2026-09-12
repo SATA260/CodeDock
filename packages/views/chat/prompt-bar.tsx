@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentMode } from "@codedock/core/chat";
+import type { ApprovalMode, WorkMode } from "@codedock/core/chat";
 import {
   Button,
   PromptInput,
@@ -8,29 +8,45 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
+  isImeConfirm,
 } from "@codedock/ui";
-import { ChevronUp } from "lucide-react";
+import { ChevronUp, FolderOpen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-const modes: { value: AgentMode; label: string }[] = [
-  { value: "ask_for_approval", label: "manual" },
-  { value: "auto_approve", label: "auto" },
+import { shortWorkspace } from "./lib/format.ts";
+
+const workModes: { value: WorkMode; label: string }[] = [
+  { value: "agent", label: "agent" },
+  { value: "ask", label: "ask" },
+  { value: "plan", label: "plan" },
+];
+
+const approvalModes: { value: ApprovalMode; label: string }[] = [
+  { value: "manual", label: "manual" },
+  { value: "auto", label: "auto" },
   { value: "yolo", label: "yolo" },
 ];
 
 export function PromptBar({
   running,
   sending,
+  workspace,
+  onPickWorkspace,
+  onClearWorkspace,
   onSend,
   onCancel,
 }: {
   running: boolean;
   sending: boolean;
-  onSend: (text: string, mode: AgentMode) => Promise<void>;
+  workspace?: string;
+  onPickWorkspace?: () => Promise<void>;
+  onClearWorkspace?: () => void;
+  onSend: (text: string, mode: WorkMode, approval: ApprovalMode) => Promise<void>;
   onCancel: () => Promise<void>;
 }) {
   const [text, setText] = useState("");
-  const [mode, setMode] = useState<AgentMode>("ask_for_approval");
+  const [mode, setMode] = useState<WorkMode>("agent");
+  const [approval, setApproval] = useState<ApprovalMode>("manual");
 
   return (
     <div className="relative z-30 mx-auto w-full max-w-3xl px-4 pb-4">
@@ -41,24 +57,54 @@ export function PromptBar({
             return;
           }
           setText("");
-          await onSend(next, mode);
+          await onSend(next, mode, approval);
         }}
       >
+        {onPickWorkspace ? (
+          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
+            <span className="shrink-0 text-xs text-muted-foreground">工作目录</span>
+            <button
+              data-workspace-pick=""
+              type="button"
+              disabled={sending}
+              title={workspace?.trim() || "打开目录选择框"}
+              className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-xs leading-5 text-foreground hover:bg-muted disabled:opacity-50"
+              onClick={() => void onPickWorkspace()}
+            >
+              <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 truncate">
+                {workspace?.trim() ? shortWorkspace(workspace) : "选择目录（默认仓库）"}
+              </span>
+            </button>
+            {workspace?.trim() && onClearWorkspace ? (
+              <button
+                type="button"
+                disabled={sending}
+                className="shrink-0 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                onClick={onClearWorkspace}
+              >
+                默认
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <PromptInputTextarea
           value={text}
           disabled={sending}
           placeholder="给 Agent 发消息…"
           onChange={(event) => setText(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
+            if (event.key !== "Enter" || event.shiftKey || isImeConfirm(event)) {
+              return;
             }
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
           }}
         />
         <PromptInputFooter>
           <PromptInputTools>
-            <ModeMenu value={mode} onChange={setMode} />
+            <ChoiceMenu value={mode} options={workModes} onChange={setMode} />
+            <ChoiceMenu value={approval} options={approvalModes} onChange={setApproval} />
             {running ? (
               <Button size="sm" variant="outline" onClick={() => void onCancel()}>
                 取消
@@ -75,16 +121,18 @@ export function PromptBar({
   );
 }
 
-function ModeMenu({
+function ChoiceMenu<T extends string>({
   value,
+  options,
   onChange,
 }: {
-  value: AgentMode;
-  onChange: (mode: AgentMode) => void;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const current = modes.find((item) => item.value === value)?.label ?? "manual";
+  const current = options.find((item) => item.value === value)?.label ?? value;
 
   useEffect(() => {
     if (!open) {
@@ -125,7 +173,7 @@ function ModeMenu({
           className="absolute bottom-full left-0 z-50 mb-1 min-w-28 overflow-hidden rounded-md border border-border bg-zinc-900 p-1 shadow-lg"
           role="listbox"
         >
-          {modes.map((item) => (
+          {options.map((item) => (
             <button
               key={item.value}
               type="button"

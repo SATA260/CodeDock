@@ -1,5 +1,6 @@
 "use client";
 
+import { useImeGuard } from "@codedock/ui";
 import { useEffect, useState } from "react";
 
 import type { PendingFollowup } from "./hooks/use-session-timeline.ts";
@@ -79,6 +80,7 @@ function PendingLine({
   onDelete?: (id: string) => void;
 }) {
   const [draft, setDraft] = useState(item.text);
+  const ime = useImeGuard();
 
   useEffect(() => {
     if (!editing) {
@@ -104,8 +106,14 @@ function PendingLine({
           rows={2}
           className="w-full resize-none rounded-md border border-white/10 bg-zinc-950/40 px-1.5 py-0.5 text-[11px] leading-4 text-foreground outline-none focus:border-white/25"
           onChange={(event) => setDraft(event.currentTarget.value)}
+          onCompositionStart={ime.onCompositionStart}
+          onCompositionEnd={ime.onCompositionEnd}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
+              if (ime.isBlocked(event)) {
+                event.preventDefault();
+                return;
+              }
               event.preventDefault();
               save();
             }
