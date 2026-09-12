@@ -2,7 +2,7 @@
 
 本文档定义 CodeDock 当前的技术骨架。目录按能力拆分；Issue、Task、Review、Workspace 等业务目录不属于本项目的基础结构。
 
-Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。默认注册 `ping` 与记忆工具。
+Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。默认注册 `ping`、记忆工具、编码八工具与 `plan_*`。
 
 ## 总体架构
 
@@ -189,11 +189,11 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 工具定义全部在本包。Runtime `New` 接收 `Ports`（Execute 要调用的外部实现），再 `Register`：
 
-- 本包写工具名、入参/出参、schema、权限和编排。`ping`，以及 `memory_read` / `memory_write` / `memory_search`（依赖 `memory` 与 Session）
-- Execute 若依赖外部能力，只通过 `Ports` 上的接口调用；由 `cmd/server` 在初始化时注入具体实现。未注入的字段不注册对应工具
-- 本阶段没有外部 Port（不实现文件 / Shell / Git）
+- 本包写工具名、入参/出参、schema、权限和编排。`ping`，`memory_read` / `memory_write` / `memory_search`，编码八工具（`read` / `write` / `edit` / `ls` / `grep` / `find` / `bash` / `powershell`），以及 `plan_list` / `plan_read` / `plan_write`
+- Execute 若依赖外部能力，只通过 `Ports` 上的接口调用；由 `cmd/server` 在初始化时注入具体实现。`Ports.WorkspaceRoot` 只是进程回落，会话级根走 `tool.Input.WorkspaceRoot`
+- 编码工具经 jail 限制在会话工作目录；目录外路径 Inspect 失败。`plan_*` 只读写 `.cursor/*.md`
 
-每个工具只定义入参/出参结构体；执行用 `encoding/json`，给模型的 schema 由 `jsonschema.For` 从类型推断。Agent 通过 `Profile.Tools.Names` 绑定工具。运行模式提供 `read` / `write` / `memory` 能力，只有模式覆盖了工具声明的全部能力时该工具才对模型可见且可 Dispatch。记忆工具声明 `memory`。审批仍由工具声明 `RequiresApproval`，`ask_for_approval` 暂停、`auto_approve` / `yolo` 自动过。一批待批工具对应一条审批，一次提交审完再流转。不 import 父包 `internal/agent`。测试用 Tool 可留在测试文件。
+每个工具只定义入参/出参结构体；执行用 `encoding/json`，给模型的 schema 由 `jsonschema.For` 从类型推断。Agent 通过 `Profile.Tools.Names` 绑定工具。运行模式提供 `read` / `write` / `memory` 能力，只有模式覆盖了工具声明的全部能力时该工具才对模型可见且可 Dispatch。记忆工具声明 `memory`。写类编码工具声明 `write`。审批仍由工具声明 `RequiresApproval` 或 `Effect=ask`，`ask_for_approval` 暂停、`auto_approve` / `yolo` 自动过。一批待批工具对应一条审批，一次提交审完再流转。不 import 父包 `internal/agent`。测试用 Tool 可留在测试文件。
 
 ### `pkg/git`
 
@@ -257,7 +257,7 @@ Worker
        -> pkg.Build
        -> pkg.Stream          # 按 ModelConfig 在 pkg 内创建 fake 或 openai
        -> Transition：先落库再 Bus
-       -> pkg.Dispatch        # ping、memory_* 及测试用 Tool
+       -> pkg.Dispatch        # ping、memory_*、编码八工具、plan_* 及测试用 Tool
 ```
 
 ## 配置

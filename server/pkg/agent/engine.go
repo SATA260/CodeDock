@@ -102,6 +102,9 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	if err != nil {
 		return StepResult{}, err
 	}
+	if snapshot.WorkspaceRoot == "" {
+		snapshot.WorkspaceRoot = state.WorkspaceRoot
+	}
 	if e.llmGate != nil {
 		if err := e.llmGate.Acquire(ctx); err != nil {
 			return e.finish(ctx, StepInput{State: state, Job: in.Job}, finishInstructions(RunCancelled, StopCancelled)[0])
@@ -245,6 +248,7 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 		SessionID:        state.SessionID,
 		RunID:            state.RunID,
 		TurnID:           turnID,
+		WorkspaceRoot:    state.WorkspaceRoot,
 		Calls:            calls,
 		Mode:             execMode,
 		FailurePolicy:    failPolicy,

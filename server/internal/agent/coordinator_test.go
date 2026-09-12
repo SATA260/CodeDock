@@ -77,6 +77,9 @@ func TestCreateClaimLoadAppend(t *testing.T) {
 	if state.Status != pkgagent.RunQueued || state.StepIndex != 0 {
 		t.Fatalf("state=%+v", state)
 	}
+	if state.WorkspaceRoot != "" {
+		t.Fatalf("implicit default workspace should fall back, got %q", state.WorkspaceRoot)
+	}
 	if hist.Run.TriggerMessageID == "" || len(hist.Messages) != 1 {
 		t.Fatalf("history messages=%d trigger=%s", len(hist.Messages), hist.Run.TriggerMessageID)
 	}

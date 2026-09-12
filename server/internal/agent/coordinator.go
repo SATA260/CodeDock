@@ -224,6 +224,7 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 		SessionID:       run.SessionID,
 		RunID:           run.ID,
 		TurnID:          run.CurrentTurnID,
+		WorkspaceRoot:   sessionWorkspaceRoot(sess.WorkspaceID),
 		Status:          run.Status,
 		Config:          run.Config,
 		CancelRequested: run.CancelRequested,
@@ -297,6 +298,7 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 		Messages:      messages,
 		Tools:         tools,
 		Prompt:        prompt,
+		WorkspaceRoot: sessionWorkspaceRoot(sess.WorkspaceID),
 		MemoryIndexes: r.loadMemoryIndexes(ctx, sess.UserID, sess.WorkspaceID),
 	}
 	return state, hist, nil
@@ -1023,6 +1025,14 @@ func turnStatusFor(status pkgagent.RunStatus) string {
 	default:
 		return string(pkgagent.TurnCompleted)
 	}
+}
+
+func sessionWorkspaceRoot(workspaceID string) string {
+	root := strings.TrimSpace(workspaceID)
+	if root == "" || strings.EqualFold(root, "default") {
+		return ""
+	}
+	return root
 }
 
 // clipSessionSummary 取用户正文首行并截断，用作 Session 摘要。

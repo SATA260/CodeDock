@@ -42,6 +42,18 @@ func ComposeSystemPrompt(base string, tools []tool.Definition) string {
 	return base + "\n\n工具：\n" + extra
 }
 
+func withWorkspacePrompt(system, root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return system
+	}
+	line := "Current working directory: " + root
+	if system == "" {
+		return line
+	}
+	return system + "\n\n" + line
+}
+
 // Build 将上下文组装为模型调用。工具描述由各工具自己维护，这里只做统一拼接。
 func Build(_ context.Context, req Prompt) (Chat, error) {
 	system := req.Context.SystemPrompt
@@ -52,6 +64,7 @@ func Build(_ context.Context, req Prompt) (Chat, error) {
 		system = DefaultSystemPrompt
 	}
 	system = ComposeSystemPrompt(system, req.Context.Tools)
+	system = withWorkspacePrompt(system, req.Context.WorkspaceRoot)
 	var prefix []Message
 	for _, index := range req.Context.MemoryIndexes {
 		if index == "" {

@@ -18,7 +18,7 @@ const (
 - 不要堆砌感叹号，不要加油打气，不要用网络流行语。
 
 需要做事时再调用当前提供的工具，不要为了调用而调用。一次回复里的工具会按批次审批，只提出当前必要的调用。`
-	DefaultToolSet = "ping-memory-1"
+	DefaultToolSet = "ping-memory-coding-1"
 )
 
 // FakeOptions 控制 fake 模型的确定性输出，供测试与离线闭环使用。
@@ -103,7 +103,23 @@ func DefaultRunConfig(mode AgentMode, model ModelConfig) RunConfigSnapshot {
 				Reference: "default",
 			},
 			Tools: profile.ToolConfig{
-				Names:            []string{"ping", "memory_read", "memory_write", "memory_search"},
+				Names: []string{
+					"ping",
+					"memory_read",
+					"memory_write",
+					"memory_search",
+					"read",
+					"write",
+					"edit",
+					"ls",
+					"grep",
+					"find",
+					"bash",
+					"powershell",
+					"plan_list",
+					"plan_read",
+					"plan_write",
+				},
 				Version:          DefaultToolSet,
 				PermissionPolicy: tool.PermissionPolicy{Version: "1"},
 				ApprovalPolicy:   tool.ApprovalPolicy{Version: "1", DefaultExpiry: time.Hour},
