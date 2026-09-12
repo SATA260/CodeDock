@@ -23,7 +23,7 @@ func (t codingTool) Definition() tool.Definition {
 		Name:             t.name,
 		Prompt:           t.prompt,
 		ParametersSchema: t.schema,
-		Permission:       codingPermission(t.name, t.effect),
+		Permission:       tool.Permission{Effect: t.effect},
 		SupportsCancel:   t.name == ToolBash || t.name == ToolPowerShell,
 		SupportsRetry:    t.name == ToolRead || t.name == ToolGrep || t.name == ToolFind || t.name == ToolLS,
 		Version:          "1",
@@ -58,18 +58,6 @@ func (t codingTool) Execute(ctx context.Context, input tool.Input) (tool.Result,
 		return tool.Result{CallID: input.Call.ID, Name: t.name, Success: false, Error: err.Error()}, nil
 	}
 	return tool.Result{CallID: input.Call.ID, Name: t.name, Output: raw, Success: true}, nil
-}
-
-func codingPermission(name string, effect tool.Effect) tool.Permission {
-	perm := tool.Permission{Effect: effect}
-	switch name {
-	case ToolWrite, ToolEdit, ToolBash, ToolPowerShell:
-		perm.Capabilities = []tool.Capability{tool.CapabilityWrite}
-		perm.RequiresApproval = effect != tool.EffectAllow
-	default:
-		perm.Capabilities = []tool.Capability{tool.CapabilityRead}
-	}
-	return perm
 }
 
 func inspectCodingPath(ports Ports, name string, raw json.RawMessage) error {

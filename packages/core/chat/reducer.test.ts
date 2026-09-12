@@ -8,6 +8,7 @@ import {
   applyApprovalRecord,
   applyApprovals,
   applyEvent,
+  applyLocalCancel,
   applyOptimisticUser,
   decisionsForApproval,
   emptyState,
@@ -46,7 +47,7 @@ test("hydrate fills user text from messages and folds events in order", () => {
     ev({
       seq: 2,
       type: "run.created",
-      payload: { trigger_message_id: "m-user", mode: "ask_for_approval", status: "queued" },
+      payload: { trigger_message_id: "m-user", mode: "agent", status: "queued" },
     }),
     ev({
       seq: 3,
@@ -213,7 +214,7 @@ test("run.created before optimistic keeps a single user bubble with text", () =>
     ev({
       seq: 1,
       type: "run.created",
-      payload: { trigger_message_id: "m-real", mode: "auto_approve", status: "queued" },
+      payload: { trigger_message_id: "m-real", mode: "agent", status: "queued" },
     }),
   );
   state = applyOptimisticUser(state, { runId: "r1", text: "hi" });
@@ -229,7 +230,7 @@ test("run.created after local optimistic uses pending text", () => {
     ev({
       seq: 1,
       type: "run.created",
-      payload: { trigger_message_id: "m-real", mode: "auto_approve", status: "queued" },
+      payload: { trigger_message_id: "m-real", mode: "agent", status: "queued" },
     }),
   );
   const users = state.items.filter((item) => item.kind === "user");
@@ -452,6 +453,61 @@ test("denied approval marks the tool denied", () => {
   assert.equal(tool.state, "denied");
 });
 
+test("optimistic user is not marked queued while another run is still local", () => {
+  let state = applyEvent(
+    emptyState(),
+    ev({
+      seq: 1,
+      run_id: "r1",
+      type: "run.created",
+      payload: { trigger_message_id: "m1", mode: "agent", status: "queued", text: "first" },
+    }),
+  );
+  state = applyEvent(
+    state,
+    ev({
+      seq: 2,
+      run_id: "r1",
+      type: "run.state_changed",
+      payload: { from: "queued", to: "running_llm", reason: "" },
+    }),
+  );
+  state = applyOptimisticUser(state, { runId: "local-2", text: "immediate" });
+  const optimistic = state.items.find(
+    (item) => item.kind === "user" && item.messageId === "pending:local-2",
+  );
+  assert.ok(optimistic && optimistic.kind === "user");
+  assert.equal(optimistic.queued, false);
+});
+
+test("applyLocalCancel clears the executing run", () => {
+  let state = applyEvent(
+    emptyState(),
+    ev({
+      seq: 1,
+      run_id: "r1",
+      type: "run.created",
+      payload: { trigger_message_id: "m1", mode: "agent", status: "queued", text: "first" },
+    }),
+  );
+  state = applyEvent(
+    state,
+    ev({
+      seq: 2,
+      run_id: "r1",
+      type: "run.state_changed",
+      payload: { from: "queued", to: "running_llm", reason: "" },
+    }),
+  );
+  state = applyLocalCancel(state, "r1");
+  assert.equal(state.activeRunId, null);
+  assert.equal(state.runStatus, "cancelled");
+  state = applyOptimisticUser(state, { runId: "local-2", text: "next" });
+  const optimistic = state.items.find((item) => item.kind === "user" && item.text === "next");
+  assert.ok(optimistic && optimistic.kind === "user");
+  assert.equal(optimistic.queued, false);
+});
+
 test("optimistic user is replaced when run.created arrives", () => {
   let state = applyOptimisticUser(emptyState(), { runId: "r1", text: "hi" });
   assert.equal(state.items[0]?.kind === "user" && state.items[0].messageId, "pending:r1");
@@ -460,7 +516,7 @@ test("optimistic user is replaced when run.created arrives", () => {
     ev({
       seq: 4,
       type: "run.created",
-      payload: { trigger_message_id: "m-real", mode: "auto_approve", status: "queued" },
+      payload: { trigger_message_id: "m-real", mode: "agent", status: "queued" },
     }),
   );
   const users = state.items.filter((item) => item.kind === "user");
@@ -476,7 +532,7 @@ test("a later run.created does not steal the executing run", () => {
       seq: 1,
       run_id: "r1",
       type: "run.created",
-      payload: { trigger_message_id: "m1", mode: "auto_approve", status: "queued", text: "first" },
+      payload: { trigger_message_id: "m1", mode: "agent", status: "queued", text: "first" },
     }),
   );
   state = applyEvent(
@@ -494,7 +550,7 @@ test("a later run.created does not steal the executing run", () => {
       seq: 3,
       run_id: "r2",
       type: "run.created",
-      payload: { trigger_message_id: "m2", mode: "auto_approve", status: "queued", text: "second" },
+      payload: { trigger_message_id: "m2", mode: "agent", status: "queued", text: "second" },
     }),
   );
   assert.equal(state.activeRunId, "r1");

@@ -14,9 +14,42 @@ type Prompt struct {
 	Context ContextSnapshot
 }
 
-// ComposeSystemPrompt 把静态系统提示与当前可见工具各自维护的描述拼成一次调用用的提示词。
+var baseGuidelines = []string{
+	"用用户的语言回复",
+	"不要输出 emoji、颜文字、表情符号",
+	"不要用空泛开场或自我介绍，除非用户问你是谁",
+	"不要堆砌感叹号，不要加油打气，不要用网络流行语",
+	"回复尽量简洁",
+	"涉及文件时写清路径",
+}
+
+// ComposeSystemPrompt 把身份段与当前可见工具拼成一次调用用的底座系统提示，结构仿 pi：
+// 身份 → 可用工具 → 使用要求 → 工作目录。模式规则不在这里。
 func ComposeSystemPrompt(base string, tools []tool.Definition) string {
+	return composeSystemPrompt(base, tools, nil, "")
+}
+
+func composeSystemPrompt(base string, tools []tool.Definition, extra []string, cwd string) string {
 	base = strings.TrimSpace(base)
+	cwd = strings.TrimSpace(strings.ReplaceAll(cwd, "\\", "/"))
+
+	var b strings.Builder
+	if base != "" {
+		b.WriteString(base)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("可用工具：\n")
+	b.WriteString(formatToolSnippets(tools))
+	b.WriteString("\n\n除以上工具外，项目还可能提供其他自定义工具。\n\n使用要求：\n")
+	b.WriteString(formatGuidelines(tools, extra))
+	if cwd != "" {
+		b.WriteString("\n\n当前工作目录：")
+		b.WriteString(cwd)
+	}
+	return b.String()
+}
+
+func formatToolSnippets(tools []tool.Definition) string {
 	var b strings.Builder
 	for _, def := range tools {
 		name := strings.TrimSpace(def.Name)
@@ -29,42 +62,77 @@ func ComposeSystemPrompt(base string, tools []tool.Definition) string {
 		}
 		b.WriteString("- ")
 		b.WriteString(name)
-		b.WriteString("：")
+		b.WriteString(": ")
 		b.WriteString(desc)
 	}
-	extra := b.String()
-	if extra == "" {
-		return base
+	if b.Len() == 0 {
+		return "（无）"
 	}
-	if base == "" {
-		return "工具：\n" + extra
-	}
-	return base + "\n\n工具：\n" + extra
+	return b.String()
 }
 
-func withWorkspacePrompt(system, root string) string {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return system
+func formatGuidelines(tools []tool.Definition, extra []string) string {
+	names := make(map[string]bool, len(tools))
+	for _, def := range tools {
+		if name := strings.TrimSpace(def.Name); name != "" {
+			names[name] = true
+		}
 	}
-	line := "Current working directory: " + root
-	if system == "" {
-		return line
+
+	var list []string
+	seen := make(map[string]struct{})
+	add := func(guideline string) {
+		guideline = strings.TrimSpace(guideline)
+		if guideline == "" {
+			return
+		}
+		if _, ok := seen[guideline]; ok {
+			return
+		}
+		seen[guideline] = struct{}{}
+		list = append(list, guideline)
 	}
-	return system + "\n\n" + line
+
+	hasBash := names["bash"]
+	hasPowerShell := names["powershell"]
+	hasGrep := names["grep"]
+	hasFind := names["find"]
+	hasLs := names["ls"]
+	if (hasBash || hasPowerShell) && !hasGrep && !hasFind && !hasLs {
+		switch {
+		case hasBash && hasPowerShell:
+			add("用 bash 或 PowerShell 做列举、搜索、查找等文件操作")
+		case hasPowerShell:
+			add("用 PowerShell 做列举、搜索、查找等文件操作")
+		default:
+			add("用 bash 做 ls、rg、find 等文件操作")
+		}
+	}
+	for _, guideline := range extra {
+		add(guideline)
+	}
+	for _, guideline := range baseGuidelines {
+		add(guideline)
+	}
+
+	var b strings.Builder
+	for i, guideline := range list {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("- ")
+		b.WriteString(guideline)
+	}
+	return b.String()
 }
 
-// Build 将上下文组装为模型调用。工具描述由各工具自己维护，这里只做统一拼接。
+// Build 将上下文组装为模型调用。底座 system 与工具表不随 mode 变；模式规则追加为 developer。
 func Build(_ context.Context, req Prompt) (Chat, error) {
 	system := req.Context.SystemPrompt
 	if system == "" {
-		system = req.Run.Config.Profile.Prompt.Inline
-	}
-	if system == "" {
 		system = DefaultSystemPrompt
 	}
-	system = ComposeSystemPrompt(system, req.Context.Tools)
-	system = withWorkspacePrompt(system, req.Context.WorkspaceRoot)
+	system = composeSystemPrompt(system, req.Context.Tools, nil, req.Context.WorkspaceRoot)
 	var prefix []Message
 	for _, index := range req.Context.MemoryIndexes {
 		if index == "" {
@@ -75,10 +143,13 @@ func Build(_ context.Context, req Prompt) (Chat, error) {
 	if req.Context.Summary != nil && req.Context.Summary.Content != "" {
 		prefix = append(prefix, Message{
 			Role:    RoleSystem,
-			Content: EncodeText("Conversation summary:\n" + req.Context.Summary.Content),
+			Content: EncodeText("对话摘要：\n" + req.Context.Summary.Content),
 		})
 	}
 	messages := CompleteToolResults(append(prefix, req.Context.Messages...))
+	if dev := strings.TrimSpace(req.Run.Config.Profile.DeveloperPrompt()); dev != "" {
+		messages = append(messages, Message{Role: RoleDeveloper, Content: EncodeText(dev)})
+	}
 	return Chat{
 		SessionID:       req.Context.SessionID,
 		RunID:           req.Run.ID,

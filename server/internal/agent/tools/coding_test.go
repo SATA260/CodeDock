@@ -111,7 +111,8 @@ func TestWritePlanFileSkipsApproval(t *testing.T) {
 
 	planWrite, err := tool.Dispatch(context.Background(), tool.Invocation{
 		WorkspaceRoot: root,
-		AgentMode:     "ask_for_approval",
+		BoundNames:    []string{"write"},
+		Approval:      tool.ApprovalManual,
 		Registry:      reg,
 		Calls: []tool.Call{{
 			ID:        "p1",
@@ -128,7 +129,8 @@ func TestWritePlanFileSkipsApproval(t *testing.T) {
 
 	codeWrite, err := tool.Dispatch(context.Background(), tool.Invocation{
 		WorkspaceRoot: root,
-		AgentMode:     "ask_for_approval",
+		BoundNames:    []string{"write"},
+		Approval:      tool.ApprovalManual,
 		Registry:      reg,
 		Calls: []tool.Call{{
 			ID:        "c1",

@@ -1,7 +1,13 @@
 "use client";
 
-import type { ApprovalDecision, ApprovalStatus, ApprovalToolCall, TimelineItem } from "@codedock/core/chat";
-import { Button, cn, formatJSON } from "@codedock/ui";
+import {
+  planPreviewFromTool,
+  type ApprovalDecision,
+  type ApprovalStatus,
+  type ApprovalToolCall,
+  type TimelineItem,
+} from "@codedock/core/chat";
+import { Button, cn, formatJSON, MessageResponse } from "@codedock/ui";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -63,6 +69,7 @@ export function ApprovalDock({
   }
   const choiceKey = pageKey(page);
   const currentChoice = choiceOf(page, choices);
+  const planPreview = planPreviewFromTool(page.call);
 
   const go = (next: number) => {
     if (next < 0 || next >= pages.length) {
@@ -160,7 +167,11 @@ export function ApprovalDock({
             <div className="font-mono text-[11px] leading-4 text-foreground">{page.call.name || "工具调用"}</div>
             <div className={cn("text-[10px] leading-3.5", statusTone(currentChoice))}>{statusLabel(currentChoice)}</div>
           </div>
-          {page.call.arguments != null ? (
+          {planPreview?.content ? (
+            <div className="mt-1 max-h-48 overflow-auto">
+              <MessageResponse className="text-[13px]">{planPreview.content}</MessageResponse>
+            </div>
+          ) : page.call.arguments != null ? (
             <pre className="mt-0.5 max-h-16 overflow-auto font-mono text-[11px] leading-4 text-muted-foreground">
               {formatJSON(page.call.arguments)}
             </pre>

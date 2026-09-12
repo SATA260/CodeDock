@@ -88,7 +88,7 @@ func (readTool) Definition() tool.Definition {
 		ParametersSchema: schemaOf[memoryReadInput](),
 		OutputSchema:     schemaOf[memoryItemOutput](),
 		Permission: tool.Permission{
-			Capabilities: []tool.Capability{tool.CapabilityMemory},
+			Effect: tool.EffectAllow,
 		},
 		Version: "1",
 	}
@@ -101,8 +101,7 @@ func (writeTool) Definition() tool.Definition {
 		ParametersSchema: schemaOf[memoryWriteInput](),
 		OutputSchema:     schemaOf[memoryItemOutput](),
 		Permission: tool.Permission{
-			Capabilities:     []tool.Capability{tool.CapabilityMemory},
-			RequiresApproval: true,
+			Effect: tool.EffectAsk,
 		},
 		Version: "1",
 	}
@@ -115,7 +114,7 @@ func (searchTool) Definition() tool.Definition {
 		ParametersSchema: schemaOf[memorySearchInput](),
 		OutputSchema:     schemaOf[memorySearchOutput](),
 		Permission: tool.Permission{
-			Capabilities: []tool.Capability{tool.CapabilityMemory},
+			Effect: tool.EffectAllow,
 		},
 		Version: "1",
 	}

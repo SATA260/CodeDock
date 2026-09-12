@@ -153,7 +153,7 @@ func TestResolvePrompt(t *testing.T) {
 }
 
 func TestCommitDraftHelpers(t *testing.T) {
-	api := &API{cfg: config.Config{LLMProvider: "fake", LLMModel: "fake"}, defaults: pkgagent.DefaultRunConfig(pkgagent.ModeYolo, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})}
+	api := &API{cfg: config.Config{LLMProvider: "fake", LLMModel: "fake"}, defaults: pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{Provider: "fake", Model: "fake"})}
 	files := []git.DiffFile{
 		{Path: "a.go", Patch: "@@\n+hello\n" + strings.Repeat("+x\n", 50), Kind: "modified"},
 		{Path: "package-lock.json", Patch: "+lock", Kind: "modified"},

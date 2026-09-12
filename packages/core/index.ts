@@ -5,6 +5,7 @@ export {
   applyApprovals,
   applyEvent,
   decisionsForApproval,
+  applyLocalCancel,
   applyOptimisticUser,
   applyUserText,
   decodeText,
@@ -53,7 +54,8 @@ export type {
 } from "./git/index.ts";
 export type {
   AgentEvent,
-  AgentMode,
+  ApprovalMode,
+  WorkMode,
   Approval,
   ApprovalDecision,
   ApprovalStatus,

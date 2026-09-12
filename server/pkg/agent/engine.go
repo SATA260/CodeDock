@@ -245,22 +245,22 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 	}
 
 	out, err := tool.Dispatch(ctx, tool.Invocation{
-		SessionID:        state.SessionID,
-		RunID:            state.RunID,
-		TurnID:           turnID,
-		WorkspaceRoot:    state.WorkspaceRoot,
-		Calls:            calls,
-		Mode:             execMode,
-		FailurePolicy:    failPolicy,
-		MaxParallel:      maxParallel,
-		PermissionPolicy: state.Config.PermissionPolicy,
-		ApprovalPolicy:   state.Config.ApprovalPolicy,
-		AgentMode:        string(state.Config.Mode),
-		Registry:         e.tools,
-		ApprovedCallIDs:  state.Checkpoint.Approved,
-		DeniedCallIDs:    state.Checkpoint.Denied,
-		OnEvent:          e.toolEventHook(state),
-		Gate:             e.toolGate,
+		SessionID:       state.SessionID,
+		RunID:           state.RunID,
+		TurnID:          turnID,
+		WorkspaceRoot:   state.WorkspaceRoot,
+		Calls:           calls,
+		Mode:            execMode,
+		FailurePolicy:   failPolicy,
+		MaxParallel:     maxParallel,
+		BoundNames:      state.Config.Profile.Tools.Names,
+		Effects:         state.Config.Profile.Tools.Effects,
+		Approval:        tool.ApprovalMode(state.Config.Approval),
+		Registry:        e.tools,
+		ApprovedCallIDs: state.Checkpoint.Approved,
+		DeniedCallIDs:   state.Checkpoint.Denied,
+		OnEvent:         e.toolEventHook(state),
+		Gate:            e.toolGate,
 	})
 	if err != nil {
 		if ctx.Err() != nil || state.CancelRequested {

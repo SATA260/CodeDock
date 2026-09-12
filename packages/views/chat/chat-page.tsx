@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentMode, TimelineItem } from "@codedock/core/chat";
+import type { ApprovalMode, TimelineItem, WorkMode } from "@codedock/core/chat";
 import { Button } from "@codedock/ui";
 import { useState, type ReactNode } from "react";
 
@@ -45,7 +45,7 @@ export function ChatPage({
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const frozenWorkspace =
-    list.sessions.find((session) => session.id === sessionId)?.workspace_id ?? "";
+    timeline.workspaceId ?? list.sessions.find((session) => session.id === sessionId)?.workspace_id ?? "";
   const workspaceTitle = sessionId ? frozenWorkspace : workspaceDraft.trim() || "默认仓库目录";
   const workspaceLabel = sessionId
     ? frozenWorkspace
@@ -58,10 +58,10 @@ export function ChatPage({
       item.kind === "approval" && item.status === "pending",
   );
 
-  const onSend = async (text: string, mode: AgentMode) => {
+  const onSend = async (text: string, mode: WorkMode, approval: ApprovalMode) => {
     setComposerError(null);
     if (sessionId) {
-      await timeline.send(text, mode);
+      await timeline.send(text, mode, approval);
       await list.refresh();
       return;
     }
@@ -70,7 +70,7 @@ export function ChatPage({
       const session = await list.createSession(workspaceDraft);
       writeLastWorkspace(session.workspace_id);
       setWorkspaceDraft(session.workspace_id);
-      await client.startRun(session.id, { content: text, mode });
+      await client.startRun(session.id, { content: text, mode, approval });
       await list.refresh();
       onOpenSession(session.id);
     } catch (err) {
@@ -106,11 +106,18 @@ export function ChatPage({
       />
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm leading-5 text-muted-foreground">
-          <span>{sessionId ? "对话" : "新对话"}</span>
+          <span className="shrink-0">{sessionId ? "对话" : "新对话"}</span>
           {workspaceLabel ? (
-            <span className="min-w-0 truncate font-mono text-[11px]" title={workspaceTitle}>
-              {workspaceLabel}
-            </span>
+            <>
+              <span className="text-border">·</span>
+              <span
+                className="min-w-0 truncate font-mono text-xs text-muted-foreground/80"
+                title={workspaceTitle}
+                data-workspace-path={workspaceTitle}
+              >
+                {workspaceLabel}
+              </span>
+            </>
           ) : null}
           {timeline.canRecover ? (
             <Button
@@ -135,6 +142,11 @@ export function ChatPage({
           state={timeline.state}
           loading={timeline.loading}
           scrollKey={sessionId}
+          emptyDescription={
+            sessionId
+              ? undefined
+              : "点击下方选择工作目录，或直接发送以使用默认仓库目录。"
+          }
         />
         <div className="relative z-30 shrink-0">
           <PendingDock
@@ -155,6 +167,7 @@ export function ChatPage({
               sessionId || !listDirectories
                 ? undefined
                 : async () => {
+                    setComposerError(null);
                     setPickerOpen(true);
                   }
             }
@@ -162,8 +175,8 @@ export function ChatPage({
               sessionId
                 ? undefined
                 : () => {
-                    clearLastWorkspace();
                     setWorkspaceDraft("");
+                    clearLastWorkspace();
                   }
             }
             onSend={onSend}
@@ -175,10 +188,10 @@ export function ChatPage({
         <WorkspacePicker
           initialPath={workspaceDraft || undefined}
           listDirectories={listDirectories}
-          onCancel={() => setPickerOpen(false)}
+          onClose={() => setPickerOpen(false)}
           onSelect={(path) => {
-            writeLastWorkspace(path);
             setWorkspaceDraft(path);
+            writeLastWorkspace(path);
             setPickerOpen(false);
           }}
         />

@@ -2,6 +2,8 @@ package tool
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 )
 
@@ -71,6 +73,9 @@ func (r *memoryRegistry) Prompts() []Prompt {
 			OutputSchema:     def.OutputSchema,
 		})
 	}
+	slices.SortFunc(out, func(a, b Prompt) int {
+		return strings.Compare(a.Name, b.Name)
+	})
 	return out
 }
 

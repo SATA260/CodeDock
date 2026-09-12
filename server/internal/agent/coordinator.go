@@ -13,6 +13,7 @@ import (
 	"codedock/internal/events"
 	"codedock/internal/util"
 	pkgagent "codedock/pkg/agent"
+	"codedock/pkg/agent/profile"
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db"
 	"codedock/pkg/db/sqlite"
@@ -23,7 +24,7 @@ const sessionSummaryMaxRunes = 200
 // CreateAgentState 写入用户消息与 queued Run，并发布 run.created。
 // content 是用户正文，不是已有 message id。
 // 逻辑：事务内写 message/run/首条事件，可选填 Session 摘要 → 提交后 publish 并索引触发消息。
-func (r *Runtime) CreateAgentState(ctx context.Context, sessionID, content string, mode pkgagent.AgentMode, config pkgagent.RunConfigSnapshot) (string, error) {
+func (r *Runtime) CreateAgentState(ctx context.Context, sessionID, content string, mode pkgagent.WorkMode, config pkgagent.RunConfigSnapshot) (string, error) {
 	if r == nil || r.db == nil {
 		return "", cderr.Invalid("runtime is not initialized")
 	}
@@ -37,12 +38,13 @@ func (r *Runtime) CreateAgentState(ctx context.Context, sessionID, content strin
 		mode = config.Mode
 	}
 	if mode == "" {
-		mode = pkgagent.ModeAskForApproval
+		mode = pkgagent.WorkAgent
 	}
 	config.Mode = mode
-	if config.Profile.Mode == "" {
-		config.Profile.Mode = string(mode)
+	if config.Approval == "" {
+		config.Approval = pkgagent.ApprovalManual
 	}
+	config.Profile = profile.For(string(mode))
 
 	runID := util.NewID()
 	msgID := util.NewID()
@@ -100,6 +102,7 @@ func (r *Runtime) CreateAgentState(ctx context.Context, sessionID, content strin
 			Payload: pkgagent.MarshalPayload(pkgagent.RunCreatedPayload{
 				TriggerMessageID: msgID,
 				Mode:             mode,
+				Approval:         config.Approval,
 				Status:           pkgagent.RunQueued,
 				Text:             content,
 				Config:           config,
@@ -224,7 +227,7 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 		SessionID:       run.SessionID,
 		RunID:           run.ID,
 		TurnID:          run.CurrentTurnID,
-		WorkspaceRoot:   sessionWorkspaceRoot(sess.WorkspaceID),
+		WorkspaceRoot:   sess.WorkspaceID,
 		Status:          run.Status,
 		Config:          run.Config,
 		CancelRequested: run.CancelRequested,
@@ -284,12 +287,8 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 		return pkgagent.AgentState{}, pkgagent.History{}, err
 	}
 
-	names := run.Config.Profile.Tools.Names
-	tools := tool.VisibleDefinitions(tool.Definitions(r.tools), names, tool.ModeCapabilities(string(run.Mode)))
-	prompt := run.Config.Profile.Prompt.Inline
-	if prompt == "" {
-		prompt = pkgagent.DefaultSystemPrompt
-	}
+	tools := tool.Definitions(r.tools)
+	prompt := pkgagent.DefaultSystemPrompt
 
 	hist := pkgagent.History{
 		Run:           run,
@@ -298,7 +297,6 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 		Messages:      messages,
 		Tools:         tools,
 		Prompt:        prompt,
-		WorkspaceRoot: sessionWorkspaceRoot(sess.WorkspaceID),
 		MemoryIndexes: r.loadMemoryIndexes(ctx, sess.UserID, sess.WorkspaceID),
 	}
 	return state, hist, nil
@@ -576,6 +574,9 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 		if err := r.Enqueue(ctx, *result.Next); err != nil {
 			return err
 		}
+	}
+	if !terminal && state.Status == pkgagent.RunWaitingApproval && state.Config.Approval == pkgagent.ApprovalAuto {
+		r.autoReviewPending(ctx, runID, deref(state.PendingApproval))
 	}
 	return nil
 }
@@ -895,9 +896,6 @@ func (r *Runtime) insertPendingApproval(ctx context.Context, sessionID, runID st
 		first = calls[0].ID
 	}
 	expiry := util.Now().Add(time.Hour)
-	if state.Config.ApprovalPolicy.DefaultExpiry > 0 {
-		expiry = util.Now().Add(state.Config.ApprovalPolicy.DefaultExpiry)
-	}
 	_, err := r.q(ctx).InsertApproval(ctx, sqlite.InsertApprovalParams{
 		ID:         approvalID,
 		SessionID:  sessionID,
@@ -1025,14 +1023,6 @@ func turnStatusFor(status pkgagent.RunStatus) string {
 	default:
 		return string(pkgagent.TurnCompleted)
 	}
-}
-
-func sessionWorkspaceRoot(workspaceID string) string {
-	root := strings.TrimSpace(workspaceID)
-	if root == "" || strings.EqualFold(root, "default") {
-		return ""
-	}
-	return root
 }
 
 // clipSessionSummary 取用户正文首行并截断，用作 Session 摘要。

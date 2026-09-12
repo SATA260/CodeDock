@@ -15,6 +15,7 @@ export {
   applyApprovals,
   applyEvent,
   decisionsForApproval,
+  applyLocalCancel,
   applyOptimisticUser,
   applyUserText,
   dropOptimisticUser,
@@ -25,7 +26,8 @@ export {
 export { parseSSEBlock, parseSSEChunk, watchEvents, type WatchEventsOptions } from "./sse.ts";
 export type {
   AgentEvent,
-  AgentMode,
+  ApprovalMode,
+  WorkMode,
   Approval,
   ApprovalDecision,
   ApprovalStatus,

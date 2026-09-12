@@ -22,6 +22,7 @@ import (
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db"
+	"codedock/pkg/db/sqlite"
 )
 
 // fixture 聚合测试所需的 API、路由、Runtime 与清理函数。
@@ -30,6 +31,8 @@ type fixture struct {
 	router  http.Handler
 	cancel  context.CancelFunc
 	runtime *agent.Runtime
+	queries *sqlite.Queries
+	bus     *events.Bus
 }
 
 // newFixture 打开内存 SQLite、装配 Runtime 并启动 Worker。
@@ -62,24 +65,28 @@ func newFixture(t *testing.T, extras ...tool.Tool) *fixture {
 	}
 	runtime.Start(ctx)
 
-	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
+	defaults := pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{
 		Provider: "fake",
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "hello"}}}),
 	})
 	api := handler.New(client, queries, runtime, bus, defaults, config.Config{}, nil)
-	return &fixture{api: api, router: testRouter(api), cancel: cancel, runtime: runtime}
+	return &fixture{api: api, router: testRouter(api), cancel: cancel, runtime: runtime, queries: queries, bus: bus}
 }
 
 // testRouter 注册测试用到的 HTTP 路由。
 func testRouter(api *handler.API) http.Handler {
 	r := chi.NewRouter()
+	r.Get("/health", handler.Health)
 	r.Post("/sessions", api.CreateSession)
 	r.Get("/sessions", api.ListSessions)
 	r.Get("/sessions/{session_id}", api.GetSession)
+	r.Patch("/sessions/{session_id}", api.UpdateSession)
+	r.Post("/sessions/{session_id}/archive", api.ArchiveSession)
 	r.Post("/sessions/{session_id}/runs", api.StartRun)
 	r.Post("/sessions/{session_id}/messages", api.CreateMessage)
 	r.Get("/sessions/{session_id}/messages", api.ListMessages)
+	r.Delete("/sessions/{session_id}/messages/{message_id}", api.DeleteMessage)
 	r.Get("/sessions/{session_id}/event-log", api.ListEvents)
 	r.Get("/sessions/{session_id}/events", api.SubscribeEvents)
 	r.Get("/sessions/{session_id}/usage", api.GetSessionUsage)
@@ -140,7 +147,7 @@ func (f *fixture) createSession(t *testing.T) string {
 func (f *fixture) start(t *testing.T, sessionID string, req handler.StartRunRequest) string {
 	t.Helper()
 	if req.Mode == "" {
-		req.Mode = pkgagent.ModeAutoApprove
+		req.Mode = pkgagent.WorkAgent
 	}
 	rec := f.do(t, http.MethodPost, "/sessions/"+sessionID+"/runs", req)
 	if rec.Code != http.StatusOK {

@@ -5,6 +5,7 @@ import {
   applyApprovals,
   applyEvent,
   decisionsForApproval,
+  applyLocalCancel,
   applyOptimisticUser,
   dropOptimisticUser,
   emptyState,
@@ -12,7 +13,8 @@ import {
   isTerminalRun,
   joinQueuedTexts,
   watchEvents,
-  type AgentMode,
+  type ApprovalMode,
+  type WorkMode,
   type ApprovalDecision,
   type SessionState,
   type TimelineItem,
@@ -28,7 +30,8 @@ const pendingCache = new Map<string, PendingFollowup[]>();
 export type PendingFollowup = {
   id: string;
   text: string;
-  mode: AgentMode;
+  mode: WorkMode;
+  approval: ApprovalMode;
 };
 
 function snapshot(state: SessionState): SessionState {
@@ -84,6 +87,7 @@ export function useSessionTimeline(sessionId: string | undefined) {
     }
     return !timelineCache.has(sessionId);
   });
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [recoverableRunId, setRecoverableRunId] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingFollowup[]>(() =>
     sessionId ? pendingGet(sessionId) : [],
@@ -110,6 +114,15 @@ export function useSessionTimeline(sessionId: string | undefined) {
     [sessionId],
   );
 
+  const restorePending = useCallback(
+    (snapshot: PendingFollowup[]) => {
+      const seen = new Set(snapshot.map((item) => item.id));
+      const extras = pendingRef.current.filter((item) => !seen.has(item.id));
+      writePending([...snapshot, ...extras]);
+    },
+    [writePending],
+  );
+
   useEffect(() => {
     writePending(sessionId ? pendingGet(sessionId) : []);
     setEditingId(null);
@@ -122,10 +135,12 @@ export function useSessionTimeline(sessionId: string | undefined) {
       const empty = emptyState();
       stateRef.current = empty;
       setState(empty);
+      setWorkspaceId(null);
       setLoading(false);
       setError(null);
       return;
     }
+    setWorkspaceId(null);
 
     const cached = cacheGet(sessionId);
     if (cached) {
@@ -161,6 +176,9 @@ export function useSessionTimeline(sessionId: string | undefined) {
         if (sessionResult.status === "fulfilled") {
           recoverAfterSeq = sessionResult.value.last_event_seq;
           applySessionRecover(sessionResult.value.needs_recover, sessionResult.value.active_run_id);
+          if (!cancelled && sessionRef.current === sessionId) {
+            setWorkspaceId(sessionResult.value.workspace_id || null);
+          }
         }
         if (cancelled || ac.signal.aborted) {
           return;
@@ -228,7 +246,7 @@ export function useSessionTimeline(sessionId: string | undefined) {
   }, [client, sessionId]);
 
   const startTurn = useCallback(
-    async (content: string, mode: AgentMode) => {
+    async (content: string, mode: WorkMode, approval: ApprovalMode) => {
       if (!sessionId || !content.trim()) {
         return;
       }
@@ -243,7 +261,7 @@ export function useSessionTimeline(sessionId: string | undefined) {
         return next;
       });
       try {
-        await client.startRun(sessionId, { content, mode });
+        await client.startRun(sessionId, { content, mode, approval });
         setRecoverableRunId(null);
         setError(null);
       } catch (err) {
@@ -265,18 +283,21 @@ export function useSessionTimeline(sessionId: string | undefined) {
   );
 
   const send = useCallback(
-    async (content: string, mode: AgentMode) => {
+    async (content: string, mode: WorkMode, approval: ApprovalMode) => {
       if (!sessionId || !content.trim()) {
         return;
       }
-      if (isRunning(stateRef.current)) {
-        writePending([...pendingRef.current, { id: crypto.randomUUID(), text: content, mode }]);
+      if (isRunning(stateRef.current) || flushingRef.current) {
+        writePending([...pendingRef.current, { id: crypto.randomUUID(), text: content, mode, approval }]);
         return;
       }
+      flushingRef.current = true;
       try {
-        await startTurn(content, mode);
+        await startTurn(content, mode, approval);
       } catch {
         // 错误已写入 state
+      } finally {
+        flushingRef.current = false;
       }
     },
     [sessionId, startTurn, writePending],
@@ -399,18 +420,20 @@ export function useSessionTimeline(sessionId: string | undefined) {
     if (!joined) {
       return;
     }
-    const mode = items[items.length - 1]?.mode ?? "ask_for_approval";
+    const last = items[items.length - 1];
+    const mode = last?.mode ?? "agent";
+    const approval = last?.approval ?? "manual";
     flushingRef.current = true;
     writePending([]);
     try {
       await denyPendingApprovals();
-      await startTurn(joined, mode);
+      await startTurn(joined, mode, approval);
     } catch {
-      writePending(items);
+      restorePending(items);
     } finally {
       flushingRef.current = false;
     }
-  }, [denyPendingApprovals, sessionId, startTurn, writePending]);
+  }, [denyPendingApprovals, restorePending, sessionId, startTurn, writePending]);
 
   useEffect(() => {
     if (!sessionId || !state.runStatus || !isTerminalRun(state.runStatus)) {
@@ -431,7 +454,9 @@ export function useSessionTimeline(sessionId: string | undefined) {
     if (!joined) {
       return;
     }
-    const mode = items[items.length - 1]?.mode ?? "ask_for_approval";
+    const last = items[items.length - 1];
+    const mode = last?.mode ?? "agent";
+    const approval = last?.approval ?? "manual";
     flushingRef.current = true;
     writePending([]);
     try {
@@ -439,16 +464,27 @@ export function useSessionTimeline(sessionId: string | undefined) {
       if (runId && isRunning(stateRef.current)) {
         // 先取消，避免拒绝审批后 RecoverRun 把旧轮拉起来再 409
         await client.cancelRun(runId);
+        if (sessionId) {
+          setState((current) => {
+            if (sessionRef.current !== sessionId) {
+              return current;
+            }
+            const next = applyLocalCancel(current, runId);
+            stateRef.current = next;
+            cacheSet(sessionId, next);
+            return next;
+          });
+        }
       }
       await denyPendingApprovals();
-      await startTurn(joined, mode);
+      await startTurn(joined, mode, approval);
     } catch (err) {
-      writePending(items);
+      restorePending(items);
       setError(err instanceof Error ? err.message : "发送失败");
     } finally {
       flushingRef.current = false;
     }
-  }, [client, denyPendingApprovals, sessionId, startTurn, writePending]);
+  }, [client, denyPendingApprovals, restorePending, sessionId, startTurn, writePending]);
 
   const recover = useCallback(async (runId?: string) => {
     const id = runId ?? recoverableRunId ?? stateRef.current.activeRunId;
@@ -481,6 +517,7 @@ export function useSessionTimeline(sessionId: string | undefined) {
     sending,
     running,
     loading,
+    workspaceId,
     canRecover,
     recoverableRunId,
     pending,

@@ -1,11 +1,11 @@
 package handler
 
 import (
+	cderr "codedock/internal/errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
-
-	cderr "codedock/internal/errors"
 )
 
 func TestParsePageQueryDefaults(t *testing.T) {
@@ -67,5 +67,18 @@ func TestParsePageQueryRejects(t *testing.T) {
 		if !cderr.IsInvalid(err) {
 			t.Fatalf("%s: err=%v", path, err)
 		}
+	}
+}
+
+func TestFirstUserSummary(t *testing.T) {
+	if got := firstUserSummary("  hello world  "); got != "hello world" {
+		t.Fatalf("got %q", got)
+	}
+	if got := firstUserSummary("first line\nsecond"); got != "first line" {
+		t.Fatalf("got %q", got)
+	}
+	long := strings.Repeat("你", 240)
+	if got := firstUserSummary(long); got != strings.Repeat("你", 200) {
+		t.Fatalf("should clip to 200 runes, len=%d", len([]rune(got)))
 	}
 }

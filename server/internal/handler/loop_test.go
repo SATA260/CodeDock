@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"codedock/internal/handler"
@@ -15,8 +16,8 @@ func TestLoopPlainText(t *testing.T) {
 	sessionID := f.createSession(t)
 	runID := f.start(t, sessionID, handler.StartRunRequest{
 		Content: "hello",
-		Mode:    pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 			Turns: []pkgagent.FakeTurn{{Text: "hello"}},
 		}),
 	})
@@ -44,8 +45,8 @@ func TestLoopPingAutoApprove(t *testing.T) {
 	sessionID := f.createSession(t)
 	runID := f.start(t, sessionID, handler.StartRunRequest{
 		Content: "ping please",
-		Mode:    pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 			Turns: []pkgagent.FakeTurn{
 				{ToolCalls: []pkgagent.FakeToolCall{{Name: "ping"}}},
 				{Text: "pong"},
@@ -103,8 +104,8 @@ func TestLoopCancel(t *testing.T) {
 	sessionID := f.createSession(t)
 	runID := f.start(t, sessionID, handler.StartRunRequest{
 		Content: "hang",
-		Mode:    pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 			Hang:  true,
 			Turns: []pkgagent.FakeTurn{{Text: "never"}},
 		}),
@@ -122,8 +123,8 @@ func TestLoopInterrupt(t *testing.T) {
 	sessionID := f.createSession(t)
 	oldID := f.start(t, sessionID, handler.StartRunRequest{
 		Content: "hang",
-		Mode:    pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 			Hang:  true,
 			Turns: []pkgagent.FakeTurn{{Text: "old"}},
 		}),
@@ -135,12 +136,106 @@ func TestLoopInterrupt(t *testing.T) {
 	f.waitRun(t, oldID, pkgagent.RunCancelled)
 	newID := f.start(t, sessionID, handler.StartRunRequest{
 		Content: "take over",
-		Mode:    pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 			Turns: []pkgagent.FakeTurn{{Text: "new"}},
 		}),
 	})
 	f.waitRun(t, newID, pkgagent.RunCompleted)
+}
+
+func TestLoopModeSmoke(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+
+	askID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "ask write",
+		Mode:    pkgagent.WorkAsk,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+			Turns: []pkgagent.FakeTurn{
+				{ToolCalls: []pkgagent.FakeToolCall{{
+					Name:      "write",
+					Arguments: json.RawMessage(`{"path":"smoke.txt","content":"no"}`),
+				}}},
+				{Text: "ask-done"},
+			},
+		}),
+	})
+	askRun := f.waitRun(t, askID, pkgagent.RunCompleted)
+	if askRun.Config.Mode != pkgagent.WorkAsk {
+		t.Fatalf("ask mode=%s", askRun.Config.Mode)
+	}
+	if rec := f.do(t, http.MethodGet, "/sessions/"+sessionID+"/approvals", nil); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	} else {
+		var resp handler.ListApprovalsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Approvals) != 0 {
+			t.Fatalf("ask write must not open approval: %+v", resp.Approvals)
+		}
+	}
+
+	planID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "plan only",
+		Mode:    pkgagent.WorkPlan,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+			Turns: []pkgagent.FakeTurn{{Text: "plan-done"}},
+		}),
+	})
+	f.waitRun(t, planID, pkgagent.RunCompleted)
+
+	agentID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "agent ping",
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+			Turns: []pkgagent.FakeTurn{
+				{ToolCalls: []pkgagent.FakeToolCall{{Name: "ping"}}},
+				{Text: "agent-done"},
+			},
+		}),
+	})
+	f.waitRun(t, agentID, pkgagent.RunCompleted)
+
+	msgs := listMessages(t, f, sessionID, "")
+	var sawAsk, sawPlan, sawAgent, sawUnbound, sawPing, sawDeveloper bool
+	for _, msg := range msgs.Messages {
+		if msg.Role == pkgagent.RoleDeveloper {
+			sawDeveloper = true
+		}
+		text := pkgagent.DecodeText(msg.Content)
+		switch msg.Role {
+		case pkgagent.RoleAssistant:
+			switch text {
+			case "ask-done":
+				sawAsk = true
+			case "plan-done":
+				sawPlan = true
+			case "agent-done":
+				sawAgent = true
+			}
+		case pkgagent.RoleTool:
+			if strings.Contains(text, "tool is not bound") || strings.Contains(string(msg.Content), "tool is not bound") {
+				sawUnbound = true
+			}
+			if strings.Contains(string(msg.Content), `"ok":true`) || strings.Contains(text, `"ok":true`) {
+				sawPing = true
+			}
+		}
+	}
+	if sawDeveloper {
+		t.Fatal("developer prompt must not be persisted")
+	}
+	if !sawAsk || !sawPlan || !sawAgent {
+		t.Fatalf("missing mode replies ask=%v plan=%v agent=%v", sawAsk, sawPlan, sawAgent)
+	}
+	if !sawUnbound {
+		t.Fatalf("ask write should fail as unbound: %+v", msgs.Messages)
+	}
+	if !sawPing {
+		t.Fatalf("agent ping should execute: %+v", msgs.Messages)
+	}
 }
 
 func TestLoopStartWhileActiveConflicts(t *testing.T) {
@@ -148,8 +243,8 @@ func TestLoopStartWhileActiveConflicts(t *testing.T) {
 	sessionID := f.createSession(t)
 	first := f.start(t, sessionID, handler.StartRunRequest{
 		Content: "hang",
-		Mode:    pkgagent.ModeAutoApprove,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 			Hang:  true,
 			Turns: []pkgagent.FakeTurn{{Text: "first"}},
 		}),
@@ -157,7 +252,7 @@ func TestLoopStartWhileActiveConflicts(t *testing.T) {
 	f.waitRun(t, first, pkgagent.RunRunningLLM, pkgagent.RunLoadingContext, pkgagent.RunQueued)
 	rec := f.do(t, http.MethodPost, "/sessions/"+sessionID+"/runs", handler.StartRunRequest{
 		Content: "should not start",
-		Mode:    pkgagent.ModeAutoApprove,
+		Mode:    pkgagent.WorkAgent,
 	})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d %s", rec.Code, rec.Body.String())
@@ -168,8 +263,8 @@ func startPingApproval(t *testing.T, f *fixture, sessionID string) string {
 	t.Helper()
 	return f.start(t, sessionID, handler.StartRunRequest{
 		Content: "need ping",
-		Mode:    pkgagent.ModeAskForApproval,
-		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultRunConfig(pkgagent.WorkAgent, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 			Turns: []pkgagent.FakeTurn{
 				{ToolCalls: []pkgagent.FakeToolCall{{Name: "ping"}}},
 				{Text: "done"},
@@ -201,10 +296,10 @@ func TestContinueRecoversCreatedRun(t *testing.T) {
 	f := newFixture(t)
 	sessionID := f.createSession(t)
 	ctx := context.Background()
-	cfg := withFake(pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+	cfg := withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
 		Turns: []pkgagent.FakeTurn{{Text: "resumed"}},
 	})
-	runID, err := f.runtime.CreateAgentState(ctx, sessionID, "resume me", pkgagent.ModeAutoApprove, *cfg)
+	runID, err := f.runtime.CreateAgentState(ctx, sessionID, "resume me", pkgagent.WorkAgent, *cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
