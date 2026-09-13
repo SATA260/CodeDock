@@ -34,3 +34,15 @@ export function sessionTitle(id: string, preview?: string): string {
   }
   return `会话 ${shortId(id)}`;
 }
+
+export function shortWorkspace(path: string, max = 42): string {
+  const trimmed = path.trim();
+  if (!trimmed || trimmed.length <= max) {
+    return trimmed;
+  }
+  const parts = trimmed.split(/[/\\]/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `…/${parts.slice(-2).join("/")}`;
+  }
+  return `…${trimmed.slice(-(max - 1))}`;
+}

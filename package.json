@@ -2,12 +2,15 @@
   "name": "codedock",
   "private": true,
   "scripts": {
-    "dev": "sh scripts/dev.sh",
+    "dev": "concurrently -k --names api,web --prefix-colors cyan,magenta \"pnpm dev:api\" \"pnpm dev:web\"",
     "dev:api": "sh scripts/dev-api.sh",
     "dev:web": "pnpm --filter web dev",
     "build:web": "pnpm --filter web build",
     "test:client": "pnpm --filter @codedock/core test",
     "lint:web": "pnpm --filter web lint"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.4"
   },
   "packageManager": "pnpm@11.17.0",
   "engines": {

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -28,8 +29,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DBEngine != "sqlite" {
 		t.Fatalf("DBEngine = %q, want sqlite", cfg.DBEngine)
 	}
-	if cfg.DBDSN != "file:codedock.db" {
-		t.Fatalf("DBDSN = %q, want file:codedock.db", cfg.DBDSN)
+	wantSuffix := filepath.Join("data", "codedock.db")
+	if !strings.HasPrefix(cfg.DBDSN, "file:") || !strings.HasSuffix(cfg.DBDSN, wantSuffix) {
+		t.Fatalf("DBDSN = %q, want file:.../%s", cfg.DBDSN, wantSuffix)
 	}
 	if cfg.LLMProvider != "fake" {
 		t.Fatalf("LLMProvider = %q, want fake", cfg.LLMProvider)
@@ -39,6 +41,12 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.GitRepo != "" {
 		t.Fatalf("GitRepo = %q, want empty", cfg.GitRepo)
+	}
+	if cfg.LLMConcurrency != 4 {
+		t.Fatalf("LLMConcurrency = %d, want 4", cfg.LLMConcurrency)
+	}
+	if cfg.ToolConcurrency != 8 {
+		t.Fatalf("ToolConcurrency = %d, want 8", cfg.ToolConcurrency)
 	}
 }
 
@@ -63,6 +71,28 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.GitRepo != "/tmp/repo" {
 		t.Fatalf("GitRepo = %q, want /tmp/repo", cfg.GitRepo)
+	}
+}
+
+func TestDataDir(t *testing.T) {
+	got := DataDir()
+	if !strings.HasSuffix(got, string(filepath.Separator)+"data") && !strings.HasSuffix(got, "/data") {
+		t.Fatalf("DataDir() = %q, want .../data", got)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(got), "pnpm-workspace.yaml")); err != nil {
+		t.Fatalf("DataDir parent is not repo root: %v", err)
+	}
+}
+
+func TestDefaultRoot(t *testing.T) {
+	dir := t.TempDir()
+	got := Config{GitRepo: dir}.DefaultRoot()
+	want, _ := filepath.Abs(dir)
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if (Config{}).DefaultRoot() == "" {
+		t.Fatal("empty git repo should fall back to cwd")
 	}
 }
 

@@ -84,7 +84,7 @@ func SearchTool(q *sqlite.Queries) tool.Tool {
 func (readTool) Definition() tool.Definition {
 	return tool.Definition{
 		Name:             "memory_read",
-		Prompt:           "Read a memory index or topic by scope and name. Use name \"index\" for the directory.",
+		Prompt:           "按 scope 与 name 读取一篇记忆目录或专题。目录用 name \"index\"。先读再写。",
 		ParametersSchema: schemaOf[memoryReadInput](),
 		OutputSchema:     schemaOf[memoryItemOutput](),
 		Permission: tool.Permission{
@@ -97,7 +97,7 @@ func (readTool) Definition() tool.Definition {
 func (writeTool) Definition() tool.Definition {
 	return tool.Definition{
 		Name:             "memory_write",
-		Prompt:           "Overwrite a memory index or topic by scope and name. Use name \"index\" for the directory.",
+		Prompt:           "按 scope 与 name 覆盖写入一篇记忆目录或专题。目录用 name \"index\"。只记下以后用得上的偏好或事实。",
 		ParametersSchema: schemaOf[memoryWriteInput](),
 		OutputSchema:     schemaOf[memoryItemOutput](),
 		Permission: tool.Permission{
@@ -111,7 +111,7 @@ func (writeTool) Definition() tool.Definition {
 func (searchTool) Definition() tool.Definition {
 	return tool.Definition{
 		Name:             "memory_search",
-		Prompt:           "Search indexed messages in the current workspace by keyword.",
+		Prompt:           "按关键词检索当前工作区已索引的对话消息。",
 		ParametersSchema: schemaOf[memorySearchInput](),
 		OutputSchema:     schemaOf[memorySearchOutput](),
 		Permission: tool.Permission{

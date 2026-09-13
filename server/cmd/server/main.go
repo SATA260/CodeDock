@@ -57,6 +57,8 @@ func main() {
 	}
 	runtime := agent.New(client, queries, bus, nil, logger.NewLogger("agent"), agenttools.Ports{})
 	runtime.SetModel(model)
+	runtime.SetConcurrency(cfg.LLMConcurrency, cfg.ToolConcurrency)
+	log.Info("concurrency", "llm", cfg.LLMConcurrency, "tool", cfg.ToolConcurrency)
 	runtime.Start(ctx)
 
 	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, model)

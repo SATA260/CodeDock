@@ -9,7 +9,7 @@
     "./git": "./git/index.ts"
   },
   "scripts": {
-    "test": "node --test --experimental-strip-types chat/reducer.test.ts chat/sse.test.ts git/client.test.ts"
+    "test": "node --test --experimental-strip-types chat/reducer.test.ts chat/queue.test.ts chat/sse.test.ts git/client.test.ts"
   },
   "devDependencies": {
     "@types/node": "^20",

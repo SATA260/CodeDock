@@ -6,6 +6,7 @@ import type {
   DecideApprovalRequest,
   Message,
   PageInfo,
+  Run,
   Session,
   StartRunRequest,
   StartRunResponse,
@@ -42,7 +43,7 @@ export class AgentClient {
         tenant_id: req.tenant_id ?? "default",
         user_id: req.user_id,
         agent_id: req.agent_id ?? "default",
-        workspace_id: req.workspace_id ?? "default",
+        workspace_id: req.workspace_id?.trim() || undefined,
       },
     });
     return body.session;
@@ -68,8 +69,15 @@ export class AgentClient {
     };
   }
 
-  async getSession(sessionId: string): Promise<Session> {
-    const body = await this.request<{ session: Session }>(`/sessions/${sessionId}`);
+  async getSession(sessionId: string, signal?: AbortSignal): Promise<Session> {
+    const body = await this.request<{ session: Session }>(`/sessions/${sessionId}`, { signal });
+    return body.session;
+  }
+
+  async archiveSession(sessionId: string): Promise<Session> {
+    const body = await this.request<{ session: Session }>(`/sessions/${sessionId}/archive`, {
+      method: "POST",
+    });
     return body.session;
   }
 
@@ -112,14 +120,39 @@ export class AgentClient {
       method: "POST",
       json: {
         content: req.content,
-        input_mode: req.input_mode ?? "queue",
         mode: req.mode ?? ("ask_for_approval" satisfies AgentMode),
       },
     });
   }
 
+  async getRun(runId: string, signal?: AbortSignal): Promise<Run> {
+    const body = await this.request<{ run: Run }>(`/runs/${runId}`, { signal });
+    return body.run;
+  }
+
+  async continueRun(runId: string): Promise<void> {
+    await this.request<{ ok: boolean }>(`/runs/${runId}/continue`, { method: "POST" });
+  }
+
   async cancelRun(runId: string): Promise<void> {
     await this.request<{ ok: boolean }>(`/runs/${runId}/cancel`, { method: "POST" });
+  }
+
+  async listApprovals(sessionId: string, signal?: AbortSignal): Promise<Approval[]> {
+    const query = new URLSearchParams({
+      page: "1",
+      page_size: "100",
+    });
+    const body = await this.request<{ approvals: Approval[] }>(
+      `/sessions/${sessionId}/approvals?${query}`,
+      { signal },
+    );
+    return body.approvals ?? [];
+  }
+
+  async getApproval(approvalId: string, signal?: AbortSignal): Promise<Approval> {
+    const body = await this.request<{ approval: Approval }>(`/approvals/${approvalId}`, { signal });
+    return body.approval;
   }
 
   async decideApproval(approvalId: string, req: DecideApprovalRequest): Promise<Approval> {

@@ -42,7 +42,7 @@ jobs:
           HTTP_ADDR: :18080
           LLM_PROVIDER: fake
           LLM_MODEL: fake
-          DB_DSN: file:ci.db
+          DB_DSN: file:../data/ci.db
           LOG_LEVEL: info
         run: |
           set -euo pipefail

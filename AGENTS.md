@@ -2,12 +2,12 @@
 
 修改 CodeDock 代码前，先阅读 [`docs/architecture.md`](docs/architecture.md)。该文档是当前目录归属和模块边界的依据。
 
-Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping` 与记忆工具 `memory_read` / `memory_write` / `memory_search`，不实现文件 / Shell / Git **工具**。Git 用户操作走 HTTP + `pkg/git`，不经过 Agent Tool。前端 Git 在 `packages/core/git`、`packages/views/git` 与 `apps/web` 的 `/git`，不扩 `AgentClient`。
+Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping` 与记忆工具。Git 用户操作走 HTTP + `pkg/git`，不经过 Agent Tool。仓库根是当前会话冻结的工作目录（请求带 `session_id`）；未带会话才回落 `GIT_REPO` / cwd。前端 Git 在 `packages/core/git`、`packages/views/git` 与 `apps/web` 的 `/git`，不扩 `AgentClient`。
 
 ## 目录放置规则
 
 - 服务启动、配置读取、Router 和依赖装配放在 `server/cmd/server`。
-- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，用户侧记忆查看/删除，以及 Git（直接调 `pkg/git`）。
+- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，用户侧记忆查看/删除，以及 Git（直接调 `pkg/git`）。创建 Session 时在本包冻结 `workspace_id`。不 import `internal/agent/tools`。新对话选目录由 web 弹出目录浏览框（`apps/web` 列本机目录），不走 Agent Tool。
 - Agent 运行时编排和 sqlc 持久化放在 `server/internal/agent`。
 - Markdown 记忆（热层目录+专题）与 context message 索引（冷层按工作区 FTS）放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`，不定义 Tool。
 - 具体工具定义放在 `server/internal/agent/tools`。工具名、入参/出参、schema、权限和编排都在本包；Execute 若要调外部能力，只通过 `Ports` 里的接口。Runtime `New` 时由 `cmd/server` 注入 `Ports` 的具体实现，再 `Register`。每个工具只定义入参/出参结构体，执行用 `encoding/json`，schema 从类型推断。`tools` 可 import `memory`，不 import 父包 `internal/agent`。
@@ -16,6 +16,7 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 进程内事件总线放在 `server/internal/events`。
 - 数据库入口和 sqlc 生成代码放在 `server/pkg/db`。
 - 数据库结构演进放在 `server/migrations`。
+- 运行时产生的文件（SQLite 等）放在仓根 `data/`，不要写进 `server/`。该目录 gitignore。
 - 无头业务放在 `packages/core`（`@codedock/core`）：按业务域拆（现有 `chat/`、`git/`），文件直接在域目录下，不要 `src/`。不依赖 React、Next、DOM、`process.env`。`baseUrl` / `userId` 由调用方注入。Git 用独立 `GitClient`。
 - 无业务 UI 放在 `packages/ui`（`@codedock/ui`）：`components/`、`lib/`、`styles/`，不要 `src/`，不按业务域拆。不依赖 core，不知道 Session / Run / TimelineItem。
 - 组合层放在 `packages/views`（`@codedock/views`）：按业务域拆，与 core 对齐（现有 `chat/`、`git/`）。包根 `provider.tsx` 注入 Agent client；Git 用 `views/git` 的 `GitProvider`。不 import `next/*`；导航用回调。不要 `src/`，不预建空业务域。

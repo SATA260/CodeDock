@@ -5,8 +5,11 @@ import { parseSSEChunk } from "./sse.ts";
 import type { AgentEvent, Message, TimelineItem } from "./types.ts";
 import { decodeText, parseDelta } from "./content.ts";
 import {
+  applyApprovalRecord,
+  applyApprovals,
   applyEvent,
   applyOptimisticUser,
+  decisionsForApproval,
   emptyState,
   hydrate,
 } from "./reducer.ts";
@@ -326,6 +329,101 @@ test("tool and approval lifecycle", () => {
   assert.deepEqual(tool.output, { pong: true });
 });
 
+test("approval event keeps every tool call when a later event only lists one", () => {
+  let state = applyEvent(
+    emptyState(),
+    ev({
+      seq: 1,
+      type: "tool.approval_required",
+      payload: {
+        approval_id: "ap1",
+        tool_calls: [
+          { id: "c1", name: "memory_read" },
+          { id: "c2", name: "ping" },
+        ],
+      },
+    }),
+  );
+  state = applyEvent(
+    state,
+    ev({
+      seq: 2,
+      type: "tool.approval_required",
+      payload: { approval_id: "ap1", tool_calls: [{ id: "c2", name: "ping" }] },
+    }),
+  );
+  const approval = state.items.find((item) => item.kind === "approval");
+  assert.ok(approval && approval.kind === "approval");
+  assert.equal(approval.toolCalls.length, 2);
+});
+
+test("decisionsForApproval fills the rest of a batch with the same status", () => {
+  const decisions = decisionsForApproval(
+    {
+      id: "ap1",
+      session_id: "s1",
+      run_id: "r1",
+      tool_call_id: "c1",
+      tool_calls: [
+        { id: "c1", name: "memory_read" },
+        { id: "c2", name: "ping" },
+      ],
+      scope: "once",
+      status: "pending",
+      expires_at: "2026-01-01T01:00:00Z",
+    },
+    [{ tool_call_id: "c2", status: "approved" }],
+  );
+  assert.deepEqual(decisions, [
+    { tool_call_id: "c1", status: "approved" },
+    { tool_call_id: "c2", status: "approved" },
+  ]);
+});
+
+test("approval record overlay clears a pending dock without a decided event", () => {
+  let state = applyEvent(
+    emptyState(),
+    ev({
+      seq: 1,
+      type: "tool.approval_required",
+      payload: { approval_id: "ap1", tool_calls: [{ id: "c1", name: "ping" }] },
+    }),
+  );
+  state = applyApprovalRecord(state, {
+    id: "ap1",
+    session_id: "s1",
+    run_id: "r1",
+    tool_call_id: "c1",
+    tool_calls: [{ id: "c1", name: "ping", status: "approved" }],
+    scope: "once",
+    status: "approved",
+    expires_at: "2026-01-01T01:00:00Z",
+  });
+  const approval = state.items.find((item) => item.kind === "approval");
+  assert.ok(approval && approval.kind === "approval");
+  assert.equal(approval.status, "approved");
+  assert.equal(state.lastSeq, 1);
+});
+
+test("applyApprovals hydrates a pending approval when events omitted it", () => {
+  const state = applyApprovals(emptyState(), [
+    {
+      id: "ap2",
+      session_id: "s1",
+      run_id: "r1",
+      tool_call_id: "c2",
+      tool_calls: [{ id: "c2", name: "memory_write" }],
+      scope: "once",
+      status: "pending",
+      expires_at: "2026-01-01T01:00:00Z",
+    },
+  ]);
+  const approval = state.items.find((item) => item.kind === "approval");
+  assert.ok(approval && approval.kind === "approval");
+  assert.equal(approval.status, "pending");
+  assert.equal(approval.approvalId, "ap2");
+});
+
 test("denied approval marks the tool denied", () => {
   let state = applyEvent(
     emptyState(),
@@ -369,6 +467,43 @@ test("optimistic user is replaced when run.created arrives", () => {
   assert.equal(users.length, 1);
   assert.equal(users[0]?.kind === "user" && users[0].messageId, "m-real");
   assert.equal(users[0]?.kind === "user" && users[0].text, "hi");
+});
+
+test("a later run.created does not steal the executing run", () => {
+  let state = applyEvent(
+    emptyState(),
+    ev({
+      seq: 1,
+      run_id: "r1",
+      type: "run.created",
+      payload: { trigger_message_id: "m1", mode: "auto_approve", status: "queued", text: "first" },
+    }),
+  );
+  state = applyEvent(
+    state,
+    ev({
+      seq: 2,
+      run_id: "r1",
+      type: "run.state_changed",
+      payload: { from: "queued", to: "running_llm", reason: "" },
+    }),
+  );
+  state = applyEvent(
+    state,
+    ev({
+      seq: 3,
+      run_id: "r2",
+      type: "run.created",
+      payload: { trigger_message_id: "m2", mode: "auto_approve", status: "queued", text: "second" },
+    }),
+  );
+  assert.equal(state.activeRunId, "r1");
+  assert.equal(state.runStatus, "running_llm");
+  const users = state.items.filter((item) => item.kind === "user");
+  assert.deepEqual(
+    users.map((item) => (item.kind === "user" ? item.text : "")),
+    ["first", "second"],
+  );
 });
 
 test("context compacted becomes a timeline item", () => {

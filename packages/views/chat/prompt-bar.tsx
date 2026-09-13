@@ -8,9 +8,12 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
+  isImeConfirm,
 } from "@codedock/ui";
-import { ChevronUp } from "lucide-react";
+import { ChevronUp, FolderOpen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+
+import { shortWorkspace } from "./lib/format.ts";
 
 const modes: { value: AgentMode; label: string }[] = [
   { value: "ask_for_approval", label: "manual" },
@@ -21,11 +24,17 @@ const modes: { value: AgentMode; label: string }[] = [
 export function PromptBar({
   running,
   sending,
+  workspace,
+  onPickWorkspace,
+  onClearWorkspace,
   onSend,
   onCancel,
 }: {
   running: boolean;
   sending: boolean;
+  workspace?: string;
+  onPickWorkspace?: () => Promise<void>;
+  onClearWorkspace?: () => void;
   onSend: (text: string, mode: AgentMode) => Promise<void>;
   onCancel: () => Promise<void>;
 }) {
@@ -44,16 +53,45 @@ export function PromptBar({
           await onSend(next, mode);
         }}
       >
+        {onPickWorkspace ? (
+          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
+            <span className="shrink-0 text-xs text-muted-foreground">工作目录</span>
+            <button
+              data-workspace-pick=""
+              type="button"
+              disabled={sending}
+              title={workspace?.trim() || "打开目录选择框"}
+              className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-xs leading-5 text-foreground hover:bg-muted disabled:opacity-50"
+              onClick={() => void onPickWorkspace()}
+            >
+              <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 truncate">
+                {workspace?.trim() ? shortWorkspace(workspace) : "选择目录（默认仓库）"}
+              </span>
+            </button>
+            {workspace?.trim() && onClearWorkspace ? (
+              <button
+                type="button"
+                disabled={sending}
+                className="shrink-0 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                onClick={onClearWorkspace}
+              >
+                默认
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <PromptInputTextarea
           value={text}
           disabled={sending}
           placeholder="给 Agent 发消息…"
           onChange={(event) => setText(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
+            if (event.key !== "Enter" || event.shiftKey || isImeConfirm(event)) {
+              return;
             }
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
           }}
         />
         <PromptInputFooter>

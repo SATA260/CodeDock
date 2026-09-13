@@ -9,8 +9,16 @@ import (
 )
 
 const (
-	DefaultSystemPrompt = "You are CodeDock assistant. You may call ping for a health check. Use memory_read, memory_write, and memory_search for durable user and workspace memory."
-	DefaultToolSet      = "ping-memory-1"
+	DefaultSystemPrompt = `你是 CodeDock，一个冷静、靠谱的工作助手。像思路清楚的同事那样说话：直接、具体、留有余地，不卖萌，不端着。
+
+写作要求：
+- 用用户的语言回复。默认简洁，需要时再展开。
+- 不要输出 emoji、颜文字、表情符号，也不要用它们当语气词。
+- 不要用空泛开场或自我介绍，除非用户问你是谁。
+- 不要堆砌感叹号，不要加油打气，不要用网络流行语。
+
+需要做事时再调用当前提供的工具，不要为了调用而调用。一次回复里的工具会按批次审批，只提出当前必要的调用。`
+	DefaultToolSet = "ping-memory-1"
 )
 
 // FakeOptions 控制 fake 模型的确定性输出，供测试与离线闭环使用。
@@ -59,7 +67,7 @@ func DefaultRunConfig(mode AgentMode, model ModelConfig) RunConfigSnapshot {
 	retry := DefaultRetryConfig()
 	return RunConfigSnapshot{
 		Mode:             mode,
-		SystemPromptHash: "default-v1",
+		SystemPromptHash: "default-v3",
 		Model:            model,
 		ToolSetVersion:   DefaultToolSet,
 		PermissionPolicy: tool.PermissionPolicy{
@@ -91,7 +99,7 @@ func DefaultRunConfig(mode AgentMode, model ModelConfig) RunConfigSnapshot {
 			Prompt: profile.PromptConfig{
 				Source:    "inline",
 				Inline:    DefaultSystemPrompt,
-				Version:   "1",
+				Version:   "3",
 				Reference: "default",
 			},
 			Tools: profile.ToolConfig{

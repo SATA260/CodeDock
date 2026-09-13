@@ -54,6 +54,7 @@ CodeDock/
 │   ├── ui/                      # 无业务语义；components / lib / styles，不要 src/
 │   └── views/                   # 组合层；按业务域拆（现有 chat/），不要 src/
 ├── docs/
+├── data/                    # 运行时文件（sqlite 等），gitignore
 ├── server/
 │   ├── cmd/server/              # 服务启动、配置、Router 和依赖装配
 │   ├── internal/
@@ -136,7 +137,7 @@ packages/views
   -> packages/ui
   不 import next/*
   按业务域拆目录，与 core 对齐（现有 chat）
-  AgentProvider 在包根注入 client + userId；导航用回调
+  AgentProvider 在包根注入 client + userId，以及可选的本机目录列举；导航用回调
 
 apps/web
   -> packages/views
@@ -151,15 +152,15 @@ apps/web
 
 承担大部分接口逻辑：
 
-- Session / Message / Usage / Approval 的增删改查。`sessions.summary` 在首次用户消息写入，列表与详情返回
+- Session / Message / Usage / Approval 的增删改查。创建 Session 时在本包冻结 `workspace_id`（工作目录）：用户指定的路径必须是已存在目录，否则 400；未指定（空或 `default`）则 `GIT_REPO`，再否则 cwd。不 import `internal/agent/tools`。新对话选目录由 web 弹出目录浏览框。`sessions.summary` 在首次用户消息写入，列表与详情返回
 - 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引；List 用 user_id / workspace_id，Get/Delete 用 name 默认目录）
 - SSE：先按 `afterSeq` / `Last-Event-ID` 回放已落库事件，再 `SubscribeAll` 并按 Session 过滤；客户端断开不取消 Run
 - 事件 JSON 回放：`GET /sessions/{id}/event-log`，供前端一次 hydrate，不替代 SSE 直播
 - Run 的 Start / Continue / Retry / Cancel 和审批裁决直接在 Handler 中处理，需要执行时再交给 Worker
-- 同一 Session 只有一个 active Run：`interrupt` 先取消再开新 Run；`queue` 只落库，当前结束后自动领取
-- Git HTTP（`/git/*`）：校验 checkout、组响应，直接调用 `pkg/git`。`GIT_REPO` 为空则用进程 cwd。`GET /git/status` 回 `SiteState` 整局（含 `is_repo`、跟踪、ahead/behind、integrating）
+- 同一 Session 只有一个 active Run：已有 active 时 409。要打断当前轮，先 Cancel 再 Start
+- Git HTTP（`/git/*`）：校验 checkout、组响应，直接调用 `pkg/git`。带 `session_id` 时仓库根是该会话冻结的 `workspace_id`；未带则 `GIT_REPO`，再否则 cwd。`GET /git/status` 回 `SiteState` 整局（含 `is_repo`、跟踪、ahead/behind、integrating）
 
-Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 不查库。
+Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `session_id` 时只查该 Session 的 `workspace_id`，不经过 Store。
 
 ### `internal/agent`
 
@@ -235,11 +236,11 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 不查库�
 
 ### `packages/views`
 
-组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage`、侧栏、瀑布、审批、prompt。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，不进 `AgentContext`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
+组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage`、侧栏、瀑布、审批、prompt、新对话目录选择。包根 `provider.tsx` 注入 `AgentClient` + `userId`，以及可选的本机目录列举。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，请求带当前会话 `session_id`，不进 `AgentContext`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
 
 ### `apps/web`
 
-路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient`、包 `AgentProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。Git 页在 `(chat)` 组外的 `/git`，只装配 `GitClient`。开发态顶栏（对话 / 仓库）只放 web，views 不知道路径。
+路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient`、包 `AgentProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。新对话选目录走 web 的本机目录接口。Git 页在 `(chat)` 组外的 `/git`，只装配 `GitClient`，并带当前会话 `session_id`。开发态顶栏（对话 / 仓库）只放 web，views 不知道路径。
 
 ## 组装关系
 
@@ -261,7 +262,7 @@ Worker
 
 ## 配置
 
-`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
+`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。未设 `DB_DSN` 时 SQLite 写仓根 `data/codedock.db`，不写 `server/`。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
 
 HTTP 出站领域对象使用 snake_case JSON。Router 只对本地回环 Origin 放行 CORS，便于本机 Web 直连 `:8080`。Web 用 `NEXT_PUBLIC_API_BASE`（默认 `http://localhost:8080`）和 `NEXT_PUBLIC_USER_ID`（默认 `local`）。
 

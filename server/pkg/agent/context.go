@@ -9,21 +9,23 @@ import (
 
 // History 是装载上下文所需的已准备数据。
 type History struct {
-	Run        Run
-	Turn       Turn
-	Checkpoint *CompactionCheckpoint
-	Messages   []Message
-	Tools      []tool.Definition
-	Prompt     string
+	Run           Run
+	Turn          Turn
+	Checkpoint    *CompactionCheckpoint
+	Messages      []Message
+	Tools         []tool.Definition
+	Prompt        string
+	MemoryIndexes []string
 }
 
 // Load 根据已准备数据构造上下文。
 func Load(_ context.Context, hist History) (ContextSnapshot, error) {
 	snapshot := ContextSnapshot{
-		SessionID:    hist.Run.SessionID,
-		Messages:     hist.Messages,
-		Tools:        hist.Tools,
-		SystemPrompt: hist.Prompt,
+		SessionID:     hist.Run.SessionID,
+		Messages:      hist.Messages,
+		Tools:         hist.Tools,
+		SystemPrompt:  hist.Prompt,
+		MemoryIndexes: hist.MemoryIndexes,
 	}
 	if hist.Checkpoint != nil {
 		snapshot.BaseEventSeq = hist.Checkpoint.BaseEventSeq

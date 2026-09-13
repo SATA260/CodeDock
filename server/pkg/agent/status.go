@@ -37,6 +37,20 @@ func IsTerminal(status RunStatus) bool {
 	}
 }
 
+// NeedsUserRecover 判断未完成的 Run 是否因执行中断而需要用户点恢复。
+// Worker 仍在跑、等待审批、取消中或已终态时返回 false。
+func NeedsUserRecover(status RunStatus, workerBusy bool) bool {
+	if workerBusy || IsTerminal(status) || status == RunWaitingApproval || status == RunCancelling {
+		return false
+	}
+	switch status {
+	case RunQueued, RunLoadingContext, RunRunningLLM, RunExecutingTools:
+		return true
+	default:
+		return false
+	}
+}
+
 // TerminalEvent 返回终态对应的事件类型。
 func TerminalEvent(status RunStatus) EventType {
 	switch status {
