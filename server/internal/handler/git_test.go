@@ -527,13 +527,13 @@ func TestGitPullConflictAndRemoteBranches(t *testing.T) {
 	gitCmd(t, dir, "add", "a.txt")
 	gitCmd(t, dir, "commit", "-m", "base")
 	bare := t.TempDir()
-	gitCmd(t, bare, "init", "--bare")
+	gitCmd(t, bare, "init", "--bare", "-b", "main")
 	gitCmd(t, dir, "remote", "add", "origin", bare)
 	gitCmd(t, dir, "push", "-u", "origin", "main")
 
 	parent := t.TempDir()
 	other := filepath.Join(parent, "clone")
-	gitCmd(t, parent, "clone", bare, other)
+	gitCmd(t, parent, "clone", "-b", "main", bare, other)
 	gitCmd(t, other, "config", "user.name", "tester")
 	gitCmd(t, other, "config", "user.email", "tester@example.com")
 	if err := os.WriteFile(filepath.Join(other, "a.txt"), []byte("theirs\n"), 0o644); err != nil {
@@ -720,7 +720,7 @@ func TestGitPushPullRevertUndoExtras(t *testing.T) {
 	gitCmd(t, dir, "commit", "-m", "second")
 
 	bare := t.TempDir()
-	gitCmd(t, bare, "init", "--bare")
+	gitCmd(t, bare, "init", "--bare", "-b", "main")
 	gitCmd(t, dir, "remote", "add", "origin", bare)
 	gitCmd(t, dir, "push", "-u", "origin", "main")
 
