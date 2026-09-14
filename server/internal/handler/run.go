@@ -8,12 +8,14 @@ import (
 
 	cderr "codedock/internal/errors"
 	pkgagent "codedock/pkg/agent"
+	"codedock/pkg/agent/profile"
 )
 
 type StartRunRequest struct {
-	Content string                      `json:"content"`
-	Mode    pkgagent.AgentMode          `json:"mode"`
-	Config  *pkgagent.RunConfigSnapshot `json:"config,omitempty"`
+	Content  string                      `json:"content"`          // 用户输入
+	Mode     pkgagent.WorkMode           `json:"mode"`             // 选出哪个内置 Agent：ask / plan / agent
+	Approval pkgagent.ApprovalMode       `json:"approval"`         // 流水线第三层：manual / auto / yolo
+	Config   *pkgagent.RunConfigSnapshot `json:"config,omitempty"` // 测试可覆盖快照；线上通常不传
 }
 
 type StartRunResponse struct {
@@ -120,9 +122,16 @@ func (a *API) start(ctx context.Context, sessionID string, req StartRunRequest) 
 	if req.Mode != "" {
 		config.Mode = req.Mode
 	}
-	if config.Mode == "" {
-		config.Mode = pkgagent.ModeAskForApproval
+	if req.Approval != "" {
+		config.Approval = req.Approval
 	}
+	if config.Mode == "" {
+		config.Mode = pkgagent.WorkAgent
+	}
+	if config.Approval == "" {
+		config.Approval = pkgagent.ApprovalManual
+	}
+	config.Profile = profile.For(string(config.Mode))
 
 	if session.ActiveRunID != nil && *session.ActiveRunID != "" {
 		return StartRunResponse{}, cderr.Conflict("session already has an active run")

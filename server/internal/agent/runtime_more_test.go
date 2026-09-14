@@ -47,7 +47,7 @@ func TestRuntimeAccessorsAndSubmitErrors(t *testing.T) {
 func TestLoadApprovalsCompactionAndRecoverPhases(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
+	cfg := pkgagent.DefaultRunConfig(pkgagent.WorkAgent, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
 	runID, err := rt.CreateAgentState(ctx, sessionID, "first line\nsecond", cfg.Mode, cfg)
 	if err != nil {
 		t.Fatal(err)

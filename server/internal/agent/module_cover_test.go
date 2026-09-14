@@ -154,7 +154,7 @@ func TestRecoverRunEdgePaths(t *testing.T) {
 	}
 
 	sessionID := insertSession(t, q, ctx)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{
+	cfg := pkgagent.DefaultRunConfig(pkgagent.WorkAgent, pkgagent.ModelConfig{
 		Provider: "fake",
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
@@ -218,7 +218,7 @@ func TestRecoverRunEdgePaths(t *testing.T) {
 		ID:               util.NewID(),
 		SessionID:        "gone-session",
 		TriggerMessageID: "m2",
-		Mode:             string(pkgagent.ModeAskForApproval),
+		Mode:             string(pkgagent.WorkAgent),
 		Config:           "{}",
 		Status:           string(pkgagent.RunWaitingApproval),
 	}); err != nil {
@@ -244,7 +244,7 @@ func TestCreateClaimAndEnqueueEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.Mode != string(pkgagent.ModeAskForApproval) {
+	if row.Mode != string(pkgagent.WorkAgent) {
 		t.Fatalf("mode=%s", row.Mode)
 	}
 	if _, err := rt.CreateAgentState(ctx, "missing-session", "x", "", pkgagent.RunConfigSnapshot{Mode: pkgagent.ModeAutoApprove}); err == nil {
@@ -311,7 +311,7 @@ func TestCommitStepCoverageBranches(t *testing.T) {
 	}
 
 	sessionID := insertSession(t, q, ctx)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
+	cfg := pkgagent.DefaultRunConfig(pkgagent.WorkAgent, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
 	runID, err := rt.CreateAgentState(ctx, sessionID, "commit branches", cfg.Mode, cfg)
 	if err != nil {
 		t.Fatal(err)

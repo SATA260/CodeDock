@@ -1,11 +1,21 @@
 export { AgentClient, AgentClientError, type AgentClientOptions } from "./client.ts";
 export { decodeText, firstLine, parseDelta } from "./content.ts";
+export {
+  isPlanTool,
+  latestPlanDocIds,
+  normalizePlanName,
+  planPreviewFromTool,
+  planToolDump,
+  type PlanDocPreview,
+  type PlanPreview,
+} from "./plan.ts";
 export { joinQueuedTexts } from "./queue.ts";
 export {
   applyApprovalRecord,
   applyApprovals,
   applyEvent,
   decisionsForApproval,
+  applyLocalCancel,
   applyOptimisticUser,
   applyUserText,
   dropOptimisticUser,
@@ -16,7 +26,8 @@ export {
 export { parseSSEBlock, parseSSEChunk, watchEvents, type WatchEventsOptions } from "./sse.ts";
 export type {
   AgentEvent,
-  AgentMode,
+  ApprovalMode,
+  WorkMode,
   Approval,
   ApprovalDecision,
   ApprovalStatus,

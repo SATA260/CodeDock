@@ -1,6 +1,5 @@
 import type {
   AgentEvent,
-  AgentMode,
   Approval,
   CreateSessionRequest,
   DecideApprovalRequest,
@@ -120,7 +119,8 @@ export class AgentClient {
       method: "POST",
       json: {
         content: req.content,
-        mode: req.mode ?? ("ask_for_approval" satisfies AgentMode),
+        mode: req.mode ?? "agent",
+        approval: req.approval ?? "manual",
       },
     });
   }

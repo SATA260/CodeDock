@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	cderr "codedock/internal/errors"
@@ -79,7 +80,7 @@ func mapSession(row sqlite.Session) pkgagent.Session {
 func mapRun(row sqlite.Run) pkgagent.Run {
 	var config pkgagent.RunConfigSnapshot
 	if row.Config != "" {
-		_ = json.Unmarshal([]byte(row.Config), &config)
+		_ = json.Unmarshal(redactJSONSecrets(json.RawMessage(row.Config)), &config)
 	}
 	var reason *pkgagent.StopReason
 	if row.StopReason.Valid && row.StopReason.String != "" {
@@ -90,7 +91,8 @@ func mapRun(row sqlite.Run) pkgagent.Run {
 		ID:               row.ID,
 		SessionID:        row.SessionID,
 		TriggerMessageID: row.TriggerMessageID,
-		Mode:             pkgagent.AgentMode(row.Mode),
+		Mode:             pkgagent.WorkMode(row.Mode),
+		Approval:         config.Approval,
 		Config:           config,
 		Status:           pkgagent.RunStatus(row.Status),
 		CurrentTurnID:    ptrString(row.CurrentTurnID),
@@ -136,7 +138,7 @@ func mapEvent(row sqlite.AgentEvent) pkgagent.AgentEvent {
 		Type:       pkgagent.EventType(row.Type),
 		Version:    int(row.Version),
 		OccurredAt: parseTime(row.OccurredAt),
-		Payload:    json.RawMessage(row.Payload),
+		Payload:    redactJSONSecrets(json.RawMessage(row.Payload)),
 	}
 }
 
@@ -184,6 +186,41 @@ func mapUsage(row sqlite.UsageRecord) pkgagent.UsageRecord {
 		Estimated:                row.Estimated != 0,
 		RawProviderUsage:         rawJSON(row.RawProviderUsage.String),
 		CreatedAt:                parseTime(row.CreatedAt),
+	}
+}
+
+// redactJSONSecrets 去掉 HTTP / SSE 载荷里的密钥字段，避免把模型 API Key 回给浏览器。
+func redactJSONSecrets(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || !strings.Contains(strings.ToLower(string(raw)), "api_key") && !strings.Contains(string(raw), "apiKey") {
+		return raw
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return raw
+	}
+	redactSecretValue(value)
+	out, err := json.Marshal(value)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func redactSecretValue(value any) {
+	switch item := value.(type) {
+	case map[string]any:
+		for key, child := range item {
+			switch strings.ToLower(key) {
+			case "api_key", "apikey", "secret":
+				item[key] = "***"
+			default:
+				redactSecretValue(child)
+			}
+		}
+	case []any:
+		for _, child := range item {
+			redactSecretValue(child)
+		}
 	}
 }
 

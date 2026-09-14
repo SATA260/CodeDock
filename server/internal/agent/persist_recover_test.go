@@ -12,7 +12,7 @@ import (
 func TestEnqueuePersistsStepJob(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
+	cfg := pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{
 		Provider: "fake",
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
@@ -37,7 +37,7 @@ func TestEnqueuePersistsStepJob(t *testing.T) {
 func TestStartDoesNotRecoverPersistedJob(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
+	cfg := pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{
 		Provider: "fake",
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
@@ -71,7 +71,7 @@ func TestStartDoesNotRecoverPersistedJob(t *testing.T) {
 func TestRecoverRunSkipsPendingApproval(t *testing.T) {
 	rt, q, ctx := testRuntime(t, true)
 	sessionID := insertSession(t, q, ctx)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
+	cfg := pkgagent.DefaultRunConfig(pkgagent.WorkAgent, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
 	runID, err := rt.CreateAgentState(ctx, sessionID, "wait", cfg.Mode, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestRecoverRunSkipsPendingApproval(t *testing.T) {
 func TestRecoverRunResetsCrashedRunningJob(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
 	sessionID := insertSession(t, q, ctx)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
+	cfg := pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{
 		Provider: "fake",
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
@@ -128,7 +128,7 @@ func TestRecoverRunResetsCrashedRunningJob(t *testing.T) {
 func TestNeedsRecoverOrphanedAndBusy(t *testing.T) {
 	rt, q, ctx := testRuntime(t, true)
 	orphanedSess := insertSession(t, q, ctx)
-	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
+	cfg := pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{
 		Provider: "fake",
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Hang: true, Turns: []pkgagent.FakeTurn{{Text: "late"}}}),

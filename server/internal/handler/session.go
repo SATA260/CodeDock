@@ -13,9 +13,9 @@ import (
 )
 
 type CreateSessionRequest struct {
-	TenantID    string `json:"tenant_id"`
-	UserID      string `json:"user_id"`
-	AgentID     string `json:"agent_id"`
+	TenantID    string `json:"tenant_id"`    // 租户；空则 default
+	UserID      string `json:"user_id"`      // 用户，必填
+	AgentID     string `json:"agent_id"`     // 会话容器上的逻辑 Agent ID，不随发送改成 ask/plan/agent
 	WorkspaceID string `json:"workspace_id"` // 工作目录；创建时冻结。显式路径必须已存在，否则 400；空或 default 则 GIT_REPO / cwd
 }
 

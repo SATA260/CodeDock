@@ -152,6 +152,18 @@ func supportsThinking(base string) bool {
 	return strings.Contains(strings.ToLower(base), "deepseek")
 }
 
+// developerWireRole 把本轮模式消息映射成网关能接受的 role。
+// 官方 OpenAI 用 developer；DeepSeek 等兼容网关只认 system / user / assistant / tool。
+func developerWireRole(model ModelConfig) string {
+	var opts openaiOptions
+	_ = json.Unmarshal(model.Options, &opts)
+	base := strings.ToLower(strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/"))
+	if base == "" || strings.Contains(base, "api.openai.com") || strings.Contains(base, "openai.azure.com") {
+		return "developer"
+	}
+	return "system"
+}
+
 // consumeOpenAI 解析 SSE 增量，拼出最终文本、工具调用和用量后关闭流。
 func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *staticStream) {
 	defer close(stream.done)
@@ -252,11 +264,10 @@ func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *s
 }
 
 // toOpenAIMessages 把系统提示、历史消息和工具结果映射成 OpenAI chat 消息。
+// 模式规则紧跟底座 system：DeepSeek 等网关会丢掉插在对话历史后面的 system。
 func toOpenAIMessages(chat Chat) []openaiChatMessage {
-	messages := make([]openaiChatMessage, 0, len(chat.Messages)+1)
-	if chat.SystemPrompt != "" {
-		messages = append(messages, openaiChatMessage{Role: "system", Content: chat.SystemPrompt})
-	}
+	var mode *openaiChatMessage
+	rest := make([]openaiChatMessage, 0, len(chat.Messages))
 	for _, msg := range chat.Messages {
 		switch msg.Role {
 		case RoleAssistant:
@@ -271,7 +282,7 @@ func toOpenAIMessages(chat Chat) []openaiChatMessage {
 					}{Name: call.Name, Arguments: string(call.Arguments)},
 				})
 			}
-			messages = append(messages, item)
+			rest = append(rest, item)
 		case RoleTool:
 			var result ToolResultContent
 			_ = json.Unmarshal(msg.Content, &result)
@@ -279,14 +290,24 @@ func toOpenAIMessages(chat Chat) []openaiChatMessage {
 			if content == "" {
 				content = DecodeText(msg.Content)
 			}
-			messages = append(messages, openaiChatMessage{Role: "tool", Content: content, ToolCallID: result.CallID})
+			rest = append(rest, openaiChatMessage{Role: "tool", Content: content, ToolCallID: result.CallID})
 		case RoleSystem:
-			messages = append(messages, openaiChatMessage{Role: "system", Content: DecodeText(msg.Content)})
+			rest = append(rest, openaiChatMessage{Role: "system", Content: DecodeText(msg.Content)})
+		case RoleDeveloper:
+			item := openaiChatMessage{Role: developerWireRole(chat.Model), Content: DecodeText(msg.Content)}
+			mode = &item
 		default:
-			messages = append(messages, openaiChatMessage{Role: "user", Content: DecodeText(msg.Content)})
+			rest = append(rest, openaiChatMessage{Role: "user", Content: DecodeText(msg.Content)})
 		}
 	}
-	return messages
+	messages := make([]openaiChatMessage, 0, len(rest)+2)
+	if chat.SystemPrompt != "" {
+		messages = append(messages, openaiChatMessage{Role: "system", Content: chat.SystemPrompt})
+	}
+	if mode != nil {
+		messages = append(messages, *mode)
+	}
+	return append(messages, rest...)
 }
 
 // toOpenAITools 把工具定义映射成 OpenAI function tools。

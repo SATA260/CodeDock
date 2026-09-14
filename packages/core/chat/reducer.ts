@@ -55,14 +55,25 @@ export function applyOptimisticUser(
   state: SessionState,
   input: { runId: string; text: string },
 ): SessionState {
-  const queued = hasExecutingRun(state, input.runId);
   return upsertUser(state, {
     messageId: `pending:${input.runId}`,
     runId: input.runId,
     text: input.text,
-    queued,
+    queued: false,
     seq: state.lastSeq,
   });
+}
+
+/** 本地已发出取消后，先清掉执行中标记，避免新气泡被当成排队。 */
+export function applyLocalCancel(state: SessionState, runId: string): SessionState {
+  if (!runId || state.activeRunId !== runId) {
+    return state;
+  }
+  return {
+    ...state,
+    activeRunId: null,
+    runStatus: "cancelled",
+  };
 }
 
 export function dropOptimisticUser(state: SessionState, runId: string): SessionState {
