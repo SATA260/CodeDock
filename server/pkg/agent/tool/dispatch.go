@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
+
+	"codedock/pkg/agent/seam"
 )
 
 // Dispatch 按权限与审批策略调度工具调用。
@@ -48,9 +51,10 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 			})
 			continue
 		}
-		item, wait := prepareCall(inv, call, approved)
+		item, wait, updated := prepareCall(ctx, inv, call, approved)
+		inv.Calls[i] = updated
 		if wait {
-			approvalCalls = append(approvalCalls, call)
+			approvalCalls = append(approvalCalls, updated)
 			continue
 		}
 		prepared = append(prepared, item)
@@ -84,23 +88,108 @@ type preparedCall struct {
 
 // prepareCall 查找工具并做参数、权限、审批校验；wait=true 表示需先审批。
 // 查不到、参数错、权限不足都写成失败 Result，不返回 error。
-func prepareCall(inv Invocation, call Call, approved map[string]struct{}) (preparedCall, bool) {
+func prepareCall(ctx context.Context, inv Invocation, call Call, approved map[string]struct{}) (preparedCall, bool, Call) {
 	emit(inv, "call_started", call, max(1, call.Attempt), nil)
 	item, err := inv.Registry.Get(Reference{Name: call.Name})
 	if err != nil {
-		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
+		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false, call
 	}
 	def := item.Definition()
 	if err := validateArguments(def, call.Arguments); err != nil {
-		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
+		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false, call
 	}
 	if err := checkPermission(inv.PermissionPolicy, inv.AgentMode, def); err != nil {
-		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
+		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false, call
+	}
+	if _, already := approved[call.ID]; !already {
+		updated, denied, ask := applyPreExecute(ctx, inv, call)
+		call = updated
+		if denied {
+			return preparedCall{call: call, result: failResult(call, "denied by plugin"), skip: true}, false, call
+		}
+		if ask {
+			return preparedCall{}, true, call
+		}
 	}
 	if requiresApproval(inv.AgentMode, inv.ApprovalPolicy, def, call.ID, approved) {
-		return preparedCall{}, true
+		return preparedCall{}, true, call
 	}
-	return preparedCall{call: call, tool: item}, false
+	return preparedCall{call: call, tool: item}, false, call
+}
+
+// applyPreExecute 在审批判断前递工具入参。已批准的调用不会走到这里。
+func applyPreExecute(ctx context.Context, inv Invocation, call Call) (Call, bool, bool) {
+	ev, err := seam.Dispatch(ctx, inv.Dispatcher, seam.Envelope{
+		Type:      seam.TypePreExecute,
+		SessionID: inv.SessionID,
+		RunID:     inv.RunID,
+		TurnID:    inv.TurnID,
+		Payload:   mustJSON(PreExecutePayload{Call: call}),
+	})
+	if err != nil {
+		slog.Warn("tools/pre-execute dispatch failed", "run_id", inv.RunID, "call_id", call.ID, "error", err)
+		return call, true, false
+	}
+	updated := call
+	if ev.Type == seam.TypePreExecute || ev.Type == seam.TypeToolsAsk {
+		if len(ev.Payload) > 0 {
+			var payload PreExecutePayload
+			if err := json.Unmarshal(ev.Payload, &payload); err == nil {
+				if payload.Call.ID == "" {
+					payload.Call.ID = call.ID
+				}
+				if payload.Call.Name == "" {
+					payload.Call.Name = call.Name
+				}
+				updated = payload.Call
+			}
+		}
+	}
+	switch ev.Type {
+	case seam.TypeToolsDenied:
+		return call, true, false
+	case seam.TypeToolsAsk:
+		return updated, false, true
+	default:
+		return updated, false, false
+	}
+}
+
+func mustJSON(v any) json.RawMessage {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return body
+}
+
+// applyPostExecute 在写结果前递工具结果；出错保留原结果。
+func applyPostExecute(ctx context.Context, inv Invocation, call Call, result Result) Result {
+	ev, err := seam.Dispatch(ctx, inv.Dispatcher, seam.Envelope{
+		Type:      seam.TypePostExecute,
+		SessionID: inv.SessionID,
+		RunID:     inv.RunID,
+		TurnID:    inv.TurnID,
+		Payload:   mustJSON(PostExecutePayload{Call: call, Result: result}),
+	})
+	if err != nil {
+		slog.Warn("tools/post-execute dispatch failed", "run_id", inv.RunID, "call_id", call.ID, "error", err)
+		return result
+	}
+	if ev.Type != seam.TypePostExecute || len(ev.Payload) == 0 {
+		return result
+	}
+	var payload PostExecutePayload
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+		return result
+	}
+	if payload.Result.CallID == "" {
+		payload.Result.CallID = result.CallID
+	}
+	if payload.Result.Name == "" {
+		payload.Result.Name = result.Name
+	}
+	return payload.Result
 }
 
 // runSerial 按调用顺序执行工具；fail_fast 遇失败 Result 后不再跑后续调用。
@@ -206,6 +295,7 @@ func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result,
 		}
 		last = result
 		if last.Success {
+			last = applyPostExecute(ctx, inv, item.call, last)
 			emit(inv, "execution_result", item.call, attempt, &last)
 			return last, nil
 		}
@@ -214,6 +304,7 @@ func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result,
 			retryErr = fmt.Errorf("tool failed")
 		}
 		if !def.SupportsRetry || !retryableTool(retryErr) || attempt >= maxAttempts(inv) {
+			last = applyPostExecute(ctx, inv, item.call, last)
 			emit(inv, "execution_result", item.call, attempt, &last)
 			return last, nil
 		}

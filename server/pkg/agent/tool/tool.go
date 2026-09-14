@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"codedock/pkg/agent/seam"
 )
 
 // ExecutionMode 定义一组工具调用采用串行还是并行执行。
@@ -148,6 +150,7 @@ type Invocation struct {
 	DeniedCallIDs    []string
 	OnEvent          DispatchHook
 	Gate             Gate
+	Dispatcher       seam.Dispatcher
 }
 
 // DispatchResult 按模型调用顺序保存结果，并标识是否因审批暂停。

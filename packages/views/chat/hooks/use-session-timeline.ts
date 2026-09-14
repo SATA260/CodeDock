@@ -243,7 +243,17 @@ export function useSessionTimeline(sessionId: string | undefined) {
         return next;
       });
       try {
-        await client.startRun(sessionId, { content, mode });
+        const started = await client.startRun(sessionId, { content, mode });
+        if (started.handled) {
+          setState((current) => {
+            if (sessionRef.current !== sessionId) {
+              return current;
+            }
+            const next = dropOptimisticUser(current, pendingRunId);
+            cacheSet(sessionId, next);
+            return next;
+          });
+        }
         setRecoverableRunId(null);
         setError(null);
       } catch (err) {

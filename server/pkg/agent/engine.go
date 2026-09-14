@@ -3,21 +3,24 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"codedock/pkg/agent/seam"
 	"codedock/pkg/agent/tool"
 )
 
 // Engine 执行一步：按 Brain 的指令调用对应执行器，自身不直接写库、不发事件、不调度下一步。
 type Engine struct {
-	brain    *Brain
-	facts    FactWriter
-	tools    tool.Registry
-	llmGate  tool.Gate
-	toolGate tool.Gate
+	brain      *Brain
+	facts      FactWriter
+	tools      tool.Registry
+	llmGate    tool.Gate
+	toolGate   tool.Gate
+	dispatcher seam.Dispatcher
 }
 
 // NewEngine 创建执行引擎。brain 为空时自动构造一个空 Brain。
@@ -35,6 +38,14 @@ func (e *Engine) SetGates(llm, tools tool.Gate) {
 	}
 	e.llmGate = llm
 	e.toolGate = tools
+}
+
+// SetDispatcher 设置步骤内各口使用的喊话器。nil 表示各口原样通过。
+func (e *Engine) SetDispatcher(d seam.Dispatcher) {
+	if e == nil {
+		return
+	}
+	e.dispatcher = d
 }
 
 // Step 执行一步：先让 Brain 决策，再按指令类型分发到对应执行器。
@@ -119,6 +130,8 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	chat.SessionID = state.SessionID
 	chat.RunID = state.RunID
 	chat.TurnID = turnID
+	chat.Dispatcher = e.dispatcher
+	chat = applyRequestSeam(ctx, e.dispatcher, chat)
 
 	stream, err := Stream(ctx, chat)
 	if err != nil {
@@ -257,6 +270,7 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 		DeniedCallIDs:    state.Checkpoint.Denied,
 		OnEvent:          e.toolEventHook(state),
 		Gate:             e.toolGate,
+		Dispatcher:       e.dispatcher,
 	})
 	if err != nil {
 		if ctx.Err() != nil || state.CancelRequested {
@@ -418,6 +432,34 @@ func (e *Engine) appendFact(ctx context.Context, runID string, fact Fact) error 
 		return nil
 	}
 	return e.facts.Append(ctx, runID, fact)
+}
+
+// applyRequestSeam 在发模型前递系统提示和消息；出错或换向都保留原数据。
+func applyRequestSeam(ctx context.Context, d seam.Dispatcher, chat Chat) Chat {
+	ev, err := seam.Dispatch(ctx, d, seam.Envelope{
+		Type:      seam.TypeRequest,
+		SessionID: chat.SessionID,
+		RunID:     chat.RunID,
+		TurnID:    chat.TurnID,
+		Payload: MarshalPayload(RequestPayload{
+			SystemPrompt: chat.SystemPrompt,
+			Messages:     chat.Messages,
+		}),
+	})
+	if err != nil {
+		slog.Warn("agent/request dispatch failed", "run_id", chat.RunID, "error", err)
+		return chat
+	}
+	if ev.Type != seam.TypeRequest || len(ev.Payload) == 0 {
+		return chat
+	}
+	var payload RequestPayload
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+		return chat
+	}
+	chat.SystemPrompt = payload.SystemPrompt
+	chat.Messages = payload.Messages
+	return chat
 }
 
 // newEntityID 生成去掉连字符的 UUID，用作消息/Turn 等实体 id。

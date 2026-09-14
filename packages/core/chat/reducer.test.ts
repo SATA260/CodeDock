@@ -9,6 +9,7 @@ import {
   applyApprovals,
   applyEvent,
   applyOptimisticUser,
+  dropOptimisticUser,
   decisionsForApproval,
   emptyState,
   hydrate,
@@ -450,6 +451,13 @@ test("denied approval marks the tool denied", () => {
   const tool = state.items.find((item) => item.kind === "tool");
   assert.ok(tool && tool.kind === "tool");
   assert.equal(tool.state, "denied");
+});
+
+test("dropOptimisticUser removes a handled local bubble", () => {
+  let state = applyOptimisticUser(emptyState(), { runId: "local:1", text: "/skip" });
+  assert.equal(state.items.length, 1);
+  state = dropOptimisticUser(state, "local:1");
+  assert.equal(state.items.length, 0);
 });
 
 test("optimistic user is replaced when run.created arrives", () => {

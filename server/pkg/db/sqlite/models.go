@@ -82,6 +82,13 @@ type Run struct {
 	FinishedAt       sql.NullString
 }
 
+type RunOverlay struct {
+	RunID        string
+	SystemPrompt string
+	Hidden       string
+	UpdatedAt    string
+}
+
 type RunToolCheckpoint struct {
 	RunID          string
 	TurnID         string
