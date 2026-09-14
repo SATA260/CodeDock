@@ -244,6 +244,23 @@ func TestLoadEmptyDir(t *testing.T) {
 	}
 }
 
+// TestRegisterReservedMethods 确认 ping / memory_* 不能被插件覆盖。
+func TestRegisterReservedMethods(t *testing.T) {
+	h := &Host{registry: tool.NewRegistry()}
+	inst := &instance{methods: map[string]struct{}{}}
+	for _, name := range []string{"ping", "memory_read", "memory_write", "memory_search"} {
+		if err := h.registerMethod(inst, sdk.Method{Name: name, Prompt: "no"}); err == nil {
+			t.Fatalf("reserved %s should be rejected", name)
+		}
+	}
+	if err := h.registerMethod(inst, sdk.Method{Name: "echo", Prompt: "echo"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.registerMethod(inst, sdk.Method{Name: "echo", Prompt: "dup"}); err == nil {
+		t.Fatal("duplicate method should be rejected")
+	}
+}
+
 // buildExample 编译仓根 example/<name> 到 dest。
 func buildExample(t *testing.T, name, dest string) {
 	t.Helper()

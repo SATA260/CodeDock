@@ -316,6 +316,7 @@ func TestLoopStartInputDispatchError(t *testing.T) {
 	}
 }
 
+// TestLoopStartWhileActiveConflicts 确认已有活跃 Run 时再开一轮 409，但插件 handled 不算冲突。
 func TestLoopStartWhileActiveConflicts(t *testing.T) {
 	f := newFixture(t)
 	sessionID := f.createSession(t)
@@ -334,6 +335,27 @@ func TestLoopStartWhileActiveConflicts(t *testing.T) {
 	})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	f.runtime.SetDispatcher(seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		if ev.Type == seam.TypeInput {
+			ev.Type = seam.TypeInputHandled
+		}
+		return ev, nil
+	}))
+	handled := f.do(t, http.MethodPost, "/sessions/"+sessionID+"/runs", handler.StartRunRequest{
+		Content: "plugin takes this",
+		Mode:    pkgagent.WorkAgent,
+	})
+	if handled.Code != http.StatusOK {
+		t.Fatalf("handled during active %d %s", handled.Code, handled.Body.String())
+	}
+	var resp handler.StartRunResponse
+	if err := json.Unmarshal(handled.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Handled || resp.RunID != "" {
+		t.Fatalf("handled during active resp=%+v", resp)
 	}
 }
 

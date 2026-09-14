@@ -655,6 +655,19 @@ func TestLoadAgentStateMergesExtraMethods(t *testing.T) {
 	if !containsString(hist.Run.Config.Profile.Tools.Names, "echo") {
 		t.Fatalf("names=%+v", hist.Run.Config.Profile.Tools.Names)
 	}
+
+	askCfg := pkgagent.DefaultRunConfig(pkgagent.WorkAsk, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
+	askID, err := rt.CreateAgentState(ctx, sessionID, "ask", askCfg.Mode, askCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, askHist, err := rt.LoadAgentState(ctx, askID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(askHist.Run.Config.Profile.Tools.Names, "echo") {
+		t.Fatalf("ask names should still include plugin methods: %+v", askHist.Run.Config.Profile.Tools.Names)
+	}
 }
 
 // TestNilRuntimeGuards 覆盖空 Runtime 上主要入口的防护。
