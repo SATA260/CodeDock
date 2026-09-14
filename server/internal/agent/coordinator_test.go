@@ -13,6 +13,7 @@ import (
 	"codedock/internal/events"
 	"codedock/internal/util"
 	pkgagent "codedock/pkg/agent"
+	"codedock/pkg/agent/seam"
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db"
 	"codedock/pkg/db/sqlite"
@@ -425,6 +426,203 @@ func TestWorkerSubmitAndCancel(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("run did not finish")
+}
+
+func waitRunStatus(t *testing.T, q *sqlite.Queries, ctx context.Context, runID string, want ...pkgagent.RunStatus) pkgagent.RunStatus {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var last pkgagent.RunStatus
+	for time.Now().Before(deadline) {
+		row, err := q.GetRun(ctx, runID)
+		if err == nil {
+			last = pkgagent.RunStatus(row.Status)
+			if len(want) == 0 && pkgagent.IsTerminal(last) {
+				return last
+			}
+			for _, status := range want {
+				if last == status {
+					return last
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("run %s did not reach %v last=%s", runID, want, last)
+	return last
+}
+
+func TestPreStepWritesOverlay(t *testing.T) {
+	rt, q, ctx := testRuntime(t, true)
+	sessionID := insertSession(t, q, ctx)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
+		Provider: "fake",
+		Model:    "fake",
+		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
+	})
+	rt.SetDispatcher(seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		if ev.Type == seam.TypePreStep {
+			ev.Payload = pkgagent.MarshalPayload(pkgagent.PreStepPayload{
+				SystemPrompt: "overlay-prompt",
+				Hidden:       []pkgagent.Message{{Role: pkgagent.RoleSystem, Content: pkgagent.EncodeText("hidden-note")}},
+			})
+		}
+		return ev, nil
+	}))
+	runID, err := rt.CreateAgentState(ctx, sessionID, "go", cfg.Mode, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.ClaimSession(ctx, sessionID, runID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Enqueue(ctx, pkgagent.StepJob{RunID: runID, StepIndex: 1, Phase: pkgagent.PhaseUserInput}); err != nil {
+		t.Fatal(err)
+	}
+	waitRunStatus(t, q, ctx, runID, pkgagent.RunCompleted)
+	_, hist, err := rt.LoadAgentState(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hist.Prompt != "overlay-prompt" {
+		t.Fatalf("prompt=%q", hist.Prompt)
+	}
+	if len(hist.Hidden) != 1 || pkgagent.DecodeText(hist.Hidden[0].Content) != "hidden-note" {
+		t.Fatalf("hidden=%+v", hist.Hidden)
+	}
+}
+
+func TestPreStepDoesNotDuplicateHiddenOnReplay(t *testing.T) {
+	rt, q, ctx := testRuntime(t, true)
+	sessionID := insertSession(t, q, ctx)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
+		Provider: "fake",
+		Model:    "fake",
+		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
+	})
+	rt.SetDispatcher(seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		if ev.Type != seam.TypePreStep {
+			return ev, nil
+		}
+		var payload pkgagent.PreStepPayload
+		_ = json.Unmarshal(ev.Payload, &payload)
+		payload.Hidden = append(payload.Hidden, pkgagent.Message{
+			Role:    pkgagent.RoleSystem,
+			Content: pkgagent.EncodeText("hidden-note"),
+		})
+		ev.Payload = pkgagent.MarshalPayload(payload)
+		return ev, nil
+	}))
+	runID, err := rt.CreateAgentState(ctx, sessionID, "go", cfg.Mode, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.ClaimSession(ctx, sessionID, runID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Enqueue(ctx, pkgagent.StepJob{RunID: runID, StepIndex: 1, Phase: pkgagent.PhaseUserInput}); err != nil {
+		t.Fatal(err)
+	}
+	waitRunStatus(t, q, ctx, runID, pkgagent.RunCompleted)
+	state, hist, err := rt.LoadAgentState(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist.Hidden) != 1 {
+		t.Fatalf("first hidden=%+v", hist.Hidden)
+	}
+	blocked, replayed, err := rt.worker.applyPreStep(ctx, pkgagent.StepJob{
+		RunID:     runID,
+		StepIndex: 1,
+		Phase:     pkgagent.PhaseUserInput,
+	}, state, hist)
+	if err != nil || blocked {
+		t.Fatalf("replay blocked=%v err=%v", blocked, err)
+	}
+	if len(replayed.Hidden) != 1 || pkgagent.DecodeText(replayed.Hidden[0].Content) != "hidden-note" {
+		t.Fatalf("replay hidden=%+v", replayed.Hidden)
+	}
+}
+
+func TestPreStepBlockedCancelsRun(t *testing.T) {
+	rt, q, ctx := testRuntime(t, true)
+	sessionID := insertSession(t, q, ctx)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{
+		Provider: "fake",
+		Model:    "fake",
+		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "ok"}}}),
+	})
+	rt.SetDispatcher(seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		if ev.Type == seam.TypePreStep {
+			ev.Type = seam.TypeRunBlocked
+		}
+		return ev, nil
+	}))
+	runID, err := rt.CreateAgentState(ctx, sessionID, "go", cfg.Mode, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.ClaimSession(ctx, sessionID, runID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Enqueue(ctx, pkgagent.StepJob{RunID: runID, StepIndex: 1, Phase: pkgagent.PhaseUserInput}); err != nil {
+		t.Fatal(err)
+	}
+	if got := waitRunStatus(t, q, ctx, runID, pkgagent.RunCancelled); got != pkgagent.RunCancelled {
+		t.Fatalf("status=%s", got)
+	}
+}
+
+type extraNamer struct {
+	seam.Func
+	names []string
+}
+
+func (e extraNamer) MethodNames() []string { return e.names }
+
+type extraEcho struct{}
+
+func (extraEcho) Definition() tool.Definition {
+	return tool.Definition{Name: "echo", Prompt: "echo", Permission: tool.Permission{}}
+}
+
+func (extraEcho) Execute(_ context.Context, input tool.Input) (tool.Result, error) {
+	return tool.Result{CallID: input.Call.ID, Name: "echo", Success: true}, nil
+}
+
+func TestLoadAgentStateMergesExtraMethods(t *testing.T) {
+	rt, q, ctx := testRuntime(t, false)
+	if err := rt.Tools().Register(extraEcho{}); err != nil {
+		t.Fatal(err)
+	}
+	sessionID := insertSession(t, q, ctx)
+	cfg := pkgagent.DefaultRunConfig(pkgagent.ModeAutoApprove, pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
+	runID, err := rt.CreateAgentState(ctx, sessionID, "hi", cfg.Mode, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hist, err := rt.LoadAgentState(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, def := range hist.Tools {
+		if def.Name == "echo" {
+			t.Fatal("echo should stay hidden without extra names")
+		}
+	}
+	rt.SetDispatcher(extraNamer{names: []string{"echo"}})
+	_, hist, err = rt.LoadAgentState(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, def := range hist.Tools {
+		if def.Name == "echo" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("tools=%+v", hist.Tools)
+	}
 }
 
 // TestNilRuntimeGuards 覆盖空 Runtime 上主要入口的防护。

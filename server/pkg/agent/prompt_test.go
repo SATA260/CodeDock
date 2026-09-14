@@ -49,3 +49,27 @@ func TestBuildJoinsToolPrompts(t *testing.T) {
 		t.Fatalf("missing tool prompt: %q", chat.SystemPrompt)
 	}
 }
+
+func TestBuildInsertsHiddenAfterMemory(t *testing.T) {
+	t.Parallel()
+	chat, err := Build(context.Background(), Prompt{
+		Context: ContextSnapshot{
+			SystemPrompt:  "base",
+			MemoryIndexes: []string{"index-note"},
+			Hidden:        []Message{{Role: RoleSystem, Content: EncodeText("hidden-note")}},
+			Messages:      []Message{{Role: RoleUser, Content: EncodeText("hi")}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) < 3 {
+		t.Fatalf("messages=%d", len(chat.Messages))
+	}
+	if DecodeText(chat.Messages[0].Content) != "index-note" || chat.Messages[0].Role != RoleSystem {
+		t.Fatalf("memory first: %+v", chat.Messages[0])
+	}
+	if DecodeText(chat.Messages[1].Content) != "hidden-note" || chat.Messages[1].Role != RoleSystem {
+		t.Fatalf("hidden second: %+v", chat.Messages[1])
+	}
+}
