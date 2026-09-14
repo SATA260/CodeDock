@@ -175,7 +175,7 @@ export function ChatPage({
         <WorkspacePicker
           initialPath={workspaceDraft || undefined}
           listDirectories={listDirectories}
-          onCancel={() => setPickerOpen(false)}
+          onClose={() => setPickerOpen(false)}
           onSelect={(path) => {
             writeLastWorkspace(path);
             setWorkspaceDraft(path);
