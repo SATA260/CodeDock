@@ -575,9 +575,6 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 			return err
 		}
 	}
-	if !terminal && state.Status == pkgagent.RunWaitingApproval && state.Config.Approval == pkgagent.ApprovalAuto {
-		r.autoReviewPending(ctx, runID, deref(state.PendingApproval))
-	}
 	return nil
 }
 

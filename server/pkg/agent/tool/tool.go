@@ -41,7 +41,7 @@ type ApprovalMode string
 
 const (
 	ApprovalManual ApprovalMode = "manual" // 开单等人
-	ApprovalAuto   ApprovalMode = "auto"   // 开单后独立复审
+	ApprovalAuto   ApprovalMode = "auto"   // 先独立复审，通过则执行；说不清才开单给人
 	ApprovalYolo   ApprovalMode = "yolo"   // 本层直接 allow
 )
 

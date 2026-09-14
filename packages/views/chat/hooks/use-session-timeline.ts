@@ -12,6 +12,7 @@ import {
   hydrate,
   isTerminalRun,
   joinQueuedTexts,
+  waitUntilRunReleased,
   watchEvents,
   type ApprovalMode,
   type WorkMode,
@@ -462,19 +463,24 @@ export function useSessionTimeline(sessionId: string | undefined) {
     try {
       const runId = stateRef.current.activeRunId;
       if (runId && isRunning(stateRef.current)) {
-        // 先取消，避免拒绝审批后 RecoverRun 把旧轮拉起来再 409
+        // 先取消并等到会话释放，再改本地状态，避免 409 后排队空转
         await client.cancelRun(runId);
-        if (sessionId) {
-          setState((current) => {
-            if (sessionRef.current !== sessionId) {
-              return current;
-            }
-            const next = applyLocalCancel(current, runId);
-            stateRef.current = next;
-            cacheSet(sessionId, next);
-            return next;
-          });
-        }
+        await waitUntilRunReleased({
+          runId,
+          getActiveRunId: async () => {
+            const session = await client.getSession(sessionId);
+            return session.active_run_id;
+          },
+        });
+        setState((current) => {
+          if (sessionRef.current !== sessionId) {
+            return current;
+          }
+          const next = applyLocalCancel(current, runId);
+          stateRef.current = next;
+          cacheSet(sessionId, next);
+          return next;
+        });
       }
       await denyPendingApprovals();
       await startTurn(joined, mode, approval);

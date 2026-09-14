@@ -209,7 +209,7 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 }
 
 // callToolsBatch 按配置派发本批工具；需审批则暂停，否则写入 tool 消息并进入 tools_batch_result。
-// 逻辑：取 Pending 或指令 payload → Dispatch（受 toolGate 与 MaxParallelTools 约束）→ 审批中则 waiting_approval，否则写结果。
+// auto 先复审再发工具事件：通过则当场执行，升级人才发 approval_required。
 func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruction) (StepResult, error) {
 	if err := ctx.Err(); err != nil {
 		return e.finish(ctx, in, finishInstructions(RunCancelled, StopCancelled)[0])
@@ -244,7 +244,8 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 		maxParallel = 1
 	}
 
-	out, err := tool.Dispatch(ctx, tool.Invocation{
+	liveHook := e.toolEventHook(state)
+	inv := tool.Invocation{
 		SessionID:       state.SessionID,
 		RunID:           state.RunID,
 		TurnID:          turnID,
@@ -259,9 +260,13 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 		Registry:        e.tools,
 		ApprovedCallIDs: state.Checkpoint.Approved,
 		DeniedCallIDs:   state.Checkpoint.Denied,
-		OnEvent:         e.toolEventHook(state),
+		OnEvent:         liveHook,
 		Gate:            e.toolGate,
-	})
+	}
+	if state.Config.Approval == ApprovalAuto {
+		inv.OnEvent = nil
+	}
+	out, err := tool.Dispatch(ctx, inv)
 	if err != nil {
 		if ctx.Err() != nil || state.CancelRequested {
 			return e.finish(ctx, StepInput{State: state, Job: in.Job}, finishInstructions(RunCancelled, StopCancelled)[0])
@@ -272,6 +277,13 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 	state.StepIndex = in.Job.StepIndex
 	if state.StepIndex <= 0 {
 		state.StepIndex = 1
+	}
+	if state.Config.Approval == ApprovalAuto {
+		if out.WaitingApproval {
+			out, state = e.reviewThenDispatch(ctx, state, inv, out, liveHook)
+		} else {
+			replayDispatchEvents(liveHook, calls, out)
+		}
 	}
 	if out.WaitingApproval {
 		approvalID := derefString(state.PendingApproval)
@@ -379,6 +391,78 @@ func (e *Engine) finish(_ context.Context, in StepInput, inst Instruction) (Step
 			Payload: MarshalPayload(RunTerminalPayload{Status: payload.Status, StopReason: &payload.Reason}),
 		}},
 	}, nil
+}
+
+// reviewThenDispatch 在 auto 下先复审再派发。复审失败或说不清则仍等待人批，不发工具事件。
+func (e *Engine) reviewThenDispatch(ctx context.Context, state AgentState, inv tool.Invocation, out tool.DispatchResult, liveHook tool.DispatchHook) (tool.DispatchResult, AgentState) {
+	src := out.PendingCalls
+	if len(src) == 0 {
+		src = out.ApprovalCalls
+	}
+	calls := make([]ApprovalToolCall, 0, len(src))
+	for _, call := range src {
+		calls = append(calls, ApprovalToolCall{
+			ID:        call.ID,
+			Name:      call.Name,
+			Arguments: call.Arguments,
+			Status:    ApprovalPending,
+		})
+	}
+	result, err := Review(ctx, state.Config.Model, calls)
+	if err != nil || result.Escalate || len(result.Decisions) == 0 {
+		return out, state
+	}
+	for _, item := range result.Decisions {
+		switch item.Status {
+		case ApprovalApproved:
+			state.Checkpoint.Approved = appendUniqueID(state.Checkpoint.Approved, item.ToolCallID)
+		case ApprovalDenied:
+			state.Checkpoint.Denied = appendUniqueID(state.Checkpoint.Denied, item.ToolCallID)
+		}
+	}
+	inv.ApprovedCallIDs = state.Checkpoint.Approved
+	inv.DeniedCallIDs = state.Checkpoint.Denied
+	inv.OnEvent = liveHook
+	second, err := tool.Dispatch(ctx, inv)
+	if err != nil {
+		return out, state
+	}
+	return second, state
+}
+
+// replayDispatchEvents 把 auto 首趟静默执行的结果补成工具事件，供前端显示。
+func replayDispatchEvents(hook tool.DispatchHook, calls []tool.Call, out tool.DispatchResult) {
+	if hook == nil {
+		return
+	}
+	byID := make(map[string]tool.Result, len(out.Results))
+	for _, result := range out.Results {
+		byID[result.CallID] = result
+	}
+	for _, call := range calls {
+		attempt := max(1, call.Attempt)
+		hook("call_started", call, attempt, nil)
+		result, ok := byID[call.ID]
+		if !ok {
+			continue
+		}
+		copied := result
+		hook("execution_started", call, attempt, nil)
+		hook("execution_result", call, attempt, &copied)
+	}
+}
+
+// appendUniqueID 按出现顺序追加非空且未出现过的 id。
+func appendUniqueID(ids []string, id string) []string {
+	if id == "" {
+		return ids
+	}
+	for _, item := range ids {
+		if item == id {
+			return ids
+		}
+	}
+	return append(ids, id)
 }
 
 // toolEventHook 把工具派发过程中的进度转成 Fact 写入。

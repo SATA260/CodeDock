@@ -24,6 +24,7 @@ export {
   indexMessages,
 } from "./reducer.ts";
 export { parseSSEBlock, parseSSEChunk, watchEvents, type WatchEventsOptions } from "./sse.ts";
+export { waitUntilRunReleased } from "./wait-run.ts";
 export type {
   AgentEvent,
   ApprovalMode,

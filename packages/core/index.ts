@@ -28,6 +28,7 @@ export {
   RECOVERABLE_RUN_STATUSES,
   TERMINAL_RUN_STATUSES,
   THINKING_PHASES,
+  waitUntilRunReleased,
   watchEvents,
   type AgentClientOptions,
   type WatchEventsOptions,

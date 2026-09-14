@@ -182,6 +182,74 @@ func TestEngineCallToolsWaitingApproval(t *testing.T) {
 	}
 }
 
+func TestEngineAutoReviewApprovesWithoutApprovalEvent(t *testing.T) {
+	engine, facts, _ := testEngine(t)
+	cfg := DefaultRunConfig(WorkAgent, ModelConfig{
+		Provider: "fake",
+		Model:    "fake",
+		Options: mustRaw(FakeOptions{Review: &FakeReview{
+			Decisions: []ApprovalDecision{{ToolCallID: "c1", Status: ApprovalApproved, Reason: "ok"}},
+		}}),
+	})
+	cfg.Approval = ApprovalAuto
+	got, err := engine.Step(context.Background(), StepInput{
+		State: AgentState{
+			SessionID: "sess-1",
+			RunID:     "run-1",
+			Config:    cfg,
+			Checkpoint: ToolCheckpoint{
+				Pending: []tool.Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}},
+			},
+		},
+		Job: StepJob{RunID: "run-1", StepIndex: 2, Phase: PhaseLLMResult},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Status != RunExecutingTools {
+		t.Fatalf("status=%s", got.State.Status)
+	}
+	for _, fact := range append(append([]Fact{}, facts.facts...), got.Facts...) {
+		if fact.Type == EventApprovalRequired {
+			t.Fatalf("auto review should not emit approval_required: %+v", fact)
+		}
+	}
+	if len(got.Messages) != 1 || got.Messages[0].Role != RoleTool {
+		t.Fatalf("tool messages=%+v", got.Messages)
+	}
+}
+
+func TestEngineAutoReviewEscalateEmitsApprovalRequired(t *testing.T) {
+	engine, facts, _ := testEngine(t)
+	cfg := DefaultRunConfig(WorkAgent, ModelConfig{Provider: "fake", Model: "fake"})
+	cfg.Approval = ApprovalAuto
+	got, err := engine.Step(context.Background(), StepInput{
+		State: AgentState{
+			SessionID: "sess-1",
+			RunID:     "run-1",
+			Config:    cfg,
+			Checkpoint: ToolCheckpoint{
+				Pending: []tool.Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}},
+			},
+		},
+		Job: StepJob{RunID: "run-1", StepIndex: 2, Phase: PhaseLLMResult},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Status != RunWaitingApproval {
+		t.Fatalf("status=%s", got.State.Status)
+	}
+	if len(got.Facts) != 1 || got.Facts[0].Type != EventApprovalRequired {
+		t.Fatalf("facts=%+v", got.Facts)
+	}
+	for _, fact := range facts.facts {
+		if fact.Type == EventToolCallStarted || fact.Type == EventToolExecutionStarted {
+			t.Fatalf("escalated auto review should not emit tool events yet: %+v", fact)
+		}
+	}
+}
+
 func TestEngineCallToolsApprovalEventListsWholeBatch(t *testing.T) {
 	engine, _, reg := testEngine(t)
 	if err := reg.Register(stubEcho{}); err != nil {

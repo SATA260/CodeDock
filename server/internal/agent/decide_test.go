@@ -66,10 +66,18 @@ func TestDecideApprovalAndAutoReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.Status != string(pkgagent.ApprovalApproved) {
-		t.Fatalf("auto review status=%s", row.Status)
+	if row.Status != string(pkgagent.ApprovalPending) {
+		t.Fatalf("waiting approval status=%s", row.Status)
 	}
 
+	got, err := rt.DecideApproval(ctx, ApprovalVerdict{
+		ApprovalID: approvalID,
+		Decisions:  []pkgagent.ApprovalDecision{{ToolCallID: "c1", Status: pkgagent.ApprovalApproved, Reason: "ok"}},
+		ActorID:    "user",
+	})
+	if err != nil || got.Status != pkgagent.ApprovalApproved {
+		t.Fatalf("decide %+v %v", got, err)
+	}
 	again, err := rt.DecideApproval(ctx, ApprovalVerdict{ApprovalID: approvalID})
 	if err != nil || again.Status != pkgagent.ApprovalApproved {
 		t.Fatalf("resubmit %+v %v", again, err)
