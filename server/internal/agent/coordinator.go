@@ -287,8 +287,22 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 		return pkgagent.AgentState{}, pkgagent.History{}, err
 	}
 
+	names := unionNames(run.Config.Profile.Tools.Names, r.extraMethodNames())
+	run.Config.Profile.Tools.Names = names
+	state.Config.Profile.Tools.Names = names
 	tools := tool.Definitions(r.tools)
 	prompt := pkgagent.DefaultSystemPrompt
+	var hidden []pkgagent.Message
+	if overlay, err := q.GetRunOverlay(ctx, runID); err == nil {
+		if overlay.SystemPrompt != "" {
+			prompt = overlay.SystemPrompt
+		}
+		if overlay.Hidden != "" && overlay.Hidden != "[]" {
+			_ = json.Unmarshal([]byte(overlay.Hidden), &hidden)
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return pkgagent.AgentState{}, pkgagent.History{}, err
+	}
 
 	hist := pkgagent.History{
 		Run:           run,
@@ -297,6 +311,7 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 		Messages:      messages,
 		Tools:         tools,
 		Prompt:        prompt,
+		Hidden:        hidden,
 		MemoryIndexes: r.loadMemoryIndexes(ctx, sess.UserID, sess.WorkspaceID),
 	}
 	return state, hist, nil
@@ -1046,4 +1061,45 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// unionNames 按出现顺序合并两份工具名，去掉空串和重复。
+func unionNames(left, right []string) []string {
+	seen := make(map[string]struct{}, len(left)+len(right))
+	out := make([]string, 0, len(left)+len(right))
+	for _, name := range append(append([]string{}, left...), right...) {
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
+// hasOverlay 表示本轮已经跑过 pre-step 并落过 overlay，恢复时不要再喊插件。
+func (r *Runtime) hasOverlay(ctx context.Context, runID string) bool {
+	if r == nil || r.q(ctx) == nil || runID == "" {
+		return false
+	}
+	_, err := r.q(ctx).GetRunOverlay(ctx, runID)
+	return err == nil
+}
+
+// saveOverlay 把 pre-step 改过的提示和隐藏消息写入本轮 overlay。
+func (r *Runtime) saveOverlay(ctx context.Context, runID string, payload pkgagent.PreStepPayload) error {
+	if r == nil || r.q(ctx) == nil || runID == "" {
+		return nil
+	}
+	hidden := marshalJSON(payload.Hidden)
+	_, err := r.q(ctx).UpsertRunOverlay(ctx, sqlite.UpsertRunOverlayParams{
+		RunID:        runID,
+		SystemPrompt: payload.SystemPrompt,
+		Hidden:       hidden,
+		UpdatedAt:    util.FormatTime(util.Now()),
+	})
+	return err
 }

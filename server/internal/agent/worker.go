@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	cderr "codedock/internal/errors"
 	pkgagent "codedock/pkg/agent"
+	"codedock/pkg/agent/seam"
 )
 
 // stepJobKey 返回 StepJob 的唯一去重键：run_id + step_index。
@@ -183,7 +185,15 @@ func (w *Worker) execute(parent context.Context, job pkgagent.StepJob) {
 	w.mu.Lock()
 	_, skipped := w.skipped[runID]
 	w.mu.Unlock()
-	if skipped || state.CancelRequested {
+	blocked := false
+	if !skipped && !state.CancelRequested && job.Phase == pkgagent.PhaseUserInput {
+		var err error
+		blocked, history, err = w.applyPreStep(ctx, job, state, history)
+		if err != nil {
+			blocked = true
+		}
+	}
+	if skipped || state.CancelRequested || blocked {
 		if !pkgagent.IsTerminal(state.Status) {
 			result, ferr := w.runtime.engine.Step(ctx, pkgagent.StepInput{
 				State:   cancelState(state),
@@ -247,4 +257,45 @@ func failState(state pkgagent.AgentState, err error) pkgagent.AgentState {
 // timeNow 返回 UTC 当前时间，便于测试替换。
 func timeNow() time.Time {
 	return time.Now().UTC()
+}
+
+// applyPreStep 在首拍把系统提示和隐藏消息递给插件；换向或出错则取消本轮。
+// 本轮已有 overlay 时不再喊插件，避免恢复或重入第一步时把 Hidden 再追加一遍。
+func (w *Worker) applyPreStep(ctx context.Context, job pkgagent.StepJob, state pkgagent.AgentState, history pkgagent.History) (bool, pkgagent.History, error) {
+	if w == nil || w.runtime == nil || w.runtime.Dispatcher() == nil {
+		return false, history, nil
+	}
+	if w.runtime.hasOverlay(ctx, job.RunID) {
+		return false, history, nil
+	}
+	ev, err := seam.Dispatch(ctx, w.runtime.Dispatcher(), seam.Envelope{
+		Type:      seam.TypePreStep,
+		SessionID: state.SessionID,
+		RunID:     job.RunID,
+		Payload: pkgagent.MarshalPayload(pkgagent.PreStepPayload{
+			SystemPrompt: history.Prompt,
+			Hidden:       history.Hidden,
+		}),
+	})
+	if err != nil {
+		w.runtime.logger().Info("pre-step blocked", "run_id", job.RunID, "error", err)
+		return true, history, err
+	}
+	if ev.Type == seam.TypeRunBlocked {
+		w.runtime.logger().Info("pre-step blocked", "run_id", job.RunID, "type", ev.Type)
+		return true, history, nil
+	}
+	if ev.Type != seam.TypePreStep || len(ev.Payload) == 0 {
+		return false, history, nil
+	}
+	var payload pkgagent.PreStepPayload
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+		return false, history, nil
+	}
+	if err := w.runtime.saveOverlay(ctx, job.RunID, payload); err != nil {
+		w.runtime.logger().Error("save overlay failed", "run_id", job.RunID, "error", err)
+	}
+	history.Prompt = payload.SystemPrompt
+	history.Hidden = payload.Hidden
+	return false, history, nil
 }

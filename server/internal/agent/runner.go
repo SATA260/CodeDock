@@ -8,6 +8,7 @@ import (
 	agenttools "codedock/internal/agent/tools"
 	"codedock/internal/events"
 	pkgagent "codedock/pkg/agent"
+	"codedock/pkg/agent/seam"
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db"
 	"codedock/pkg/db/sqlite"
@@ -27,6 +28,13 @@ type Runtime struct {
 	compactWG    sync.WaitGroup
 	claimMu      sync.Mutex
 	claimedSteps map[string]struct{}
+	dispatcher   seam.Dispatcher
+	extraMethods methodNamer
+}
+
+// methodNamer 由插件宿主实现，用来把插件方法并进本轮可执行绑定。
+type methodNamer interface {
+	MethodNames() []string
 }
 
 // New 创建 Runtime 及其 Worker。工具定义在 tools 包注册；ports 只注入工具 Execute 所需的外部实现。
@@ -96,6 +104,37 @@ func (r *Runtime) SetConcurrency(llm, tools int) {
 		return
 	}
 	r.engine.SetGates(pkgagent.NewSlotLimiter(llm), pkgagent.NewSlotLimiter(tools))
+}
+
+// SetDispatcher 注入喊话器，并同步给 Engine。若实现 MethodNames，则记为额外可执行方法。
+func (r *Runtime) SetDispatcher(d seam.Dispatcher) {
+	if r == nil {
+		return
+	}
+	r.dispatcher = d
+	if r.engine != nil {
+		r.engine.SetDispatcher(d)
+	}
+	r.extraMethods = nil
+	if namer, ok := d.(methodNamer); ok {
+		r.extraMethods = namer
+	}
+}
+
+// Dispatcher 返回当前喊话器。
+func (r *Runtime) Dispatcher() seam.Dispatcher {
+	if r == nil {
+		return nil
+	}
+	return r.dispatcher
+}
+
+// extraMethodNames 返回插件挂上的方法名，Load 时并进本轮可执行绑定。
+func (r *Runtime) extraMethodNames() []string {
+	if r == nil || r.extraMethods == nil {
+		return nil
+	}
+	return r.extraMethods.MethodNames()
 }
 
 // Start 启动 Worker。不自动恢复库里未完成的 Job，需用户显式 RecoverRun。

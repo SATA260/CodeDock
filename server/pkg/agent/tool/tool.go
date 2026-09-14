@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	"codedock/pkg/agent/seam"
 )
 
 // ErrOutsideWorkspace 表示路径落在会话工作区外。第 1 层校验不算失败，但必须走审批。
@@ -148,14 +150,15 @@ type Invocation struct {
 	Mode            ExecutionMode
 	FailurePolicy   FailurePolicy
 	MaxParallel     int
-	BoundNames      []string
-	Effects         map[string]Effect
-	Approval        ApprovalMode
+	BoundNames      []string          // 本 Agent 可执行名；未列入则 deny
+	Effects         map[string]Effect // 第 2 层覆盖表
+	Approval        ApprovalMode      // 第 3 层
 	Registry        Registry
 	ApprovedCallIDs []string
 	DeniedCallIDs   []string
 	OnEvent         DispatchHook
 	Gate            Gate
+	Dispatcher      seam.Dispatcher // 插件 tools/pre-execute 与 post-execute；空则原样通过
 }
 
 // DispatchResult 按模型调用顺序保存结果，并标识是否因审批暂停。
