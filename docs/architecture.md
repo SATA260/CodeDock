@@ -2,7 +2,7 @@
 
 本文档定义 CodeDock 当前的技术骨架。目录按能力拆分；Issue、Task、Review、Workspace 等业务目录不属于本项目的基础结构。
 
-Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。默认注册 `ping`、记忆工具、编码八工具与 `plan_*`。
+Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。三个内置 Agent（ask / plan / agent）共用同一 Loop；审批走工具 → Agent 表 → 审批模式流水线。
 
 ## 总体架构
 
@@ -61,7 +61,7 @@ CodeDock/
 │   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel、记忆查看/删除、Git
 │   │   ├── agent/               # 运行时编排 + sqlc 持久化
 │   │   │   ├── memory/          # 热层目录+专题，冷层工作区 FTS 索引
-│   │   │   └── tools/           # 具体工具定义：ping、memory_*
+│   │   │   └── tools/           # 具体工具定义：ping、memory_*、编码八工具、plan_*
 │   │   ├── events/              # 进程内事件总线
 │   │   ├── config/
 │   │   ├── logger/
@@ -137,7 +137,7 @@ packages/views
   -> packages/ui
   不 import next/*
   按业务域拆目录，与 core 对齐（现有 chat）
-  AgentProvider 在包根注入 client + userId，以及可选的本机目录列举；导航用回调
+  AgentProvider 在包根注入 client + userId；导航用回调
 
 apps/web
   -> packages/views
@@ -189,11 +189,11 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 工具定义全部在本包。Runtime `New` 接收 `Ports`（Execute 要调用的外部实现），再 `Register`：
 
-- 本包写工具名、入参/出参、schema、权限和编排。`ping`，`memory_read` / `memory_write` / `memory_search`，编码八工具（`read` / `write` / `edit` / `ls` / `grep` / `find` / `bash` / `powershell`），以及 `plan_list` / `plan_read` / `plan_write`
-- Execute 若依赖外部能力，只通过 `Ports` 上的接口调用；由 `cmd/server` 在初始化时注入具体实现。`Ports.WorkspaceRoot` 只是进程回落，会话级根走 `tool.Input.WorkspaceRoot`
-- 编码工具经 jail 限制在会话工作目录；目录外路径 Inspect 失败。`plan_*` 只读写 `.cursor/*.md`
+- 本包写工具名、入参/出参、schema、默认 Effect 和编排。`ping`、记忆三件、编码八工具（`read`/`write`/`edit`/`ls`/`grep`/`find`/`bash`/`powershell`）、`plan_list`/`plan_read`/`plan_write`
+- Execute 与第 1 层路径/计划名校验只通过 `Ports`（可替换 FS/RunCommand）和会话已冻结的工作目录。本包不负责解析或冻结 `workspace_id`，只消费 Handler 写入的路径（或 `Ports.WorkspaceRoot` 进程回落）。目录内走工具默认 Effect；目录外必须审批，Agent 表和 yolo 都不能抬成 allow。批过后才能在目录外执行
+- Git 用户操作仍走 HTTP + `pkg/git`，不在本包实现 Git Tool
 
-每个工具只定义入参/出参结构体；执行用 `encoding/json`，给模型的 schema 由 `jsonschema.For` 从类型推断。Agent 通过 `Profile.Tools.Names` 绑定工具。运行模式提供 `read` / `write` / `memory` 能力，只有模式覆盖了工具声明的全部能力时该工具才对模型可见且可 Dispatch。记忆工具声明 `memory`。写类编码工具声明 `write`。审批仍由工具声明 `RequiresApproval` 或 `Effect=ask`，`ask_for_approval` 暂停、`auto_approve` / `yolo` 自动过。一批待批工具对应一条审批，一次提交审完再流转。不 import 父包 `internal/agent`。测试用 Tool 可留在测试文件。
+每个工具只定义入参/出参结构体；执行用 `encoding/json`，给模型的 schema 由 `jsonschema.For` 从类型推断。发给模型的是注册表全量工具；`Profile.Tools.Names` 是可执行绑定。模式规则由 `Build` 注入一条 developer 消息；发给网关时紧跟底座 system，不改底座正文。审批流水线：工具默认+参数校验 → 本 Agent `Names`（未绑定 deny，yolo / 已批准都不能抬）→ Agent `Effects` → `approval`（manual/auto/yolo）；每层只审上一层的 `ask`。一批待批工具对应一条审批，一次提交审完再流转。不 import 父包 `internal/agent`。测试用 Tool 可留在测试文件。
 
 ### `pkg/git`
 
@@ -236,11 +236,11 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/views`
 
-组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage`、侧栏、瀑布、审批、prompt、新对话目录选择。包根 `provider.tsx` 注入 `AgentClient` + `userId`，以及可选的本机目录列举。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，请求带当前会话 `session_id`，不进 `AgentContext`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
+组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage`、侧栏、瀑布、审批、prompt。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，不进 `AgentContext`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
 
 ### `apps/web`
 
-路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient`、包 `AgentProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。新对话选目录走 web 的本机目录接口。Git 页在 `(chat)` 组外的 `/git`，只装配 `GitClient`，并带当前会话 `session_id`。开发态顶栏（对话 / 仓库）只放 web，views 不知道路径。
+路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient`、包 `AgentProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。Git 页在 `(chat)` 组外的 `/git`，只装配 `GitClient`。开发态顶栏（对话 / 仓库）只放 web，views 不知道路径。
 
 ## 组装关系
 
@@ -257,7 +257,7 @@ Worker
        -> pkg.Build
        -> pkg.Stream          # 按 ModelConfig 在 pkg 内创建 fake 或 openai
        -> Transition：先落库再 Bus
-       -> pkg.Dispatch        # ping、memory_*、编码八工具、plan_* 及测试用 Tool
+       -> pkg.Dispatch        # 经流水线后执行已绑定工具
 ```
 
 ## 配置

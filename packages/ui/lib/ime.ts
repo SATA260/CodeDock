@@ -4,7 +4,6 @@ import { useRef, type CompositionEvent, type KeyboardEvent as ReactKeyboardEvent
 
 type KeyLike = KeyboardEvent | ReactKeyboardEvent;
 
-// flag 读取事件上的布尔字段，避免 KeyLike 联合类型没有 isComposing。
 function flag(event: object, name: "isComposing"): boolean {
   return name in event && Boolean((event as { isComposing?: boolean }).isComposing);
 }

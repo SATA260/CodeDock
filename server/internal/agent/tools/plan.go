@@ -39,15 +39,11 @@ type planTool struct {
 }
 
 func (t planTool) Definition() tool.Definition {
-	perm := tool.Permission{Effect: tool.EffectAllow, Capabilities: []tool.Capability{tool.CapabilityRead}}
-	if t.name == "plan_write" {
-		perm.Capabilities = []tool.Capability{tool.CapabilityWrite}
-	}
 	return tool.Definition{
 		Name:             t.name,
 		Prompt:           t.prompt,
 		ParametersSchema: t.schema,
-		Permission:       perm,
+		Permission:       tool.Permission{Effect: tool.EffectAllow},
 		Version:          "1",
 	}
 }

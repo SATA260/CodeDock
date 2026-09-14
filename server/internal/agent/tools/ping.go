@@ -27,7 +27,7 @@ func (pingTool) Definition() tool.Definition {
 		ParametersSchema: schemaOf[pingInput](),
 		OutputSchema:     schemaOf[pingOutput](),
 		Permission: tool.Permission{
-			RequiresApproval: true,
+			Effect: tool.EffectAsk,
 		},
 		SupportsCancel: true,
 		SupportsRetry:  true,

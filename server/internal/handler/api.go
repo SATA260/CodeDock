@@ -3,9 +3,11 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"codedock/internal/agent"
 	"codedock/internal/config"
@@ -65,6 +67,7 @@ func (a *API) publishEvent(ev pkgagent.AgentEvent) {
 	if a == nil || a.bus == nil || ev.EventID == "" {
 		return
 	}
+	ev.Payload = redactJSONSecrets(ev.Payload)
 	a.bus.Publish(events.Event{
 		Type:          string(ev.Type),
 		ChatSessionID: ev.SessionID,
@@ -84,6 +87,9 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 // writeError 按领域错误类型映射状态码并写出 {"error":...}。
 func writeError(w http.ResponseWriter, err error) {
+	if err == nil || isClientGone(err) {
+		return
+	}
 	status := http.StatusInternalServerError
 	switch {
 	case cderr.IsNotFound(err):
@@ -97,7 +103,18 @@ func writeError(w http.ResponseWriter, err error) {
 	case cderr.IsUnavailable(err):
 		status = http.StatusServiceUnavailable
 	}
+	if status >= http.StatusInternalServerError {
+		slog.Default().Error("handler error", "status", status, "error", err)
+	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+func isClientGone(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "context canceled") || strings.Contains(msg, "context deadline exceeded")
 }
 
 // decodeJSON 解析请求体；空 body 视为成功。

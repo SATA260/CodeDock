@@ -1,12 +1,40 @@
 package agent
 
 import (
+	"codedock/pkg/agent/tool"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"codedock/pkg/agent/tool"
+	"time"
 )
+
+func TestDeveloperWireRole(t *testing.T) {
+	if developerWireRole(ModelConfig{}) != "developer" {
+		t.Fatal("empty base should use official openai developer")
+	}
+	openaiOpts, _ := json.Marshal(map[string]string{"base_url": "https://api.openai.com/v1"})
+	if developerWireRole(ModelConfig{Options: openaiOpts}) != "developer" {
+		t.Fatal("openai.com")
+	}
+	deepseekOpts, _ := json.Marshal(map[string]string{"base_url": "https://api.deepseek.com"})
+	if developerWireRole(ModelConfig{Options: deepseekOpts}) != "system" {
+		t.Fatal("deepseek should fall back to system")
+	}
+	msgs := toOpenAIMessages(Chat{
+		SystemPrompt: "base",
+		Model:        ModelConfig{Options: deepseekOpts},
+		Messages: []Message{
+			{Role: RoleUser, Content: EncodeText("hi")},
+			{Role: RoleDeveloper, Content: EncodeText("mode")},
+		},
+	})
+	if len(msgs) != 3 || msgs[0].Role != "system" || msgs[0].Content != "base" || msgs[1].Role != "system" || msgs[1].Content != "mode" || msgs[2].Role != "user" {
+		t.Fatalf("%+v", msgs)
+	}
+}
 
 func TestApplyOutputLimitAndThinkingSupport(t *testing.T) {
 	var chat openaiChatRequest
@@ -80,4 +108,91 @@ func TestMergeToolDelta(t *testing.T) {
 	if !json.Valid(calls[0].Arguments) {
 		t.Fatal("arguments are not valid json")
 	}
+}
+
+func TestStreamOpenAI(t *testing.T) {
+	t.Run("missing key", func(t *testing.T) {
+		if _, err := Stream(context.Background(), Chat{Model: ModelConfig{Provider: "openai", Model: "gpt"}}); err == nil {
+			t.Fatal("expected key error")
+		}
+	})
+	t.Run("status error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("nope"))
+		}))
+		defer server.Close()
+		opts, _ := json.Marshal(map[string]string{"api_key": "k", "base_url": server.URL})
+		if _, err := Stream(context.Background(), Chat{Model: ModelConfig{Provider: "openai", Model: "gpt", Options: opts}}); err == nil {
+			t.Fatal("expected status error")
+		}
+	})
+	t.Run("sse text and tools", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("\n"))
+			_, _ = w.Write([]byte("data: not-json\n\n"))
+			_, _ = w.Write([]byte("data: {\"id\":\"req1\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"ping\",\"arguments\":\"{}\"}}]}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		}))
+		defer server.Close()
+		opts, _ := json.Marshal(map[string]string{"api_key": "k", "base_url": server.URL, "thinking": "disabled"})
+		stream, err := Stream(context.Background(), Chat{
+			TurnID:          "t1",
+			Model:           ModelConfig{Provider: "openai", Model: "o3-mini", Options: opts},
+			SystemPrompt:    "sys",
+			Messages:        []Message{{Role: RoleUser, Content: EncodeText("q")}},
+			Tools:           []tool.Definition{{Name: "ping", Prompt: "p"}},
+			MaxOutputTokens: 32,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Close()
+		for range stream.Events() {
+		}
+		got, err := stream.Result(context.Background())
+		if err != nil || DecodeText(got.Message.Content) != "hi" || len(got.ToolCalls) != 1 || got.Usage.TotalTokens != 3 {
+			t.Fatalf("%+v %v", got, err)
+		}
+	})
+	t.Run("http error", func(t *testing.T) {
+		opts, _ := json.Marshal(map[string]string{"api_key": "k", "base_url": "http://127.0.0.1:1"})
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		if _, err := Stream(ctx, Chat{Model: ModelConfig{Provider: "openai", Model: "gpt", Options: opts}}); err == nil {
+			t.Fatal("expected dial error")
+		}
+	})
+}
+
+func TestCompactWithOpenAI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"short\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+	opts, _ := json.Marshal(map[string]string{"api_key": "k", "base_url": server.URL})
+	model := ModelConfig{Provider: "openai", Model: "gpt", Options: opts}
+	got, err := CompactIfNeeded(context.Background(), Compaction{
+		Run:      Run{Config: RunConfigSnapshot{Model: model, Limits: RunLimits{MaxInputTokens: 1}}},
+		Snapshot: ContextSnapshot{Messages: []Message{{Role: RoleUser, Content: EncodeText(stringsRepeat("z", 20)), EventSeq: 1}}},
+	})
+	if err != nil || got.Summary == nil || got.Summary.Content != "short" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	idx, err := CompactIndex(context.Background(), model, "# index")
+	if err != nil || idx != "short" {
+		t.Fatal(idx, err)
+	}
+}
+
+func stringsRepeat(s string, n int) string {
+	out := make([]byte, 0, len(s)*n)
+	for i := 0; i < n; i++ {
+		out = append(out, s...)
+	}
+	return string(out)
 }

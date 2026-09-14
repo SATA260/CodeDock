@@ -4,20 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 )
 
-// ErrOutsideWorkspace 表示路径落在会话工作区外。
+// ErrOutsideWorkspace 表示路径落在会话工作区外。第 1 层校验不算失败，但必须走审批。
 var ErrOutsideWorkspace = errors.New("outside workspace")
-
-// Effect 是工具默认权限；本阶段与 RequiresApproval 并存，三模式流水线再接管。
-type Effect string
-
-const (
-	EffectAllow Effect = "allow"
-	EffectAsk   Effect = "ask"
-	EffectDeny  Effect = "deny"
-)
 
 // ExecutionMode 定义一组工具调用采用串行还是并行执行。
 type ExecutionMode string
@@ -37,37 +27,28 @@ const (
 	FailureBestEffort FailurePolicy = "best_effort"
 )
 
-// Capability 是工具声明的动作能力；运行模式提供能力，须覆盖工具的全部能力才可调用。
-type Capability string
+// Effect 是审批流水线每一层的结果。
+type Effect string
 
 const (
-	CapabilityRead   Capability = "read"
-	CapabilityWrite  Capability = "write"
-	CapabilityMemory Capability = "memory"
+	EffectAllow Effect = "allow" // 放行，后续层不跑
+	EffectAsk   Effect = "ask"   // 交给下一层
+	EffectDeny  Effect = "deny"  // 不可调用，后续层不跑
 )
 
-// Permission 描述工具所需的能力；审批与否由工具自己声明。
-// Effect 供编码工具使用；空则只看 RequiresApproval。
+// ApprovalMode 是流水线第三层：谁来裁定仍为 ask 的调用。
+type ApprovalMode string
+
+const (
+	ApprovalManual ApprovalMode = "manual" // 开单等人
+	ApprovalAuto   ApprovalMode = "auto"   // 先独立复审，通过则执行；说不清才开单给人
+	ApprovalYolo   ApprovalMode = "yolo"   // 本层直接 allow
+)
+
+// Permission 是工具自带的默认权限；只能是 allow 或 ask。
 type Permission struct {
-	Capabilities     []Capability `json:"capabilities,omitempty"`
-	RequiresApproval bool         `json:"requires_approval"`
-	Effect           Effect       `json:"effect,omitempty"`
-	Resource         string       `json:"resource,omitempty"`
-}
-
-// PermissionPolicy 是 Run 创建时冻结的工具授权策略。
-type PermissionPolicy struct {
-	Version             string       `json:"version,omitempty"`
-	AllowedCapabilities []Capability `json:"allowed_capabilities,omitempty"`
-	DeniedTools         []string     `json:"denied_tools,omitempty"`
-	ResourceScopes      []string     `json:"resource_scopes,omitempty"`
-}
-
-// ApprovalPolicy 是 Run 创建时冻结的用户审批策略。
-type ApprovalPolicy struct {
-	Version           string        `json:"version,omitempty"`
-	AutoApprovedTools []string      `json:"auto_approved_tools,omitempty"`
-	DefaultExpiry     time.Duration `json:"default_expiry,omitempty"`
+	Effect   Effect `json:"effect"`             // 默认 Effect；不能写成 deny
+	Resource string `json:"resource,omitempty"` // 可选资源标签，流水线不读
 }
 
 // Definition 是模型可见的统一工具描述。
@@ -107,9 +88,9 @@ type Call struct {
 
 // Input 是传递给各种工具兼容层的统一执行输入。
 type Input struct {
-	SessionID     string
-	RunID         string
-	TurnID        string
+	SessionID     string // 所属会话
+	RunID         string // 所属 Run
+	TurnID        string // 所属 Turn
 	WorkspaceRoot string // 会话创建时冻结的工作目录；空则回落 Ports
 	Call          Call
 }
@@ -130,12 +111,12 @@ type Tool interface {
 	Execute(ctx context.Context, input Input) (Result, error)
 }
 
-// Inspector 是工具层额外的参数校验；失败则本调用不执行。
+// Inspector 是工具层额外的参数校验；失败即第 1 层 deny，不能把 ask 抬成 allow。
 type Inspector interface {
 	Inspect(ctx context.Context, input Input) error
 }
 
-// EffectResolver 按本次入参覆盖工具默认 Effect。三模式流水线再使用。
+// EffectResolver 按本次入参覆盖工具默认 Effect。只能返回 allow 或 ask；目录外调用仍由流水线强制 ask。
 type EffectResolver interface {
 	ResolveEffect(ctx context.Context, input Input) Effect
 }
@@ -159,22 +140,22 @@ type Gate interface {
 
 // Invocation 包含处理一组工具调用所需的全部信息。
 type Invocation struct {
-	SessionID        string
-	RunID            string
-	TurnID           string
-	WorkspaceRoot    string
-	Calls            []Call
-	Mode             ExecutionMode
-	FailurePolicy    FailurePolicy
-	MaxParallel      int
-	PermissionPolicy PermissionPolicy
-	ApprovalPolicy   ApprovalPolicy
-	AgentMode        string
-	Registry         Registry
-	ApprovedCallIDs  []string
-	DeniedCallIDs    []string
-	OnEvent          DispatchHook
-	Gate             Gate
+	SessionID       string
+	RunID           string
+	TurnID          string
+	WorkspaceRoot   string // 会话冻结的工作目录，传给 Inspect / Execute
+	Calls           []Call
+	Mode            ExecutionMode
+	FailurePolicy   FailurePolicy
+	MaxParallel     int
+	BoundNames      []string
+	Effects         map[string]Effect
+	Approval        ApprovalMode
+	Registry        Registry
+	ApprovedCallIDs []string
+	DeniedCallIDs   []string
+	OnEvent         DispatchHook
+	Gate            Gate
 }
 
 // DispatchResult 按模型调用顺序保存结果，并标识是否因审批暂停。

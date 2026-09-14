@@ -48,7 +48,7 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 			})
 			continue
 		}
-		item, wait := prepareCall(inv, call, approved)
+		item, wait := prepareCall(ctx, inv, call, approved)
 		if wait {
 			approvalCalls = append(approvalCalls, call)
 			continue
@@ -84,37 +84,61 @@ type preparedCall struct {
 
 // prepareCall 查找工具并做参数、权限、审批校验；wait=true 表示需先审批。
 // 查不到、参数错、权限不足都写成失败 Result，不返回 error。
-func prepareCall(inv Invocation, call Call, approved map[string]struct{}) (preparedCall, bool) {
+func prepareCall(ctx context.Context, inv Invocation, call Call, approved map[string]struct{}) (preparedCall, bool) {
 	emit(inv, "call_started", call, max(1, call.Attempt), nil)
 	item, err := inv.Registry.Get(Reference{Name: call.Name})
 	if err != nil {
 		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
 	}
 	def := item.Definition()
-	if err := validateArguments(def, call.Arguments); err != nil {
-		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
-	}
-	if err := checkPermission(inv.PermissionPolicy, inv.AgentMode, def); err != nil {
-		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
-	}
-	input := Input{
+	bound := Bound(inv.BoundNames, call.Name)
+	toolInput := Input{
 		SessionID:     inv.SessionID,
 		RunID:         inv.RunID,
 		TurnID:        inv.TurnID,
 		WorkspaceRoot: inv.WorkspaceRoot,
 		Call:          call,
 	}
-	if inspector, ok := item.(Inspector); ok {
-		if err := inspector.Inspect(context.Background(), input); err != nil {
-			return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
+	inspectErr := validateArguments(def, call.Arguments)
+	outside := false
+	if inspectErr == nil {
+		if inspector, ok := item.(Inspector); ok {
+			inspectErr = inspector.Inspect(ctx, toolInput)
+			if errors.Is(inspectErr, ErrOutsideWorkspace) {
+				outside = true
+				inspectErr = nil
+			}
 		}
 	}
+	defaultEffect := def.Permission.Effect
 	if resolver, ok := item.(EffectResolver); ok {
-		if effect := resolver.ResolveEffect(context.Background(), input); effect != "" {
-			def.Permission.Effect = effect
+		if resolved := resolver.ResolveEffect(ctx, toolInput); resolved == EffectAllow || resolved == EffectAsk {
+			defaultEffect = resolved
 		}
 	}
-	if requiresApproval(inv.AgentMode, inv.ApprovalPolicy, def, call.ID, approved) {
+	_, hasAgent := inv.Effects[def.Name]
+	_, already := approved[call.ID]
+	effect := Pipeline(PipelineInput{
+		Default:          defaultEffect,
+		InspectErr:       inspectErr,
+		Bound:            bound,
+		OutsideWorkspace: outside,
+		AgentEffect:      inv.Effects[def.Name],
+		HasAgentEffect:   hasAgent,
+		Approval:         inv.Approval,
+		Approved:         already,
+	})
+	if effect == EffectDeny {
+		msg := "permission denied"
+		if !bound {
+			msg = "tool is not bound"
+		}
+		if inspectErr != nil {
+			msg = inspectErr.Error()
+		}
+		return preparedCall{call: call, result: failResult(call, msg), skip: true}, false
+	}
+	if effect == EffectAsk {
 		return preparedCall{}, true
 	}
 	return preparedCall{call: call, tool: item}, false
@@ -317,43 +341,6 @@ func validateArguments(def Definition, raw json.RawMessage) error {
 		}
 	}
 	return nil
-}
-
-// checkPermission 按 DeniedTools 与模式能力覆盖鉴权。
-func checkPermission(policy PermissionPolicy, mode string, def Definition) error {
-	for _, denied := range policy.DeniedTools {
-		if denied == def.Name {
-			return fmt.Errorf("%w: tool %q is denied", errPermissionDenied, def.Name)
-		}
-	}
-	if !Covers(ModeCapabilities(mode), def.Permission.Capabilities) {
-		return fmt.Errorf("%w: tool %q capabilities not covered by mode %s", errPermissionDenied, def.Name, mode)
-	}
-	return nil
-}
-
-// requiresApproval 判断该调用是否还要等人审；已批准、自动放行模式或工具声明无需审批则放行。
-func requiresApproval(mode string, policy ApprovalPolicy, def Definition, callID string, approved map[string]struct{}) bool {
-	if _, ok := approved[callID]; ok {
-		return false
-	}
-	switch mode {
-	case "auto_approve", "yolo", "ask", "plan":
-		return false
-	}
-	for _, item := range policy.AutoApprovedTools {
-		if item == def.Name {
-			return false
-		}
-	}
-	switch def.Permission.Effect {
-	case EffectAsk:
-		return true
-	case EffectAllow:
-		return false
-	default:
-		return def.Permission.RequiresApproval
-	}
 }
 
 // failResult 构造一条失败的工具结果。

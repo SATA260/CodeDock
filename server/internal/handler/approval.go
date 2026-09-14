@@ -6,8 +6,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"codedock/internal/agent"
 	cderr "codedock/internal/errors"
-	"codedock/internal/util"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/db/sqlite"
 )
@@ -99,107 +99,29 @@ func (a *API) DecideApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ApprovalResponse{Approval: approval})
 }
 
-// decide 校验审批状态，将裁决与 tool.approval_decided 同事务写入，再用 RecoverRun 唤醒 Run。
-// 已过期审批会被整体拒绝；已裁决的审批再次提交时只重新入队。
+// decide 把 HTTP 裁决交给 Runtime。
 func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.Approval, error) {
-	row, err := a.q(ctx).GetApproval(ctx, req.ApprovalID)
-	if err != nil {
-		return pkgagent.Approval{}, wrapHandlerDB(err)
-	}
-	approval := mapApproval(row)
-	if approval.Status != pkgagent.ApprovalPending {
-		a.logger().Info("resubmit decided approval", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID)
-		if err := a.runtime.RecoverRun(ctx, approval.RunID); err != nil {
-			return pkgagent.Approval{}, err
-		}
-		return approval, nil
-	}
-	if req.Scope != "" {
-		approval.Scope = req.Scope
-	}
-
-	expired := !approval.ExpiresAt.IsZero() && util.Now().After(approval.ExpiresAt)
-	if expired {
-		for i := range approval.ToolCalls {
-			approval.ToolCalls[i].Status = pkgagent.ApprovalExpired
-		}
-		approval.Status = pkgagent.ApprovalExpired
-	} else {
-		decisions, err := normalizeDecisions(req, approval.ToolCalls)
-		if err != nil {
-			return pkgagent.Approval{}, err
-		}
-		byID := make(map[string]ToolDecision, len(decisions))
-		for _, item := range decisions {
-			byID[item.ToolCallID] = item
-		}
-		allDenied := true
-		for i, call := range approval.ToolCalls {
-			item := byID[call.ID]
-			approval.ToolCalls[i].Status = item.Status
-			approval.ToolCalls[i].Reason = item.Reason
-			if item.Status == pkgagent.ApprovalApproved {
-				allDenied = false
-			}
-		}
-		if allDenied {
-			approval.Status = pkgagent.ApprovalDenied
-		} else {
-			approval.Status = pkgagent.ApprovalApproved
-		}
-	}
-
-	var decided pkgagent.AgentEvent
-	err = a.db.WithTx(ctx, func(ctx context.Context) error {
-		updated, err := a.q(ctx).UpdateApproval(ctx, sqlite.UpdateApprovalParams{
-			Scope:     string(approval.Scope),
-			Status:    string(approval.Status),
-			ToolCalls: string(pkgagent.MarshalPayload(approval.ToolCalls)),
-			ID:        approval.ID,
+	decisions := make([]pkgagent.ApprovalDecision, 0, len(req.Decisions))
+	for _, item := range req.Decisions {
+		decisions = append(decisions, pkgagent.ApprovalDecision{
+			ToolCallID: item.ToolCallID,
+			Status:     item.Status,
+			Reason:     item.Reason,
 		})
-		if err != nil {
-			return wrapHandlerDB(err)
-		}
-		approval = mapApproval(updated)
-		ev, err := a.runtime.AppendFact(ctx, approval.RunID, approvalDecidedFact(approval))
-		if err != nil {
-			return err
-		}
-		decided = ev
-		return nil
+	}
+	approval, err := a.runtime.DecideApproval(ctx, agent.ApprovalVerdict{
+		ApprovalID: req.ApprovalID,
+		Decisions:  decisions,
+		Status:     req.Status,
+		Scope:      req.Scope,
+		ActorID:    req.ActorID,
+		Reason:     req.Reason,
 	})
 	if err != nil {
 		return pkgagent.Approval{}, err
 	}
-	a.publishEvent(decided)
 	a.logger().Info("approval decided", "session_id", approval.SessionID, "run_id", approval.RunID, "approval_id", approval.ID, "status", approval.Status)
-	if err := a.runtime.RecoverRun(ctx, approval.RunID); err != nil {
-		return pkgagent.Approval{}, err
-	}
 	return approval, nil
-}
-
-// approvalDecidedFact 把整单裁决编成 tool.approval_decided 事实。
-func approvalDecidedFact(approval pkgagent.Approval) pkgagent.Fact {
-	decisions := make([]pkgagent.ApprovalDecision, 0, len(approval.ToolCalls))
-	for _, call := range approval.ToolCalls {
-		decisions = append(decisions, pkgagent.ApprovalDecision{
-			ToolCallID: call.ID,
-			Status:     call.Status,
-			Reason:     call.Reason,
-		})
-	}
-	return pkgagent.Fact{
-		Type: pkgagent.EventApprovalDecided,
-		Payload: pkgagent.MarshalPayload(pkgagent.ApprovalDecidedPayload{
-			ApprovalID: approval.ID,
-			ToolCallID: approval.ToolCallID,
-			Status:     approval.Status,
-			Scope:      approval.Scope,
-			Decisions:  decisions,
-			ToolCalls:  approval.ToolCalls,
-		}),
-	}
 }
 
 // normalizeDecisions 校验裁决状态合法；整单同一裁定时补齐未列出的 tool_call。

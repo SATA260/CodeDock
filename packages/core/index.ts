@@ -5,6 +5,7 @@ export {
   applyApprovals,
   applyEvent,
   decisionsForApproval,
+  applyLocalCancel,
   applyOptimisticUser,
   applyUserText,
   decodeText,
@@ -27,6 +28,7 @@ export {
   RECOVERABLE_RUN_STATUSES,
   TERMINAL_RUN_STATUSES,
   THINKING_PHASES,
+  waitUntilRunReleased,
   watchEvents,
   type AgentClientOptions,
   type WatchEventsOptions,
@@ -53,7 +55,8 @@ export type {
 } from "./git/index.ts";
 export type {
   AgentEvent,
-  AgentMode,
+  ApprovalMode,
+  WorkMode,
   Approval,
   ApprovalDecision,
   ApprovalStatus,

@@ -16,15 +16,22 @@ const (
 	SessionArchived SessionStatus = "archived" // 会话已归档，禁止新建 Run
 )
 
-// AgentMode 控制 Run 提供的能力（从而决定可调用哪些工具）以及审批行为。
-type AgentMode string
+// WorkMode 选出本轮使用的内置 Agent。
+type WorkMode string
 
 const (
-	ModeAskForApproval AgentMode = "ask_for_approval" // 写类 / 审批工具需人工逐批批准
-	ModeAutoApprove    AgentMode = "auto_approve"     // 写类 / 审批工具自动放行
-	ModeYolo           AgentMode = "yolo"             // 自动放行，且通常跳过只读确认
-	ModeAsk            AgentMode = "ask"              // 只读模式，提供 read 与 memory 能力
-	ModePlan           AgentMode = "plan"             // 只读模式，仅输出计划不执行工具
+	WorkAsk   WorkMode = "ask"   // 只读问答
+	WorkPlan  WorkMode = "plan"  // 只写 .cursor 计划
+	WorkAgent WorkMode = "agent" // 可改仓库 / shell / 记忆
+)
+
+// ApprovalMode 是审批流水线第三层。
+type ApprovalMode = tool.ApprovalMode
+
+const (
+	ApprovalManual = tool.ApprovalManual
+	ApprovalAuto   = tool.ApprovalAuto
+	ApprovalYolo   = tool.ApprovalYolo
 )
 
 // RunStatus 表示一次用户触发执行的状态机。
@@ -76,6 +83,7 @@ const (
 	RoleAssistant MessageRole = "assistant" // 助手回复（文本或工具调用）
 	RoleTool      MessageRole = "tool"      // 工具执行结果
 	RoleSystem    MessageRole = "system"    // 系统提示、记忆目录、压缩摘要等
+	RoleDeveloper MessageRole = "developer" // 本轮模式规则；Build 注入，不落库
 )
 
 // ApprovalScope 控制审批决定的生效范围。
@@ -156,17 +164,16 @@ type RunLimits struct {
 
 // RunConfigSnapshot 是 Run 启动时保存的不可变配置。
 type RunConfigSnapshot struct {
-	Mode              AgentMode             `json:"mode"`                // 运行模式
-	SystemPromptHash  string                `json:"system_prompt_hash"`  // 系统提示哈希
-	Model             ModelConfig           `json:"model"`               // 模型配置
-	ToolSetVersion    string                `json:"tool_set_version"`    // 工具集版本
-	PermissionPolicy  tool.PermissionPolicy `json:"permission_policy"`   // 工具权限策略
-	ApprovalPolicy    tool.ApprovalPolicy   `json:"approval_policy"`     // 审批策略
-	RetryPolicy       RetryPolicy           `json:"retry_policy"`        // 重试策略
-	Limits            RunLimits             `json:"limits"`              // 执行预算
-	ToolExecutionMode tool.ExecutionMode    `json:"tool_execution_mode"` // 工具串行/并行模式
-	ToolFailurePolicy tool.FailurePolicy    `json:"tool_failure_policy"` // 工具失败策略
-	Profile           profile.Config        `json:"profile"`             // Agent 配置
+	Mode              WorkMode           `json:"mode"`                // 选中的内置 Agent
+	Approval          ApprovalMode       `json:"approval"`            // 审批模式
+	SystemPromptHash  string             `json:"system_prompt_hash"`  // 系统提示哈希
+	Model             ModelConfig        `json:"model"`               // 模型配置
+	ToolSetVersion    string             `json:"tool_set_version"`    // 工具集版本
+	RetryPolicy       RetryPolicy        `json:"retry_policy"`        // 重试策略
+	Limits            RunLimits          `json:"limits"`              // 执行预算
+	ToolExecutionMode tool.ExecutionMode `json:"tool_execution_mode"` // 工具串行/并行模式
+	ToolFailurePolicy tool.FailurePolicy `json:"tool_failure_policy"` // 工具失败策略
+	Profile           profile.Config     `json:"profile"`             // Agent 配置
 }
 
 // Session 是长期存在的对话容器。
@@ -175,7 +182,7 @@ type Session struct {
 	TenantID      string        `json:"tenant_id"`               // 租户 ID
 	UserID        string        `json:"user_id"`                 // 用户 ID
 	AgentID       string        `json:"agent_id"`                // Agent 配置 ID
-	WorkspaceID   string        `json:"workspace_id"`            // 工作区 ID
+	WorkspaceID   string        `json:"workspace_id"`            // 创建时冻结的工作目录（绝对路径）；本会话权限只覆盖该目录
 	Status        SessionStatus `json:"status"`                  // 会话状态
 	ActiveRunID   *string       `json:"active_run_id,omitempty"` // 当前正在执行的 Run ID
 	NeedsRecover  bool          `json:"needs_recover,omitempty"` // Handler 计算：active Run 已中断、需用户恢复；不入库
@@ -191,7 +198,8 @@ type Run struct {
 	ID               string            `json:"id"`                        // Run ID
 	SessionID        string            `json:"session_id"`                // 所属会话
 	TriggerMessageID string            `json:"trigger_message_id"`        // 触发 Run 的用户消息 ID
-	Mode             AgentMode         `json:"mode"`                      // 运行模式
+	Mode             WorkMode          `json:"mode"`                      // 选中的内置 Agent
+	Approval         ApprovalMode      `json:"approval"`                  // 审批模式（来自快照）
 	Config           RunConfigSnapshot `json:"config"`                    // 启动配置快照
 	Status           RunStatus         `json:"status"`                    // 当前状态
 	NeedsRecover     bool              `json:"needs_recover,omitempty"`   // Handler 计算：执行已中断且 Worker 不在跑；不入库
@@ -253,8 +261,8 @@ type ContextSnapshot struct {
 	Summary         *CompactionSummary `json:"summary,omitempty"`        // 压缩摘要
 	Messages        []Message          `json:"messages"`                 // 历史消息
 	Tools           []tool.Definition  `json:"tools"`                    // 本轮可见工具定义
-	SystemPrompt    string             `json:"system_prompt"`            // 注入的系统提示
-	WorkspaceRoot   string             `json:"workspace_root,omitempty"` // 会话冻结的工作目录
+	SystemPrompt    string             `json:"system_prompt"`            // 注入的系统提示（身份段；Compose 再拼工具与 Guidelines）
+	WorkspaceRoot   string             `json:"workspace_root,omitempty"` // 会话冻结的工作目录，写入 Current working directory
 	MemoryIndexes   []string           `json:"memory_indexes,omitempty"` // 冻结记忆目录
 	EstimatedTokens int64              `json:"estimated_tokens"`         // 估算 token 数
 	Version         int64              `json:"version"`                  // 快照版本
