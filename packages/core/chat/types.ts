@@ -235,8 +235,7 @@ export interface StartRunRequest {
 
 export interface StartRunResponse {
   session_id: string;
-  run_id?: string;
-  handled?: boolean;
+  run_id: string;
 }
 
 export interface DecideApprovalRequest {

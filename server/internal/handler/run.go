@@ -2,14 +2,12 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	cderr "codedock/internal/errors"
 	pkgagent "codedock/pkg/agent"
-	"codedock/pkg/agent/seam"
 )
 
 type StartRunRequest struct {
@@ -20,8 +18,7 @@ type StartRunRequest struct {
 
 type StartRunResponse struct {
 	SessionID string `json:"session_id"`
-	RunID     string `json:"run_id,omitempty"`
-	Handled   bool   `json:"handled,omitempty"`
+	RunID     string `json:"run_id"`
 }
 
 type RunResponse struct {
@@ -125,33 +122,6 @@ func (a *API) start(ctx context.Context, sessionID string, req StartRunRequest) 
 	}
 	if config.Mode == "" {
 		config.Mode = pkgagent.ModeAskForApproval
-	}
-
-	input, err := seam.Dispatch(ctx, a.runtime.Dispatcher(), seam.Envelope{
-		Type:      seam.TypeInput,
-		SessionID: sessionID,
-		Payload: pkgagent.MarshalPayload(pkgagent.InputPayload{
-			Content: req.Content,
-			Mode:    req.Mode,
-		}),
-	})
-	if err != nil {
-		return StartRunResponse{}, cderr.Unavailable("%s", err.Error())
-	}
-	if input.Type == seam.TypeInputHandled {
-		return StartRunResponse{SessionID: sessionID, Handled: true}, nil
-	}
-	if input.Type == seam.TypeInput && len(input.Payload) > 0 {
-		var payload pkgagent.InputPayload
-		if err := json.Unmarshal(input.Payload, &payload); err == nil {
-			if payload.Content != "" {
-				req.Content = payload.Content
-			}
-			if payload.Mode != "" {
-				req.Mode = payload.Mode
-				config.Mode = payload.Mode
-			}
-		}
 	}
 
 	if session.ActiveRunID != nil && *session.ActiveRunID != "" {
