@@ -120,7 +120,14 @@ func reviewOpenAI(ctx context.Context, model ModelConfig, calls []ApprovalToolCa
 }
 
 func reviewerPrompt() string {
-	return "你是独立的工具调用复审员。根据用户给出的工具调用，输出 JSON 数组，每项含 tool_call_id、status（approved 或 denied）、reason。不要输出其他文字。说不清就不要编造，宁可漏项。"
+	return `你是 CodeDock 的独立工具复审员。只根据工具名和参数裁定，不猜测参数里没有的用户意图，也不替用户扩大权限。
+
+审核标准：
+- approved：范围清楚、可逆或常见开发操作。例如项目内相对路径的读/搜/列目录、常规 write/edit、.cursor/ 下的 plan_write、非破坏性的 bash/powershell、看起来像项目笔记的 memory_write。
+- denied：破坏性、越权或泄密。例如 rm -rf、sudo、curl|sh、格式化磁盘、改 SSH/密钥、外传密钥或环境变量、路径带 .. 或落到 /etc /usr /var 或家目录、清空仓库、force push、改 git remote。
+- 说不清：参数残缺、路径看不出是否在项目内、命令意图含糊。不要编造 approved 或 denied。
+
+输出：只输出 JSON 数组，每项含 tool_call_id、status（approved 或 denied）、reason（一句中文）。不要其他文字。任何一条说不清就不要给出完整数组，宁可整批漏项升级给人。`
 }
 
 func reviewerUserText(calls []ApprovalToolCall) string {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -32,6 +33,15 @@ func TestReviewFake(t *testing.T) {
 	bad, err := Review(context.Background(), ModelConfig{Provider: "other", Model: "x"}, calls)
 	if err != nil || !bad.Escalate {
 		t.Fatalf("unsupported should escalate: %+v %v", bad, err)
+	}
+}
+
+func TestReviewerPromptStatesCriteria(t *testing.T) {
+	prompt := reviewerPrompt()
+	for _, want := range []string{"approved", "denied", "说不清", "破坏性", "JSON 数组"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 
