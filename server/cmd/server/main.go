@@ -17,7 +17,6 @@ import (
 	"codedock/internal/events"
 	"codedock/internal/handler"
 	"codedock/internal/logger"
-	"codedock/internal/pluginhost"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/db"
 )
@@ -60,32 +59,6 @@ func main() {
 	runtime.SetModel(model)
 	runtime.SetConcurrency(cfg.LLMConcurrency, cfg.ToolConcurrency)
 	log.Info("concurrency", "llm", cfg.LLMConcurrency, "tool", cfg.ToolConcurrency)
-
-	var pluginHost *pluginhost.Host
-	if cfg.PluginDir != "" {
-		host, err := pluginhost.Load(ctx, pluginhost.Options{
-			Dir:      cfg.PluginDir,
-			Timeout:  cfg.PluginRPCTimeout,
-			Registry: runtime.Tools(),
-			Queries:  queries,
-			Model:    model,
-			Log:      logger.NewLogger("plugin"),
-		})
-		if err != nil {
-			log.Error("load plugins", "error", err)
-			os.Exit(1)
-		}
-		pluginHost = host
-		if pluginHost != nil {
-			runtime.SetDispatcher(pluginHost)
-			pluginHost.Attach(bus)
-			log.Info("plugins loaded", "dir", cfg.PluginDir)
-		}
-	}
-	if pluginHost != nil {
-		defer func() { _ = pluginHost.Close() }()
-	}
-
 	runtime.Start(ctx)
 
 	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, model)

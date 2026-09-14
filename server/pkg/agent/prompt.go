@@ -59,12 +59,6 @@ func Build(_ context.Context, req Prompt) (Chat, error) {
 		}
 		prefix = append(prefix, Message{Role: RoleSystem, Content: EncodeText(index)})
 	}
-	for _, msg := range req.Context.Hidden {
-		if len(msg.Content) == 0 {
-			continue
-		}
-		prefix = append(prefix, Message{Role: RoleSystem, Content: msg.Content})
-	}
 	if req.Context.Summary != nil && req.Context.Summary.Content != "" {
 		prefix = append(prefix, Message{
 			Role:    RoleSystem,
