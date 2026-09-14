@@ -97,6 +97,23 @@ func prepareCall(inv Invocation, call Call, approved map[string]struct{}) (prepa
 	if err := checkPermission(inv.PermissionPolicy, inv.AgentMode, def); err != nil {
 		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
 	}
+	input := Input{
+		SessionID:     inv.SessionID,
+		RunID:         inv.RunID,
+		TurnID:        inv.TurnID,
+		WorkspaceRoot: inv.WorkspaceRoot,
+		Call:          call,
+	}
+	if inspector, ok := item.(Inspector); ok {
+		if err := inspector.Inspect(context.Background(), input); err != nil {
+			return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
+		}
+	}
+	if resolver, ok := item.(EffectResolver); ok {
+		if effect := resolver.ResolveEffect(context.Background(), input); effect != "" {
+			def.Permission.Effect = effect
+		}
+	}
 	if requiresApproval(inv.AgentMode, inv.ApprovalPolicy, def, call.ID, approved) {
 		return preparedCall{}, true
 	}
@@ -178,10 +195,11 @@ func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result,
 		}
 		emit(inv, "execution_started", item.call, attempt, nil)
 		result, err := item.tool.Execute(ctx, Input{
-			SessionID: inv.SessionID,
-			RunID:     inv.RunID,
-			TurnID:    inv.TurnID,
-			Call:      item.call,
+			SessionID:     inv.SessionID,
+			RunID:         inv.RunID,
+			TurnID:        inv.TurnID,
+			WorkspaceRoot: inv.WorkspaceRoot,
+			Call:          item.call,
 		})
 		if inv.Gate != nil {
 			inv.Gate.Release()
@@ -328,7 +346,14 @@ func requiresApproval(mode string, policy ApprovalPolicy, def Definition, callID
 			return false
 		}
 	}
-	return def.Permission.RequiresApproval
+	switch def.Permission.Effect {
+	case EffectAsk:
+		return true
+	case EffectAllow:
+		return false
+	default:
+		return def.Permission.RequiresApproval
+	}
 }
 
 // failResult 构造一条失败的工具结果。

@@ -39,6 +39,7 @@ type AgentState struct {
 	SessionID       string            // 所属会话
 	RunID           string            // 本次 Run
 	TurnID          *string           // 当前 Turn（如有）
+	WorkspaceRoot   string            // 会话创建时冻结的工作目录；权限只覆盖该目录
 	Status          RunStatus         // 当前粗状态
 	StepIndex       int               // 已提交的步骤序号；下一步必须递增
 	Config          RunConfigSnapshot // 启动配置快照，只读

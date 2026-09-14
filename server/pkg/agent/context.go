@@ -15,6 +15,7 @@ type History struct {
 	Messages      []Message
 	Tools         []tool.Definition
 	Prompt        string
+	WorkspaceRoot string
 	MemoryIndexes []string
 }
 
@@ -25,6 +26,7 @@ func Load(_ context.Context, hist History) (ContextSnapshot, error) {
 		Messages:      hist.Messages,
 		Tools:         hist.Tools,
 		SystemPrompt:  hist.Prompt,
+		WorkspaceRoot: hist.WorkspaceRoot,
 		MemoryIndexes: hist.MemoryIndexes,
 	}
 	if hist.Checkpoint != nil {

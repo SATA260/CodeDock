@@ -254,6 +254,7 @@ type ContextSnapshot struct {
 	Messages        []Message          `json:"messages"`                 // 历史消息
 	Tools           []tool.Definition  `json:"tools"`                    // 本轮可见工具定义
 	SystemPrompt    string             `json:"system_prompt"`            // 注入的系统提示
+	WorkspaceRoot   string             `json:"workspace_root,omitempty"` // 会话冻结的工作目录
 	MemoryIndexes   []string           `json:"memory_indexes,omitempty"` // 冻结记忆目录
 	EstimatedTokens int64              `json:"estimated_tokens"`         // 估算 token 数
 	Version         int64              `json:"version"`                  // 快照版本

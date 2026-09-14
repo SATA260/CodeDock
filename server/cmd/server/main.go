@@ -55,7 +55,7 @@ func main() {
 		Model:    cfg.LLMModel,
 		Options:  modelOptions(cfg),
 	}
-	runtime := agent.New(client, queries, bus, nil, logger.NewLogger("agent"), agenttools.Ports{})
+	runtime := agent.New(client, queries, bus, nil, logger.NewLogger("agent"), agenttools.Ports{WorkspaceRoot: cfg.DefaultRoot()})
 	runtime.SetModel(model)
 	runtime.SetConcurrency(cfg.LLMConcurrency, cfg.ToolConcurrency)
 	log.Info("concurrency", "llm", cfg.LLMConcurrency, "tool", cfg.ToolConcurrency)

@@ -1,5 +1,14 @@
 export { AgentClient, AgentClientError, type AgentClientOptions } from "./client.ts";
 export { decodeText, firstLine, parseDelta } from "./content.ts";
+export {
+  isPlanTool,
+  latestPlanDocIds,
+  normalizePlanName,
+  planPreviewFromTool,
+  planToolDump,
+  type PlanDocPreview,
+  type PlanPreview,
+} from "./plan.ts";
 export { joinQueuedTexts } from "./queue.ts";
 export {
   applyApprovalRecord,

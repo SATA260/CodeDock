@@ -1,16 +1,18 @@
 package tools
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"strings"
-	"testing"
-
 	"codedock/internal/agent/memory"
 	"codedock/pkg/agent/tool"
 	"codedock/pkg/db"
 	"codedock/pkg/db/sqlite"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
 )
 
 func testQueries(t *testing.T) (*sqlite.Queries, context.Context) {
@@ -154,5 +156,497 @@ func TestMemoryReadMissingIsResult(t *testing.T) {
 	}
 	if out.Success || out.Error == "" {
 		t.Fatalf("out=%+v", out)
+	}
+}
+
+func TestToolNames(t *testing.T) {
+	t.Parallel()
+	want := []string{"read", "bash", "powershell", "edit", "write", "grep", "find", "ls"}
+	if strings.Join(ToolNames, ",") != strings.Join(want, ",") {
+		t.Fatalf("ToolNames = %v, want %v", ToolNames, want)
+	}
+}
+
+func TestToolResultJSONEnvelope(t *testing.T) {
+	t.Parallel()
+	result := textResult("ok", nil)
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(encoded), `{"content":[{"type":"text","text":"ok"}]}`; got != want {
+		t.Fatalf("encoded result = %s, want %s", got, want)
+	}
+	emptyEncoded, err := json.Marshal(textResult("", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(emptyEncoded), `{"content":[{"type":"text","text":""}]}`; got != want {
+		t.Fatalf("encoded empty result = %s, want %s", got, want)
+	}
+
+	by := "bytes"
+	result.Details = &ResultDetails{
+		Truncation: &TruncationResult{
+			Content:     "part",
+			Truncated:   true,
+			TruncatedBy: &by,
+			TotalLines:  2,
+			TotalBytes:  10,
+			OutputLines: 1,
+			OutputBytes: 4,
+			MaxLines:    DefaultMaxLines,
+			MaxBytes:    DefaultMaxBytes,
+		},
+	}
+	encoded, err = json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{
+		`"details"`,
+		`"truncation"`,
+		`"truncatedBy":"bytes"`,
+		`"lastLinePartial":false`,
+		`"firstLineExceedsLimit":false`,
+	} {
+		if !strings.Contains(string(encoded), field) {
+			t.Fatalf("encoded result %s does not contain %s", encoded, field)
+		}
+	}
+}
+
+func TestExecuteRejectsMissingRequiredFields(t *testing.T) {
+	t.Parallel()
+	_, err := NewExecutor().Execute(context.Background(), ToolRead, t.TempDir(), json.RawMessage(`{}`))
+	if err == nil || err.Error() != "missing required property: path" {
+		t.Fatalf("error = %v", err)
+	}
+
+	_, err = NewExecutor().Execute(context.Background(), "unknown", t.TempDir(), json.RawMessage(`{}`))
+	if err == nil || err.Error() != "unknown tool name: unknown" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestExecuteRejectsRequiredNullFields(t *testing.T) {
+	t.Parallel()
+	executor := NewExecutor()
+	cwd := t.TempDir()
+	for _, testCase := range []struct {
+		name string
+		tool string
+		raw  string
+	}{
+		{name: "required string null", tool: ToolWrite, raw: `{"path":"a","content":null}`},
+		{
+			name: "edit replacement null",
+			tool: ToolEdit,
+			raw:  `{"path":"a","edits":[{"oldText":"x","newText":null}]}`,
+		},
+	} {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := executor.Execute(
+				context.Background(),
+				testCase.tool,
+				cwd,
+				json.RawMessage(testCase.raw),
+			); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestDecodeAllowsOptionalNullAndAdditionalPropertiesLikeTypeBox(t *testing.T) {
+	t.Parallel()
+	var input ReadInput
+	if err := decodeToolInput(
+		json.RawMessage(`{"path":"a","offset":null,"extra":true}`),
+		&input,
+		"path",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if input.Offset != nil {
+		t.Fatalf("offset = %v, want nil", input.Offset)
+	}
+}
+
+func TestDecodeEditCompatibilityInputs(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{
+			name: "array",
+			raw:  `{"path":"a","edits":[{"oldText":"x","newText":"y"}]}`,
+			want: 1,
+		},
+		{
+			name: "single object",
+			raw:  `{"path":"a","edits":{"oldText":"x","newText":"y"}}`,
+			want: 1,
+		},
+		{
+			name: "stringified array",
+			raw:  `{"path":"a","edits":"[{\"oldText\":\"x\",\"newText\":\"y\"}]"}`,
+			want: 1,
+		},
+		{
+			name: "legacy top level",
+			raw:  `{"path":"a","oldText":"x","newText":"y"}`,
+			want: 1,
+		},
+		{
+			name: "legacy appended",
+			raw:  `{"path":"a","edits":[{"oldText":"x","newText":"y"}],"oldText":"z","newText":"w"}`,
+			want: 2,
+		},
+	}
+	for _, testCase := range cases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			input, err := decodeEditInput(json.RawMessage(testCase.raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(input.Edits) != testCase.want {
+				t.Fatalf("len(edits) = %d, want %d", len(input.Edits), testCase.want)
+			}
+		})
+	}
+}
+
+func TestRegisterNilAndWithQueries(t *testing.T) {
+	Register(nil, nil, nil, Ports{})
+	q, _ := testQueries(t)
+	reg := tool.NewRegistry()
+	Register(reg, q, nil, Ports{WorkspaceRoot: t.TempDir()})
+	if _, err := reg.Get(tool.Reference{Name: "memory_read"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Get(tool.Reference{Name: "read"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Get(tool.Reference{Name: "plan_list"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegisterOverBudgetType(t *testing.T) {
+	q, _ := testQueries(t)
+	reg := tool.NewRegistry()
+	Register(reg, q, nil, Ports{})
+	if _, err := reg.Get(tool.Reference{Name: "memory_write"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Get(tool.Reference{Name: "read"}); err != nil {
+		t.Fatal(err)
+	}
+	item, err := reg.Get(tool.Reference{Name: "read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := item.(tool.Inspector).Inspect(context.Background(), tool.Input{Call: tool.Call{
+		Arguments: json.RawMessage(`{"path":"a.txt"}`),
+	}}); err == nil {
+		t.Fatal("inspect without workspace should fail")
+	}
+}
+
+func TestCodingExecuteAllAndErrors(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "hello.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ports := Ports{
+		WorkspaceRoot: root,
+		LookPath:      func(file string) (string, error) { return "/bin/echo", nil },
+		RunCommand: func(ctx context.Context, name string, args []string, dir string, env []string, onStdout, onStderr func([]byte)) (CommandResult, error) {
+			if onStdout != nil {
+				onStdout([]byte("ok"))
+			}
+			return CommandResult{ExitCode: 0}, nil
+		},
+	}
+	reg := tool.NewRegistry()
+	Register(reg, nil, nil, ports)
+
+	read, _ := reg.Get(tool.Reference{Name: ToolRead})
+	got, err := read.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "r", Name: ToolRead, Arguments: json.RawMessage(`{"path":"hello.txt"}`)}})
+	if err != nil || !got.Success {
+		t.Fatalf("read %v %+v", err, got)
+	}
+	ls, _ := reg.Get(tool.Reference{Name: ToolLS})
+	got, err = ls.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "l", Name: ToolLS, Arguments: json.RawMessage(`{}`)}})
+	if err != nil || !got.Success {
+		t.Fatalf("ls %v %+v", err, got)
+	}
+	write, _ := reg.Get(tool.Reference{Name: ToolWrite})
+	got, err = write.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "w", Name: ToolWrite, Arguments: json.RawMessage(`{"path":"n.txt","content":"x"}`)}})
+	if err != nil || !got.Success {
+		t.Fatalf("write %v %+v", err, got)
+	}
+	edit, _ := reg.Get(tool.Reference{Name: ToolEdit})
+	got, err = edit.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "e", Name: ToolEdit, Arguments: json.RawMessage(`{"path":"n.txt","edits":[{"oldText":"x","newText":"y"}]}`)}})
+	if err != nil || !got.Success {
+		t.Fatalf("edit %v %+v", err, got)
+	}
+	bash, _ := reg.Get(tool.Reference{Name: ToolBash})
+	got, err = bash.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "b", Name: ToolBash, Arguments: json.RawMessage(`{"command":"echo hi"}`)}})
+	if err != nil || !got.Success {
+		t.Fatalf("bash %v %+v", err, got)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, err = write.Execute(ctx, tool.Input{Call: tool.Call{ID: "c", Name: ToolWrite, Arguments: json.RawMessage(`{"path":"z.txt","content":"1"}`)}})
+	if err == nil || got.Success {
+		t.Fatalf("cancel %v %+v", err, got)
+	}
+
+	failPorts := Ports{
+		WorkspaceRoot: root,
+		LookPath:      func(string) (string, error) { return "", os.ErrNotExist },
+	}
+	item := codingTool{name: ToolGrep, effect: tool.EffectAllow, schema: schemaOf[GrepInput](), ports: failPorts}
+	got, err = item.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "g", Name: ToolGrep, Arguments: json.RawMessage(`{"pattern":"x"}`)}})
+	if err != nil || got.Success {
+		t.Fatalf("grep missing %v %+v", err, got)
+	}
+
+	if _, err := codingPath(ToolRead, json.RawMessage(`{`)); err == nil {
+		t.Fatal("bad json")
+	}
+	if _, err := codingPath(ToolWrite, json.RawMessage(`{`)); err == nil {
+		t.Fatal("bad write json")
+	}
+	if _, err := codingPath(ToolEdit, json.RawMessage(`{`)); err == nil {
+		t.Fatal("bad edit json")
+	}
+	if _, err := codingPath(ToolGrep, json.RawMessage(`{`)); err == nil {
+		t.Fatal("bad grep")
+	}
+	if _, err := codingPath(ToolFind, json.RawMessage(`{`)); err == nil {
+		t.Fatal("bad find")
+	}
+	if _, err := codingPath(ToolLS, json.RawMessage(`{`)); err == nil {
+		t.Fatal("bad ls")
+	}
+	if _, err := codingPath(ToolBash, json.RawMessage(`{`)); err == nil {
+		t.Fatal("bad bash")
+	}
+	if path, err := codingPath("unknown", nil); err != nil || path != "" {
+		t.Fatal(path, err)
+	}
+	if path, err := codingPath(ToolGrep, json.RawMessage(`{"pattern":"x"}`)); err != nil || path != "." {
+		t.Fatal(path, err)
+	}
+	if path, err := codingPath(ToolFind, json.RawMessage(`{"pattern":"*"}`)); err != nil || path != "." {
+		t.Fatal(path, err)
+	}
+	if path, err := codingPath(ToolLS, json.RawMessage(`{}`)); err != nil || path != "." {
+		t.Fatal(path, err)
+	}
+	cancelPorts := Ports{
+		WorkspaceRoot: root,
+		LookPath:      func(string) (string, error) { return "/bin/echo", nil },
+		RunCommand: func(ctx context.Context, name string, args []string, dir string, env []string, onStdout, onStderr func([]byte)) (CommandResult, error) {
+			return CommandResult{}, context.Canceled
+		},
+	}
+	bashTool := codingTool{name: ToolBash, effect: tool.EffectAsk, schema: schemaOf[ShellInput](), ports: cancelPorts}
+	got, err = bashTool.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "d", Name: ToolBash, Arguments: json.RawMessage(`{"command":"echo"}`)}})
+	if err == nil || got.Success {
+		t.Fatalf("canceled exec %v %+v", err, got)
+	}
+	if len(nonzeroJSON(nil)) == 0 {
+		t.Fatal("nonzero")
+	}
+	if err := inspectCodingPath(ports, ToolBash, json.RawMessage(`{"command":"echo"}`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJailAndPlanErrors(t *testing.T) {
+	if _, err := jailPath("", "x", nil); err == nil {
+		t.Fatal("empty root")
+	}
+	if !insideRoot("/a", "/a") {
+		t.Fatal("same")
+	}
+
+	root := t.TempDir()
+	if _, err := jailPath(root, filepath.Join(root, "..", "nope"), osFileSystem{}); err == nil || !errors.Is(err, tool.ErrOutsideWorkspace) {
+		t.Fatalf("outside %v", err)
+	}
+	if _, err := jailPath(root, filepath.Join(root, "inside.txt"), osFileSystem{}); err != nil {
+		t.Fatal(err)
+	}
+
+	ports := Ports{WorkspaceRoot: root}
+	unknown := planTool{name: "plan_other", ports: ports}
+	got, err := unknown.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "u", Name: "plan_other"}})
+	if err != nil || got.Success {
+		t.Fatalf("unknown %v %+v", err, got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, err = planTool{name: "plan_list", ports: ports}.Execute(ctx, tool.Input{Call: tool.Call{ID: "c"}})
+	if err == nil || got.Success {
+		t.Fatalf("cancel %v %+v", err, got)
+	}
+	empty := planTool{name: "plan_list", ports: Ports{}}
+	got, err = empty.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "e"}})
+	if err != nil || got.Success {
+		t.Fatalf("empty root %v %+v", err, got)
+	}
+	if err := (planTool{name: "plan_list"}).Inspect(context.Background(), tool.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planNameFromArgs("plan_read", json.RawMessage(`{`)); err == nil {
+		t.Fatal("bad name json")
+	}
+	if _, err := planNameFromArgs("plan_write", json.RawMessage(`{`)); err == nil {
+		t.Fatal("bad write json")
+	}
+	if _, err := sanitizePlanName(""); err == nil {
+		t.Fatal("empty name")
+	}
+	if _, err := sanitizePlanName(`a\b.md`); err == nil {
+		t.Fatal("backslash")
+	}
+	read := planTool{name: "plan_read", ports: ports}
+	got, err = read.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "r", Arguments: json.RawMessage(`{"name":"missing.md"}`)}})
+	if err != nil || got.Success {
+		t.Fatalf("missing %v %+v", err, got)
+	}
+	write := planTool{name: "plan_write", ports: ports}
+	got, err = write.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "w", Arguments: json.RawMessage(`{`)}})
+	if err != nil || got.Success {
+		t.Fatalf("bad write exec %v %+v", err, got)
+	}
+	got, err = write.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "w2", Arguments: json.RawMessage(`{"name":"../x","content":"a"}`)}})
+	if err != nil || got.Success {
+		t.Fatalf("bad name exec %v %+v", err, got)
+	}
+	dir, err := os.MkdirTemp(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".cursor", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".cursor", "keep.md"), []byte("k"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	list := planTool{name: "plan_list", ports: Ports{WorkspaceRoot: dir}}
+	got, err = list.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "l"}})
+	if err != nil || !got.Success {
+		t.Fatalf("list %v %+v", err, got)
+	}
+	if _, err := planDir(""); err == nil {
+		t.Fatal("planDir empty")
+	}
+	if _, err := okToolResult("id", "n", make(chan int)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planNameFromArgs("plan_write", json.RawMessage(`{"name":"a.md","content":1}`)); err == nil {
+		t.Fatal("write type")
+	}
+	badRead := planTool{name: "plan_read", ports: ports}
+	got, err = badRead.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "br", Arguments: json.RawMessage(`{"name":"../x"}`)}})
+	if err != nil || got.Success {
+		t.Fatalf("bad read name %v %+v", err, got)
+	}
+}
+
+func TestMemoryAndPingErrors(t *testing.T) {
+	q, ctx := testQueries(t)
+	if _, err := q.InsertSession(ctx, sqlite.InsertSessionParams{
+		ID: "sess-err", TenantID: "t", UserID: "u", AgentID: "default", WorkspaceID: "", Status: "active",
+		CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	got, err := Ping().Execute(canceled, tool.Input{Call: tool.Call{ID: "p"}})
+	if err == nil || got.Success {
+		t.Fatalf("ping cancel %v %+v", err, got)
+	}
+	got, err = Ping().Execute(ctx, tool.Input{Call: tool.Call{ID: "p2", Arguments: json.RawMessage(`{`)}})
+	if err != nil || got.Success {
+		t.Fatalf("ping json %v %+v", err, got)
+	}
+
+	read := ReadTool(q)
+	got, err = read.Execute(canceled, tool.Input{Call: tool.Call{ID: "r"}})
+	if err == nil || got.Success {
+		t.Fatalf("read cancel %v %+v", err, got)
+	}
+	got, err = read.Execute(ctx, tool.Input{Call: tool.Call{ID: "r2"}})
+	if err != nil || got.Success {
+		t.Fatalf("read args %v %+v", err, got)
+	}
+	got, err = read.Execute(ctx, tool.Input{Call: tool.Call{ID: "r3", Arguments: json.RawMessage(`{"scope":"nope","name":"index"}`)}, SessionID: "sess-err"})
+	if err != nil || got.Success {
+		t.Fatalf("bad scope %v %+v", err, got)
+	}
+	write := WriteTool(q, nil)
+	got, err = write.Execute(canceled, tool.Input{Call: tool.Call{ID: "w"}})
+	if err == nil || got.Success {
+		t.Fatalf("write cancel %v %+v", err, got)
+	}
+	got, err = write.Execute(ctx, tool.Input{Call: tool.Call{ID: "w2", Arguments: json.RawMessage(`{`)}})
+	if err != nil || got.Success {
+		t.Fatalf("write json %v %+v", err, got)
+	}
+	search := SearchTool(q)
+	got, err = search.Execute(canceled, tool.Input{Call: tool.Call{ID: "s"}})
+	if err == nil || got.Success {
+		t.Fatalf("search cancel %v %+v", err, got)
+	}
+	got, err = search.Execute(ctx, tool.Input{Call: tool.Call{ID: "s2"}})
+	if err != nil || got.Success {
+		t.Fatalf("search args %v %+v", err, got)
+	}
+	got, err = search.Execute(ctx, tool.Input{SessionID: "missing", Call: tool.Call{ID: "s3", Arguments: json.RawMessage(`{"query":"x"}`)}})
+	if err != nil || got.Success {
+		t.Fatalf("search session %v %+v", err, got)
+	}
+	got, err = search.Execute(ctx, tool.Input{SessionID: "sess-err", Call: tool.Call{ID: "s4", Arguments: json.RawMessage(`{"query":"x"}`)}})
+	if err != nil || !got.Success {
+		t.Fatalf("search empty ws %v %+v", err, got)
+	}
+	if _, err := scopeIDFromSession(ctx, nil, "s", "user"); err == nil {
+		t.Fatal("nil q")
+	}
+	if _, err := scopeIDFromSession(ctx, q, "", "user"); err == nil {
+		t.Fatal("empty session")
+	}
+	if wrapSessionErr(nil) != nil {
+		t.Fatal("nil wrap")
+	}
+	got, err = write.Execute(ctx, tool.Input{SessionID: "sess-err", Call: tool.Call{ID: "w3", Arguments: json.RawMessage(`{"scope":"workspace","name":"index","content":"x"}`)}})
+	if err != nil || !got.Success {
+		t.Fatalf("write empty workspace %v %+v", err, got)
+	}
+	got, err = write.Execute(ctx, tool.Input{SessionID: "missing", Call: tool.Call{ID: "w4", Arguments: json.RawMessage(`{"scope":"user","name":"index","content":"x"}`)}})
+	if err != nil || got.Success {
+		t.Fatalf("write missing session %v %+v", err, got)
+	}
+	got, err = write.Execute(ctx, tool.Input{SessionID: "sess-err", Call: tool.Call{ID: "w5", Arguments: json.RawMessage(`{"scope":"nope","name":"index","content":"x"}`)}})
+	if err != nil || got.Success {
+		t.Fatalf("write bad scope %v %+v", err, got)
+	}
+	if _, err := okResult(tool.Input{Call: tool.Call{ID: "x"}}, "n", make(chan int)); err != nil {
+		t.Fatal(err)
 	}
 }

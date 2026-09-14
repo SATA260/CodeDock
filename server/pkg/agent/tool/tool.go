@@ -3,7 +3,20 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
+)
+
+// ErrOutsideWorkspace 表示路径落在会话工作区外。
+var ErrOutsideWorkspace = errors.New("outside workspace")
+
+// Effect 是工具默认权限；本阶段与 RequiresApproval 并存，三模式流水线再接管。
+type Effect string
+
+const (
+	EffectAllow Effect = "allow"
+	EffectAsk   Effect = "ask"
+	EffectDeny  Effect = "deny"
 )
 
 // ExecutionMode 定义一组工具调用采用串行还是并行执行。
@@ -34,9 +47,11 @@ const (
 )
 
 // Permission 描述工具所需的能力；审批与否由工具自己声明。
+// Effect 供编码工具使用；空则只看 RequiresApproval。
 type Permission struct {
 	Capabilities     []Capability `json:"capabilities,omitempty"`
 	RequiresApproval bool         `json:"requires_approval"`
+	Effect           Effect       `json:"effect,omitempty"`
 	Resource         string       `json:"resource,omitempty"`
 }
 
@@ -92,10 +107,11 @@ type Call struct {
 
 // Input 是传递给各种工具兼容层的统一执行输入。
 type Input struct {
-	SessionID string
-	RunID     string
-	TurnID    string
-	Call      Call
+	SessionID     string
+	RunID         string
+	TurnID        string
+	WorkspaceRoot string // 会话创建时冻结的工作目录；空则回落 Ports
+	Call          Call
 }
 
 // Result 是各种工具兼容层返回的统一结构化输出。
@@ -112,6 +128,16 @@ type Result struct {
 type Tool interface {
 	Definition() Definition
 	Execute(ctx context.Context, input Input) (Result, error)
+}
+
+// Inspector 是工具层额外的参数校验；失败则本调用不执行。
+type Inspector interface {
+	Inspect(ctx context.Context, input Input) error
+}
+
+// EffectResolver 按本次入参覆盖工具默认 Effect。三模式流水线再使用。
+type EffectResolver interface {
+	ResolveEffect(ctx context.Context, input Input) Effect
 }
 
 // Registry 定义工具注册、获取与提示词汇总的能力。
@@ -136,6 +162,7 @@ type Invocation struct {
 	SessionID        string
 	RunID            string
 	TurnID           string
+	WorkspaceRoot    string
 	Calls            []Call
 	Mode             ExecutionMode
 	FailurePolicy    FailurePolicy

@@ -1,6 +1,13 @@
 "use client";
 
-import type { SessionState, ThinkingPhase, TimelineItem } from "@codedock/core/chat";
+import {
+  latestPlanDocIds,
+  planPreviewFromTool,
+  planToolDump,
+  type SessionState,
+  type ThinkingPhase,
+  type TimelineItem,
+} from "@codedock/core/chat";
 import {
   cn,
   Conversation,
@@ -24,20 +31,26 @@ import {
 } from "@codedock/ui";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { PlanPreviewCard } from "./plan-preview.tsx";
+
 const thinkingCopy: Record<ThinkingPhase, string> = {
   queued: "排队中",
   loading_context: "正在装载上下文",
   running_llm: "正在思考",
 };
 
+type ToolItem = Extract<TimelineItem, { kind: "tool" }>;
+
 export function ConversationTimeline({
   state,
   loading = false,
   scrollKey,
+  emptyDescription,
 }: {
   state: SessionState;
   loading?: boolean;
   scrollKey?: string;
+  emptyDescription?: string;
 }) {
   const items = state.items.filter(
     (item) =>
@@ -55,14 +68,19 @@ export function ConversationTimeline({
     }
     return (
       <Conversation>
-        <ConversationEmptyState />
+        <ConversationEmptyState description={emptyDescription} />
       </Conversation>
     );
   }
   const rows = groupTimeline(items);
   const sections = sectionizeTimeline(rows);
+  const latestDocs = latestPlanDocIds(items.filter((item): item is ToolItem => item.kind === "tool"));
   const lastRow = rows[rows.length - 1];
-  const followKey = lastRow ? (lastRow.kind === "tools" ? lastRow.id : lastRow.item.id) : undefined;
+  const followKey = lastRow
+    ? lastRow.kind === "tools"
+      ? toolsFollowKey(lastRow)
+      : lastRow.item.id
+    : undefined;
   const streaming = items.some(
     (item) => item.kind === "thinking" || (item.kind === "assistant" && item.streaming),
   );
@@ -75,7 +93,7 @@ export function ConversationTimeline({
             {section.map((row, rowIndex) => {
               const latest = sectionIndex === sections.length - 1 && rowIndex === section.length - 1;
               return row.kind === "tools" ? (
-                <ToolCallsRow key={row.id} tools={row.tools} latest={latest} />
+                <ToolCallsRow key={row.id} tools={row.tools} latest={latest} latestDocIds={latestDocs} />
               ) : (
                 <TimelineRow key={row.item.id} item={row.item} latest={latest} />
               );
@@ -145,8 +163,6 @@ function TimelineRow({
   }
 }
 
-type ToolItem = Extract<TimelineItem, { kind: "tool" }>;
-
 type TimelineRowModel =
   | { kind: "item"; item: Exclude<TimelineItem, { kind: "tool" }> }
   | { kind: "tools"; id: string; tools: ToolItem[] };
@@ -185,25 +201,68 @@ function rollupToolState(tools: ToolItem[]): ToolState {
   return order.find((state) => tools.some((tool) => tool.state === state)) ?? "completed";
 }
 
-function ToolCallsRow({ tools, latest = false }: { tools: ToolItem[]; latest?: boolean }) {
+function ToolCallsRow({
+  tools,
+  latest = false,
+  latestDocIds,
+}: {
+  tools: ToolItem[];
+  latest?: boolean;
+  latestDocIds: Set<string>;
+}) {
+  const previews = tools.flatMap((item) => {
+    const preview = planPreviewFromTool(item);
+    if (!preview) {
+      return [];
+    }
+    if (!latestDocIds.has(item.id)) {
+      return [];
+    }
+    return [{ item, preview }];
+  });
   return (
-    <div {...(latest ? { "data-conversation-latest": "" } : {})}>
+    <div
+      className={previews.length > 0 ? "flex flex-col gap-3" : undefined}
+      {...(latest ? { "data-conversation-latest": "" } : {})}
+    >
       <ToolGroup>
         <ToolGroupHeader count={tools.length} state={rollupToolState(tools)} />
         <ToolGroupContent>
-          {tools.map((item) => (
-            <Tool key={item.id}>
-              <ToolHeader type={`tool-${item.name}`} state={item.state} />
-              <ToolContent>
-                <ToolInput input={item.arguments} />
-                <ToolOutput output={item.output} errorText={item.error} />
-              </ToolContent>
-            </Tool>
-          ))}
+          {tools.map((item) => {
+            const dump = planToolDump(item);
+            return (
+              <Tool key={item.id}>
+                <ToolHeader type={`tool-${item.name}`} state={item.state} />
+                <ToolContent>
+                  <ToolInput input={dump.input} />
+                  <ToolOutput output={dump.output} errorText={item.error} />
+                </ToolContent>
+              </Tool>
+            );
+          })}
         </ToolGroupContent>
       </ToolGroup>
+      {previews.map(({ item, preview }) => (
+        <PlanPreviewCard
+          key={`plan:${item.id}`}
+          preview={preview}
+          state={item.state}
+          error={item.error}
+        />
+      ))}
     </div>
   );
+}
+
+function toolsFollowKey(row: Extract<TimelineRowModel, { kind: "tools" }>): string {
+  const parts = row.tools.map((tool) => {
+    const preview = planPreviewFromTool(tool);
+    if (!preview) {
+      return tool.state;
+    }
+    return `${tool.state}:${preview.content.length}`;
+  });
+  return `${row.id}:${parts.join(",")}`;
 }
 
 function sectionizeTimeline(rows: TimelineRowModel[]): TimelineRowModel[][] {
@@ -243,6 +302,27 @@ function scrollParent(node: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
+/** 折叠时前三行保持清晰，第四行是渐隐区。 */
+const USER_FOLD_LINES = 3;
+
+function lineHeightPx(el: HTMLElement): number {
+  const { lineHeight, fontSize } = getComputedStyle(el);
+  const parsed = Number.parseFloat(lineHeight);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  const size = Number.parseFloat(fontSize);
+  return Number.isFinite(size) && size > 0 ? size * 1.25 : 20;
+}
+
+function userTextOverflows(clip: HTMLElement): boolean {
+  const text = clip.querySelector("p");
+  if (!text) {
+    return false;
+  }
+  return text.scrollHeight > lineHeightPx(text) * USER_FOLD_LINES + 0.5;
+}
+
 function UserRow({
   item,
   latest = false,
@@ -255,8 +335,10 @@ function UserRow({
   const clipRef = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(false);
   const [open, setOpen] = useState(false);
-  const [overflow, setOverflow] = useState(false);
+  const [overflow, setOverflow] = useState(() => item.text.split("\n").length > USER_FOLD_LINES);
   const compact = !open;
+  const folded = compact && overflow;
+  const expandable = overflow || open;
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -291,11 +373,24 @@ function UserRow({
 
   useLayoutEffect(() => {
     const el = clipRef.current;
-    if (!el || open) {
-      setOverflow(false);
+    if (!el) {
       return;
     }
-    setOverflow(el.scrollHeight > el.clientHeight + 1);
+    const measure = () => {
+      if (open) {
+        return;
+      }
+      setOverflow(userTextOverflows(el));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    const text = el.querySelector("p");
+    if (text) {
+      observer.observe(text);
+    }
+    void document.fonts?.ready.then(measure);
+    return () => observer.disconnect();
   }, [item.text, open]);
 
   return (
@@ -309,17 +404,20 @@ function UserRow({
       >
         <Message
           from="user"
-          className={cn(overflow && "cursor-pointer")}
-          role={overflow || open ? "button" : undefined}
-          tabIndex={overflow || open ? 0 : undefined}
-          aria-expanded={overflow || open ? open : undefined}
+          data-folded={folded ? "true" : "false"}
+          className={cn(expandable && "cursor-pointer")}
+          role={expandable ? "button" : undefined}
+          tabIndex={expandable ? 0 : undefined}
+          aria-expanded={expandable ? open : undefined}
+          title={folded ? "消息已折叠，点击展开" : open ? "点击收起" : undefined}
+          aria-label={folded ? "用户消息已折叠，点击展开" : undefined}
           onClick={() => {
-            if (overflow || open) {
+            if (expandable) {
               setOpen((current) => !current);
             }
           }}
           onKeyDown={(event) => {
-            if (!overflow && !open) {
+            if (!expandable) {
               return;
             }
             if (event.key === "Enter" || event.key === " ") {
@@ -334,9 +432,19 @@ function UserRow({
             ) : null}
             <div
               ref={clipRef}
-              className={cn("relative", compact && "max-h-20 overflow-hidden")}
+              className={cn(
+                "relative",
+                compact &&
+                  "max-h-[4lh] overflow-hidden [mask-image:linear-gradient(to_bottom,black_3lh,transparent_4lh)] [-webkit-mask-image:linear-gradient(to_bottom,black_3lh,transparent_4lh)]",
+              )}
             >
               <p className="whitespace-pre-wrap break-words">{item.text}</p>
+              {folded ? (
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-[1lh] bg-gradient-to-b from-muted/0 to-muted backdrop-blur-[3px]"
+                />
+              ) : null}
             </div>
           </MessageContent>
         </Message>
