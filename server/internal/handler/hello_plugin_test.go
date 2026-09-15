@@ -213,7 +213,7 @@ func buildHelloPlugin(t *testing.T, dest string) {
 		root = parent
 	}
 	cmd := exec.Command("go", "build", "-o", dest, ".")
-	cmd.Dir = filepath.Join(filepath.Dir(root), "example", "hello")
+	cmd.Dir = filepath.Join(root, "internal", "pluginhost", "testdata", "hello")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build hello: %v\n%s", err, out)

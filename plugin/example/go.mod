@@ -1,4 +1,4 @@
-module codedock-example-hello
+module codedock-example
 
 go 1.26.5
 

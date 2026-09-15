@@ -1,24 +1,5 @@
-// hello 是给作者拷贝的唯一示例。实现 sdk.Plugin，再按需实现各口的 Handler，main 里 sdk.Serve 即可。
-// 只 import codedock/pkg/plugin。复制本目录，改 go.mod 模块名、Manifest.Name 和下面的策略。
-//
-//	mkdir -p "$PLUGIN_DIR/hello"
-//	go build -o "$PLUGIN_DIR/hello/hello" .
-//	PLUGIN_DIR=... 启动 API
-//
-// 六个口的参数和回包就是 SDK 里的结构体，跳进类型看字段：
-//
-//	OnAgentInput       sdk.AgentInput / sdk.AgentInputResult
-//	OnAgentPreStep     sdk.AgentPreStep / sdk.AgentPreStepResult
-//	OnAgentRequest     sdk.AgentRequest / sdk.AgentRequestResult
-//	OnLLMStream        sdk.LLMStream / sdk.LLMStreamResult
-//	OnToolPreExecute   sdk.ToolPreExecute / sdk.ToolPreExecuteResult
-//	OnToolPostExecute  sdk.ToolPostExecute / sdk.ToolPostExecuteResult
-//	OnLedgerNotify     sdk.LedgerNotify
-//
-// 没实现的口原样通过。Reply 继续，Handle / Block / Deny / AskApproval 换向。
-// 跨口、跨插件传参数用 in.Context.Set("hello.xxx", v)，不要塞 Hidden。
-//
-// 本示例：普通正文加 [hello] 前缀；/skip 不建 Run；开跑前塞一条隐藏提示；参数含 forbidden 则否决；登记 hello 方法。
+// hello 只给宿主和回路测试用：改正文、跳过、否决、登记方法。
+// 不是作者模板，不要编进仓根 plugin/。
 package main
 
 import (
@@ -125,7 +106,7 @@ func (p *hello) ExecuteMethod(_ context.Context, in sdk.MethodInput) (sdk.Method
 	return sdk.MethodResult{Success: true, Output: out}, nil
 }
 
-// main 启动 hello 插件进程。
+// main 启动 hello 测试插件进程。
 func main() {
 	sdk.Serve(&hello{})
 }

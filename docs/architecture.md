@@ -54,8 +54,8 @@ CodeDock/
 │   ├── ui/                      # 无业务语义；components / lib / styles，不要 src/
 │   └── views/                   # 组合层；按业务域拆（现有 chat/），不要 src/
 ├── docs/
-├── example/hello/           # 插件模板；不进 pkg/plugin
-├── example/redact/          # 脱敏示例；不进 pkg/plugin
+├── plugin/example/          # 插件拷贝模板；不改正文、不换向
+├── plugin/redact/           # 脱敏插件；PLUGIN_DIR 指到 plugin/
 ├── data/                    # 运行时文件（sqlite 等），gitignore
 ├── server/
 │   ├── cmd/server/              # 服务启动、配置、Router 和依赖装配

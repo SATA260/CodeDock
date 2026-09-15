@@ -133,7 +133,7 @@ func buildRedactPlugin(t *testing.T, dest string) {
 		root = parent
 	}
 	cmd := exec.Command("go", "build", "-o", dest, ".")
-	cmd.Dir = filepath.Join(filepath.Dir(root), "example", "redact")
+	cmd.Dir = filepath.Join(filepath.Dir(root), "plugin", "redact")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build redact: %v\n%s", err, out)

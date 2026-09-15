@@ -26,7 +26,7 @@ func TestHostDispatchMethodsAndEmit(t *testing.T) {
 		t.Skip("plugin host integration")
 	}
 	dir := t.TempDir()
-	buildExample(t, "hello", filepath.Join(dir, "hello", "hello"))
+	buildPlugin(t, "codedock/internal/pluginhost/testdata/hello", filepath.Join(dir, "hello", "hello"))
 	buildPlugin(t, "codedock/internal/pluginhost/testdata/probe", filepath.Join(dir, "probe", "probe"))
 
 	reg := tool.NewRegistry()
@@ -148,13 +148,13 @@ func TestHostTimeout(t *testing.T) {
 	}
 }
 
-// TestHelloTemplate 跑一遍 hello 示例的改正文、跳过、隐藏提示、否决和方法。
-func TestHelloTemplate(t *testing.T) {
+// TestHelloFixture 跑一遍测试夹具的改正文、跳过、隐藏提示、否决和方法。
+func TestHelloFixture(t *testing.T) {
 	if testing.Short() {
 		t.Skip("plugin host integration")
 	}
 	dir := t.TempDir()
-	buildExample(t, "hello", filepath.Join(dir, "hello", "hello"))
+	buildPlugin(t, "codedock/internal/pluginhost/testdata/hello", filepath.Join(dir, "hello", "hello"))
 	reg := tool.NewRegistry()
 	host, err := Load(context.Background(), Options{
 		Dir:      dir,
@@ -244,6 +244,62 @@ func TestLoadEmptyDir(t *testing.T) {
 	}
 }
 
+// TestExampleTemplate 确认 plugin/example 不改正文、不换向、不登记方法。
+func TestExampleTemplate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("plugin host integration")
+	}
+	dir := t.TempDir()
+	buildRepoPlugin(t, filepath.Join("plugin", "example"), filepath.Join(dir, "example", "example"))
+	reg := tool.NewRegistry()
+	host, err := Load(context.Background(), Options{
+		Dir:      dir,
+		Timeout:  3 * time.Second,
+		Registry: reg,
+		Model:    pkgagent.ModelConfig{Provider: "fake", Model: "fake"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = host.Close() })
+
+	rewritten, err := host.Dispatch(context.Background(), seam.Envelope{
+		Type:    seam.TypeInput,
+		Payload: pkgagent.MarshalPayload(pkgagent.InputPayload{Content: "world"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input pkgagent.InputPayload
+	if err := json.Unmarshal(rewritten.Payload, &input); err != nil {
+		t.Fatal(err)
+	}
+	if rewritten.Type != seam.TypeInput || input.Content != "world" || len(rewritten.Seen) != 0 {
+		t.Fatalf("example mutated input: ev=%+v payload=%+v", rewritten, input)
+	}
+
+	skipped, err := host.Dispatch(context.Background(), seam.Envelope{
+		Type:    seam.TypeInput,
+		Payload: pkgagent.MarshalPayload(pkgagent.InputPayload{Content: "/skip later"}),
+	})
+	if err != nil || skipped.Type != seam.TypeInput {
+		t.Fatalf("example handled skip: ev=%+v err=%v", skipped, err)
+	}
+
+	denied, err := host.Dispatch(context.Background(), seam.Envelope{
+		Type: seam.TypePreExecute,
+		Payload: pkgagent.MarshalPayload(tool.PreExecutePayload{
+			Call: tool.Call{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{"x":"forbidden"}`)},
+		}),
+	})
+	if err != nil || denied.Type != seam.TypePreExecute {
+		t.Fatalf("example denied tool: ev=%+v err=%v", denied, err)
+	}
+	if names := host.MethodNames(); len(names) != 0 {
+		t.Fatalf("example registered methods: %v", names)
+	}
+}
+
 // TestRegisterReservedMethods 确认 ping / memory_* 不能被插件覆盖。
 func TestRegisterReservedMethods(t *testing.T) {
 	h := &Host{registry: tool.NewRegistry()}
@@ -261,18 +317,18 @@ func TestRegisterReservedMethods(t *testing.T) {
 	}
 }
 
-// buildExample 编译仓根 example/<name> 到 dest。
-func buildExample(t *testing.T, name, dest string) {
+// buildRepoPlugin 编译仓根相对路径下的插件到 dest。
+func buildRepoPlugin(t *testing.T, rel, dest string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("go", "build", "-o", dest, ".")
-	cmd.Dir = filepath.Join(repoRoot(t), "example", name)
+	cmd.Dir = filepath.Join(repoRoot(t), rel)
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("build example/%s: %v\n%s", name, err, out)
+		t.Fatalf("build %s: %v\n%s", rel, err, out)
 	}
 }
 
@@ -295,8 +351,8 @@ func buildPlugin(t *testing.T, pkg, dest string) {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root := filepath.Dir(moduleRoot(t))
-	if _, err := os.Stat(filepath.Join(root, "example")); err != nil {
-		t.Fatalf("example/ not found at %s", root)
+	if _, err := os.Stat(filepath.Join(root, "plugin", "example")); err != nil {
+		t.Fatalf("plugin/example not found at %s", root)
 	}
 	return root
 }

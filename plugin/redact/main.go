@@ -1,9 +1,8 @@
 // redact 在三个口把秘密换成占位符，不拦工具、不建方法。
-// 只 import codedock/pkg/plugin。hello 仍是作者拷贝模板。
+// 只 import codedock/pkg/plugin。plugin/example 是作者拷贝模板。
 //
-//	mkdir -p "$PLUGIN_DIR/redact"
-//	go build -o "$PLUGIN_DIR/redact/redact" .
-//	PLUGIN_DIR=... 启动 API
+//	go build -o redact .
+//	PLUGIN_DIR=<仓根>/plugin 启动 API
 package main
 
 import (

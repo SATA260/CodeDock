@@ -4,43 +4,30 @@
 
 没有 `PLUGIN_DIR` 时，服务不拉任何插件，主循环与现在完全一样。
 
-## 从 hello 模板开始
+## 从 example 模板开始
 
-`example/hello` 是作者拷贝的模板。`example/redact` 是脱敏示例：不拦工具，只在 input / request / post-execute 把秘密换成占位符。六个口要哪些字段，以 `codedock/pkg/plugin` 里的结构体为准（`AgentInput`、`AgentInputResult` 等），跳进类型就能看到。
+`plugin/example` 是作者拷贝的模板：不订阅、不改正文、不换向、不登记方法。装进 `PLUGIN_DIR` 也不会改对话。复制本目录，改 `go.mod` 模块名、`Manifest.Name` 和策略，再在 `Bootstrap` 里填 `Subscriptions`。作者只 import `codedock/pkg/plugin`。`go.mod` 用 `replace` 指到本仓 `server/`。
 
-```sh
-mkdir -p data/plugins/hello
-(cd example/hello && go build -o ../../data/plugins/hello/hello .)
-PLUGIN_DIR=$PWD/data/plugins pnpm dev:api
-```
+可装载的插件放在仓根 `plugin/`，子目录名即插件名。`plugin/redact` 是脱敏插件：不拦工具，只在 input / request / post-execute 把秘密换成占位符。六个口要哪些字段，以 `codedock/pkg/plugin` 里的结构体为准（`AgentInput`、`AgentInputResult` 等），跳进类型就能看到。
 
-脱敏示例：
+本地编译后：
 
 ```sh
-mkdir -p data/plugins/redact
-(cd example/redact && go build -o ../../data/plugins/redact/redact .)
-PLUGIN_DIR=$PWD/data/plugins pnpm dev:api
+(cd plugin/example && go build -o example .)
+(cd plugin/redact && go build -o redact .)
+PLUGIN_DIR=$PWD/plugin pnpm run dev
 ```
 
-然后对一个会话：
-
-| 你发的 | 能看到的 |
-| --- | --- |
-| `world` | 用户消息变成 `[hello] world`，开跑前多一条隐藏提示，模型能看到 `hello` 方法 |
-| `/skip` | 接口 `handled: true`，不建 Run |
-| 工具参数含 `forbidden` | 该次调用被否决（hello） |
-| 正文或工具回包含 `AKIA…` / `API_KEY=…` | 落库和发给模型的是占位符（redact） |
-
-复制 `example/hello`，改 `go.mod` 模块名、订阅和策略。作者只 import `codedock/pkg/plugin`。`go.mod` 用 `replace` 指到本仓 `server/`。
+正文或工具回包含 `AKIA…` / `API_KEY=…` 时，落库和发给模型的是占位符。
 
 目录约定：
 
 ```text
-PLUGIN_DIR/
-  hello/
-    hello    # 与子目录同名的二进制
+plugin/                 # PLUGIN_DIR 指这里
+  example/
+    example             # 拷贝模板，不改对话
   redact/
-    redact
+    redact              # 与子目录同名的二进制
 ```
 
 ## 六个口
@@ -58,7 +45,7 @@ PLUGIN_DIR/
 
 账本通知走 `OnLedgerNotify`，没有换向。多个插件按子目录名排序，后一个看到前一个改完的结果。同一条链上问过的插件记在 `Seen` 里，不会再问自己。
 
-跨口、跨插件传参数用各口上的 `Context`（`Set("hello.xxx", v)` / `Get`）。这是宿主暂存的 JSON 对象，不进模型、不进消息表、不换向。键建议 `插件名.字段`。`agent/input` 时按会话挂；建 Run 后迁到该 Run。`Handle()` 或 Run 终态会清掉。上限 8KB，超了保留上一份。进程重启即丢。不要把协议塞进 `Hidden`。
+跨口、跨插件传参数用各口上的 `Context`（`Set("example.xxx", v)` / `Get`）。这是宿主暂存的 JSON 对象，不进模型、不进消息表、不换向。键建议 `插件名.字段`。`agent/input` 时按会话挂；建 Run 后迁到该 Run。`Handle()` 或 Run 终态会清掉。上限 8KB，超了保留上一份。进程重启即丢。不要把协议塞进 `Hidden`。
 
 隐藏提示用 `sdk.HiddenText("...")` 加进 `AgentPreStep.Hidden`。已批准但还没执行的工具不再走 `OnToolPreExecute`。流式增量 `assistant.delta` 不发给插件。
 

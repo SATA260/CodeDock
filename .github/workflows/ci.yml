@@ -26,18 +26,18 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: |
             server/go.sum
-            example/hello/go.sum
-            example/redact/go.sum
+            plugin/example/go.sum
+            plugin/redact/go.sum
 
       - name: Lint
         run: |
-          test -z "$(gofmt -l . ../example)" || { echo "gofmt needed:"; gofmt -l . ../example; exit 1; }
+          test -z "$(gofmt -l . ../plugin)" || { echo "gofmt needed:"; gofmt -l . ../plugin; exit 1; }
           go vet ./...
 
       - name: Test
         run: |
           go test ./...
-          (cd ../example/redact && go test .)
+          (cd ../plugin/redact && go test .)
 
       - name: Build
         run: go build -o /tmp/codedock ./cmd/server

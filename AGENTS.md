@@ -12,7 +12,7 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - Markdown 记忆（热层目录+专题）与 context message 索引（冷层按工作区 FTS）放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`，不定义 Tool。
 - 具体工具定义放在 `server/internal/agent/tools`。工具名、入参/出参、schema、权限和编排都在本包；Execute 若要调外部能力，只通过 `Ports` 里的接口。Runtime `New` 时由 `cmd/server` 注入 `Ports` 的具体实现，再 `Register`。每个工具只定义入参/出参结构体，执行用 `encoding/json`，schema 从类型推断。`tools` 可 import `memory`，不 import 父包 `internal/agent`。
 - Agent 通用无状态逻辑放在 `server/pkg/agent`：类型、token 统计、提示词、上下文、Tool 抽象（不含具体工具定义）、Agent 配置、模型调用。六个口的信封放在 `pkg/agent/seam`。
-- 插件 SDK 与 proto 放在 `server/pkg/plugin`；宿主放在 `server/internal/pluginhost`。两者都不进 `pkg/agent`，也不知道主循环内部状态机。示例插件放在仓根 `example/`（`hello` 是模板，`redact` 是脱敏），不进 `pkg/plugin`。插件共享参数用 `PluginContext`，不进模型、不复用 Hidden。
+- 插件 SDK 与 proto 放在 `server/pkg/plugin`；宿主放在 `server/internal/pluginhost`。两者都不进 `pkg/agent`，也不知道主循环内部状态机。可装载的插件放在仓根 `plugin/`（子目录名即插件名）。`plugin/example` 是作者拷贝模板：不订阅、不改正文、不换向、不登记方法。不进 `pkg/plugin`。插件共享参数用 `PluginContext`，不进模型、不复用 Hidden。
 - Git CLI 操作放在 `server/pkg/git`：无状态，不写产品流程；Handler 直接调用。不进 `pkg/agent`。
 - 进程内事件总线放在 `server/internal/events`。
 - 数据库入口和 sqlc 生成代码放在 `server/pkg/db`。
