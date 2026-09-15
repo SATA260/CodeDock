@@ -2,7 +2,7 @@
 
 import type { ApprovalMode, TimelineItem, WorkMode } from "@codedock/core/chat";
 import { Button } from "@codedock/ui";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useAgent } from "../provider.tsx";
 import { ApprovalDock } from "./approval-dock.tsx";
@@ -29,6 +29,7 @@ export type ChatPageProps = {
   headerActions?: ReactNode;
 };
 
+// ChatPage 组合会话侧栏、时间线与输入条。
 export function ChatPage({
   sessionId,
   onOpenSession,
@@ -41,8 +42,13 @@ export function ChatPage({
   const timeline = useSessionTimeline(sessionId);
   const [starting, setStarting] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
-  const [workspaceDraft, setWorkspaceDraft] = useState(readLastWorkspace);
+  const [workspaceDraft, setWorkspaceDraft] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  // 上次目录只在本机 localStorage，等 hydration 后再读，避免 SSR 文本对不上。
+  useEffect(() => {
+    setWorkspaceDraft(readLastWorkspace());
+  }, []);
 
   const frozenWorkspace =
     timeline.workspaceId ?? list.sessions.find((session) => session.id === sessionId)?.workspace_id ?? "";
