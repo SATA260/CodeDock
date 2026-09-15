@@ -27,6 +27,7 @@ jobs:
           cache-dependency-path: |
             server/go.sum
             example/hello/go.sum
+            example/redact/go.sum
 
       - name: Lint
         run: |
@@ -34,7 +35,9 @@ jobs:
           go vet ./...
 
       - name: Test
-        run: go test ./...
+        run: |
+          go test ./...
+          (cd ../example/redact && go test .)
 
       - name: Build
         run: go build -o /tmp/codedock ./cmd/server

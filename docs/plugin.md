@@ -6,11 +6,19 @@
 
 ## 从 hello 模板开始
 
-`example/hello` 是唯一的示例，也是作者拷贝的模板。六个口要哪些字段，以 `codedock/pkg/plugin` 里的结构体为准（`AgentInput`、`AgentInputResult` 等），跳进类型就能看到。
+`example/hello` 是作者拷贝的模板。`example/redact` 是脱敏示例：不拦工具，只在 input / request / post-execute 把秘密换成占位符。六个口要哪些字段，以 `codedock/pkg/plugin` 里的结构体为准（`AgentInput`、`AgentInputResult` 等），跳进类型就能看到。
 
 ```sh
 mkdir -p data/plugins/hello
 (cd example/hello && go build -o ../../data/plugins/hello/hello .)
+PLUGIN_DIR=$PWD/data/plugins pnpm dev:api
+```
+
+脱敏示例：
+
+```sh
+mkdir -p data/plugins/redact
+(cd example/redact && go build -o ../../data/plugins/redact/redact .)
 PLUGIN_DIR=$PWD/data/plugins pnpm dev:api
 ```
 
@@ -20,7 +28,8 @@ PLUGIN_DIR=$PWD/data/plugins pnpm dev:api
 | --- | --- |
 | `world` | 用户消息变成 `[hello] world`，开跑前多一条隐藏提示，模型能看到 `hello` 方法 |
 | `/skip` | 接口 `handled: true`，不建 Run |
-| 工具参数含 `forbidden` | 该次调用被否决 |
+| 工具参数含 `forbidden` | 该次调用被否决（hello） |
+| 正文或工具回包含 `AKIA…` / `API_KEY=…` | 落库和发给模型的是占位符（redact） |
 
 复制 `example/hello`，改 `go.mod` 模块名、订阅和策略。作者只 import `codedock/pkg/plugin`。`go.mod` 用 `replace` 指到本仓 `server/`。
 
@@ -30,6 +39,8 @@ PLUGIN_DIR=$PWD/data/plugins pnpm dev:api
 PLUGIN_DIR/
   hello/
     hello    # 与子目录同名的二进制
+  redact/
+    redact
 ```
 
 ## 六个口
