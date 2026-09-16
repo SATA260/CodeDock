@@ -22,15 +22,19 @@ export class GitClientError extends Error {
 
 export type GitClientOptions = {
   baseUrl: string;
+  /** 当前会话。Git 操作打在该会话冻结的工作目录上。 */
+  sessionId?: string;
   fetch?: typeof fetch;
 };
 
 export class GitClient {
   readonly baseUrl: string;
+  readonly sessionId?: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: GitClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
+    this.sessionId = options.sessionId?.trim() || undefined;
     this.fetchImpl = options.fetch ?? fetch.bind(globalThis);
   }
 
@@ -131,7 +135,7 @@ export class GitClient {
     if (init.json !== undefined) {
       headers.set("Content-Type", "application/json");
     }
-    const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+    const res = await this.fetchImpl(`${this.baseUrl}${this.withSession(path)}`, {
       ...init,
       headers,
       body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
@@ -153,6 +157,16 @@ export class GitClient {
       throw new GitClientError(res.status, message);
     }
     return parsed as T;
+  }
+
+  private withSession(path: string): string {
+    if (!this.sessionId) {
+      return path;
+    }
+    const [base, qs] = path.split("?");
+    const search = new URLSearchParams(qs);
+    search.set("session_id", this.sessionId);
+    return `${base}?${search.toString()}`;
   }
 }
 

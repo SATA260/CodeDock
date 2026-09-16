@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -12,10 +13,10 @@ import (
 )
 
 type CreateSessionRequest struct {
-	TenantID    string `json:"tenant_id"`
-	UserID      string `json:"user_id"`
-	AgentID     string `json:"agent_id"`
-	WorkspaceID string `json:"workspace_id"`
+	TenantID    string `json:"tenant_id"`    // 租户；空则 default
+	UserID      string `json:"user_id"`      // 用户，必填
+	AgentID     string `json:"agent_id"`     // 会话容器上的逻辑 Agent ID，不随发送改成 ask/plan/agent
+	WorkspaceID string `json:"workspace_id"` // 工作目录；创建时冻结。显式路径必须已存在，否则 400；空或 default 则 GIT_REPO / cwd
 }
 
 type UpdateSessionRequest struct {
@@ -49,9 +50,12 @@ func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.AgentID == "" {
 		req.AgentID = "default"
 	}
-	if req.WorkspaceID == "" {
-		req.WorkspaceID = "default"
+	root, err := freezeSessionWorkspace(req.WorkspaceID, a.cfg.DefaultRoot())
+	if err != nil {
+		writeError(w, err)
+		return
 	}
+	req.WorkspaceID = root
 	now := util.FormatTime(util.Now())
 	row, err := a.q(r.Context()).InsertSession(r.Context(), sqlite.InsertSessionParams{
 		ID:          util.NewID(),
@@ -95,7 +99,7 @@ func (a *API) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions := make([]pkgagent.Session, 0, len(rows))
 	for _, row := range rows {
-		sessions = append(sessions, mapSession(row))
+		sessions = append(sessions, a.attachNeedsRecover(r.Context(), mapSession(row)))
 	}
 	writeJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions, PageInfo: page.Info(total)})
 }
@@ -107,7 +111,7 @@ func (a *API) GetSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, SessionResponse{Session: session})
+	writeJSON(w, http.StatusOK, SessionResponse{Session: a.attachNeedsRecover(r.Context(), session)})
 }
 
 // UpdateSession 更新会话。
@@ -141,7 +145,7 @@ func (a *API) UpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, SessionResponse{Session: mapSession(row)})
+	writeJSON(w, http.StatusOK, SessionResponse{Session: a.attachNeedsRecover(r.Context(), mapSession(row))})
 }
 
 // ArchiveSession 归档会话。
@@ -168,13 +172,38 @@ func (a *API) ArchiveSession(w http.ResponseWriter, r *http.Request) {
 
 // loadSession 从路径参数读取并映射会话。
 func (a *API) loadSession(r *http.Request) (pkgagent.Session, error) {
-	id := chi.URLParam(r, "session_id")
+	return a.loadSessionByID(r.Context(), chi.URLParam(r, "session_id"))
+}
+
+func (a *API) loadSessionByID(ctx context.Context, id string) (pkgagent.Session, error) {
 	if id == "" {
 		return pkgagent.Session{}, cderr.Invalid("session_id is required")
 	}
-	row, err := a.q(r.Context()).GetSession(r.Context(), id)
+	q := a.q(ctx)
+	if q == nil {
+		return pkgagent.Session{}, cderr.Unavailable("database is required")
+	}
+	row, err := q.GetSession(ctx, id)
 	if err != nil {
 		return pkgagent.Session{}, wrapHandlerDB(err)
 	}
 	return mapSession(row), nil
+}
+
+// attachNeedsRecover 按 Worker 是否仍在执行，给 Session 填 needs_recover。
+func (a *API) attachNeedsRecover(ctx context.Context, session pkgagent.Session) pkgagent.Session {
+	if session.ActiveRunID == nil || *session.ActiveRunID == "" {
+		return session
+	}
+	session.NeedsRecover = a.runNeedsRecover(ctx, *session.ActiveRunID)
+	return session
+}
+
+// runNeedsRecover 查询 Runtime：该 Run 是否已中断且需要用户恢复。
+func (a *API) runNeedsRecover(ctx context.Context, runID string) bool {
+	if a == nil || a.runtime == nil || runID == "" {
+		return false
+	}
+	ok, err := a.runtime.NeedsRecover(ctx, runID)
+	return err == nil && ok
 }

@@ -49,6 +49,10 @@ export function GitPage({ onBack, headerActions }: GitPageProps) {
               {site.state.integrating ? ` · 正在 ${site.state.integrating}` : ""}
             </div>
           </>
+        ) : site.state.path ? (
+          <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+            {site.state.path}
+          </div>
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {headerActions}
@@ -69,7 +73,9 @@ export function GitPage({ onBack, headerActions }: GitPageProps) {
           <p className="px-3 py-2 text-xs text-muted-foreground">正在读取仓库…</p>
         ) : !site.state.is_repo ? (
           <p className="px-3 py-2 text-sm text-muted-foreground">
-            当前文件夹还不是 Git 仓库。把 <span className="font-mono">GIT_REPO</span> 指到仓根后再打开。
+            {site.sessionId
+              ? "当前会话的工作目录还不是 Git 仓库。"
+              : "先打开一个对话。仓库跟该会话的工作目录绑定。"}
           </p>
         ) : (
           <>

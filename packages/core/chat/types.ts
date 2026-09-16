@@ -1,11 +1,8 @@
 export type SessionStatus = "active" | "archived";
 
-export type AgentMode =
-  | "ask_for_approval"
-  | "auto_approve"
-  | "yolo"
-  | "ask"
-  | "plan";
+export type WorkMode = "ask" | "plan" | "agent";
+
+export type ApprovalMode = "manual" | "auto" | "yolo";
 
 export type RunStatus =
   | "queued"
@@ -58,9 +55,12 @@ export interface Session {
   tenant_id: string;
   user_id: string;
   agent_id: string;
+  /** 创建会话时冻结的工作目录（绝对路径）；本会话权限只覆盖该目录。 */
   workspace_id: string;
   status: SessionStatus;
   active_run_id?: string;
+  /** 当前 active Run 已中断且 Worker 不在跑，界面才应显示「恢复」。 */
+  needs_recover?: boolean;
   last_event_seq: number;
   compaction_seq: number;
   summary?: string;
@@ -130,8 +130,10 @@ export interface AgentEvent<T = unknown> {
 
 export interface RunCreatedPayload {
   trigger_message_id: string;
-  mode: AgentMode;
+  mode: WorkMode;
+  approval?: ApprovalMode;
   status: RunStatus;
+  text?: string;
 }
 
 export interface RunStateChangedPayload {
@@ -201,13 +203,36 @@ export interface CreateSessionRequest {
   tenant_id?: string;
   user_id: string;
   agent_id?: string;
+  /** 工作目录。显式路径必须已存在，服务端冻结为绝对路径；省略则 GIT_REPO / cwd。 */
   workspace_id?: string;
+}
+
+export interface Run {
+  id: string;
+  session_id: string;
+  status: RunStatus;
+  mode?: WorkMode;
+  approval?: ApprovalMode;
+  cancel_requested?: boolean;
+  needs_recover?: boolean;
+}
+
+/** RecoverRun 能接着跑的状态；界面是否显示「恢复」还要看 needs_recover（Worker 已不在跑）。 */
+export const RECOVERABLE_RUN_STATUSES: readonly RunStatus[] = [
+  "queued",
+  "loading_context",
+  "running_llm",
+  "executing_tools",
+];
+
+export function isRecoverableRun(status: string): boolean {
+  return (RECOVERABLE_RUN_STATUSES as readonly string[]).includes(status);
 }
 
 export interface StartRunRequest {
   content: string;
-  input_mode?: "interrupt" | "queue";
-  mode?: AgentMode;
+  mode?: WorkMode;
+  approval?: ApprovalMode;
 }
 
 export interface StartRunResponse {
@@ -229,6 +254,7 @@ export type TimelineItem =
       runId: string;
       messageId: string;
       text: string;
+      queued?: boolean;
       seq: number;
     }
   | {

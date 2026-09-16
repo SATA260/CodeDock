@@ -2,12 +2,12 @@
 
 修改 CodeDock 代码前，先阅读 [`docs/architecture.md`](docs/architecture.md)。该文档是当前目录归属和模块边界的依据。
 
-Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping` 与记忆工具 `memory_read` / `memory_write` / `memory_search`，不实现文件 / Shell / Git **工具**。Git 用户操作走 HTTP + `pkg/git`，不经过 Agent Tool。前端 Git 在 `packages/core/git`、`packages/views/git` 与 `apps/web` 的 `/git`，不扩 `AgentClient`。
+Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字或 Tool、事件落库并由 SSE 消费。默认注册 `ping`、记忆工具、编码八工具与 `plan_*`。Git 用户操作走 HTTP + `pkg/git`，不经过 Agent Tool。仓库根是当前会话冻结的工作目录（请求带 `session_id`）；未带会话才回落 `GIT_REPO` / cwd。前端 Git 在 `packages/core/git`、`packages/views/git` 与 `apps/web` 的 `/git`，不扩 `AgentClient`。Codex 对话复用 Agent 页，新建会话时选择模式；HTTP 走独立 `/codex`，前端用 `CodexClient`，不扩 `AgentClient`。
 
 ## 目录放置规则
 
 - 服务启动、配置读取、Router 和依赖装配放在 `server/cmd/server`。
-- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，用户侧记忆查看/删除，以及 Git（直接调 `pkg/git`）。Codex 的独立 `/codex` HTTP 放在 `server/internal/handler/codex`。
+- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，用户侧记忆查看/删除，以及 Git（直接调 `pkg/git`）。创建 Session 时在本包冻结 `workspace_id`。不 import `internal/agent/tools`。新对话选目录由 web 弹出目录浏览框（`apps/web` 列本机目录），不走 Agent Tool。Codex 的独立 `/codex` HTTP 放在 `server/internal/handler/codex`。
 - Agent 运行时编排和 sqlc 持久化放在 `server/internal/agent`。
 - 本机 Codex app-server 生命周期、内存排队/问票/SSE 放在 `server/internal/codex`。不新增 Codex 业务表；凡官方 API 能读到的都不入库。
 - Markdown 记忆（热层目录+专题）与 context message 索引（冷层按工作区 FTS）放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`，不定义 Tool。
@@ -18,10 +18,11 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 进程内事件总线放在 `server/internal/events`。
 - 数据库入口和 sqlc 生成代码放在 `server/pkg/db`。
 - 数据库结构演进放在 `server/migrations`。
-- 无头业务放在 `packages/core`（`@codedock/core`）：按业务域拆（现有 `chat/`、`git/`），文件直接在域目录下，不要 `src/`。不依赖 React、Next、DOM、`process.env`。`baseUrl` / `userId` 由调用方注入。Git 用独立 `GitClient`。
+- 运行时产生的文件（SQLite 等）放在仓根 `data/`，不要写进 `server/`。该目录 gitignore。
+- 无头业务放在 `packages/core`（`@codedock/core`）：按业务域拆（现有 `chat/`、`git/`、`codex/`），文件直接在域目录下，不要 `src/`。不依赖 React、Next、DOM、`process.env`。`baseUrl` / `userId` 由调用方注入。Git 用独立 `GitClient`。Codex 用独立 `CodexClient`，不扩 `AgentClient`。
 - 无业务 UI 放在 `packages/ui`（`@codedock/ui`）：`components/`、`lib/`、`styles/`，不要 `src/`，不按业务域拆。不依赖 core，不知道 Session / Run / TimelineItem。
-- 组合层放在 `packages/views`（`@codedock/views`）：按业务域拆，与 core 对齐（现有 `chat/`、`git/`）。包根 `provider.tsx` 注入 Agent client；Git 用 `views/git` 的 `GitProvider`。不 import `next/*`；导航用回调。不要 `src/`，不预建空业务域。
-- Web 路由和平台装配放在 `apps/web`：读 `NEXT_PUBLIC_*`、创建 `AgentClient` / `GitClient`、包对应 Provider、`router.push`。`/git` 放在 `(chat)` 组外。开发态切页顶栏只放 web。不解析 SSE。
+- 组合层放在 `packages/views`（`@codedock/views`）：按业务域拆，与 core 对齐（现有 `chat/`、`git/`、`codex/`）。包根 `provider.tsx` 注入 Agent client；Git 用 `views/git` 的 `GitProvider`；Codex 用 `views/codex` 的 `CodexProvider`，由 `ChatPage` 在 Codex 模式下组合，不单独做 Codex 页。不 import `next/*`；导航用回调。不要 `src/`，不预建空业务域。
+- Web 路由和平台装配放在 `apps/web`：读 `NEXT_PUBLIC_*`、创建 `AgentClient` / `GitClient` / `CodexClient`、包对应 Provider、`router.push`。`/git` 放在 `(chat)` 组外。Codex 不单独路由，走 `/` 与 `/s/...`。开发态切页顶栏只放 web。不解析 SSE。
 - 依赖方向：`apps/web` → `packages/views` → `packages/core`；`packages/views` → `packages/ui`。`ui` 不依赖 `core`。未来 CLI 只依赖 `core`。
 - 不要创建 `server/pkg/ai`。大模型调用属于 `pkg/agent`。
 
@@ -31,7 +32,7 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 模型由 `pkg/agent` 在 `Stream` / `CompactIfNeeded` 内按 `ModelConfig` 创建：`provider=fake` 走脚本化假模型（测试用），`provider=openai` 走 OpenAI 兼容 HTTP。不由 Runtime 注入模型实例。
 - Handler 直接使用 `*sqlite.Queries` 做 CRUD、SSE 回放、Run 的 Start / Continue / Cancel 和审批裁决；领取后的 Loop 才进入 `internal/agent`。
 - `internal/agent` 负责把 pkg 的计算结果持久化为 Run、Turn、消息、用量和事件。`AgentEvent` 必须先同事务写入并递增 `sessions.last_event_seq`，提交后再 `events.Bus.Publish`。
-- 示例 Tool 为 `ping`，另注册记忆工具；定义都在 `internal/agent/tools`。外部模块只实现 `Ports` 上的接口，由 `cmd/server` 在初始化时注入。Agent 绑定 `Profile.Tools.Names`；运行模式提供 `read` / `write` / `memory`，须覆盖工具全部能力才可调用。记忆工具声明 `memory`。审批由工具声明，模式决定是否暂停。一次模型回复的待批 Tool 合成一条审批，一次提交审完再流转；拒绝或单个工具失败不打死 Run。业务 Tool（文件 / Shell / Git）本阶段不实现。
+- 工具定义都在 `internal/agent/tools`（`ping`、记忆、编码八工具、`plan_*`）。外部模块只实现 `Ports` 上的接口，由 `cmd/server` 在初始化时注入。三个内置 Agent（ask / plan / agent）各自一份 `Profile`：底座 system 与发给模型的工具表共用全量注册表，`mode` 冻进 Run 的是可执行 `Names` 与一条 developer 模式规则（发给网关时紧跟底座 system）。工作区在创建 Session 时冻结到 `workspace_id`（用户指定的已存在目录；未指定则 `GIT_REPO` / cwd。指定了但不存在则创建失败）；本会话权限只覆盖该目录，目录外的文件操作必须审批（Agent 表和 yolo 都不能直接放行）。审批是流水线：工具默认+参数校验 → 本 Agent `Names`（未绑定 deny，yolo 不能抬）→ Agent `Effects` 表 → `approval`（manual / auto / yolo）；每层只审上一层的 `ask`，任一层 `deny` 则不可调用。`auto` 先由独立复审模型裁定，通过则直接执行并再发工具事件；失败或说不清才开单给人。一次模型回复的待批 Tool 合成一条审批；拒绝或单个工具失败不打死 Run。Git 用户操作仍走 HTTP + `pkg/git`，不经过 Agent Tool。
 - `internal/agent/memory` 负责 TextMemory 的 Get / Upsert / Delete / List、`SearchMessages` 和 `IndexMessage`；用户侧只看/删目录与专题。不负责 Prompt / Context Packet / 对话压缩，不自动建专题，不定义 Tool。Loop 在新 Session / 对话压缩后装冻结目录；写 message 时 `IndexMessage`。超限目录由 Runtime 后台 `CompactIndex` 改短盖写，不改当前 Session 冻结前缀。
 - 不要使用 Store 接口包装 sqlc。
 - Agent 契约不得依赖 React、UI 包或路由框架。
@@ -39,6 +40,6 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 不要预先创建 Issue、Task、Review、Workspace 或其他具体业务域目录。
 - 不要把产品工作流放入 `server/pkg`。
 - 前端三层不得反依赖：`core` 不依赖 React / Next / DOM / `process.env`；`ui` 不依赖 `core`；`views` 不 import `next/*`；`apps/web` 只做路由与平台装配。
-- 前端按业务域拆模块，不要 `src/`：`core` / `views` 用同名域目录（现有 `chat`）；`ui` 只用 `components` / `lib` / `styles`。新业务再建目录，不预建空文件夹。
+- 前端按业务域拆模块，不要 `src/`：`core` / `views` 用同名域目录（现有 `chat` / `git` / `codex`）；`ui` 只用 `components` / `lib` / `styles`。新业务再建目录，不预建空文件夹。
 
 当需求变更没有明显的代码归属时，先依据 `docs/architecture.md` 对其分类，再开始编写代码。

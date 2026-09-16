@@ -5,12 +5,21 @@ import { createContext, useContext, type ReactNode } from "react";
 
 type GitContextValue = {
   client: GitClient;
+  sessionId?: string;
 };
 
 const GitContext = createContext<GitContextValue | null>(null);
 
-export function GitProvider({ client, children }: { client: GitClient; children: ReactNode }) {
-  return <GitContext.Provider value={{ client }}>{children}</GitContext.Provider>;
+export function GitProvider({
+  client,
+  sessionId,
+  children,
+}: {
+  client: GitClient;
+  sessionId?: string;
+  children: ReactNode;
+}) {
+  return <GitContext.Provider value={{ client, sessionId }}>{children}</GitContext.Provider>;
 }
 
 export function useGit(): GitContextValue {

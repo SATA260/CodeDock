@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,41 +18,41 @@ import (
 )
 
 type gitCheckoutRequest struct {
-	Checkout string `json:"checkout"`
+	Checkout string `json:"checkout"` // 工作树路径；空则仓库根
 }
 
 type gitPathsRequest struct {
 	Paths    []string `json:"paths"`
-	Checkout string   `json:"checkout"`
+	Checkout string   `json:"checkout"` // 工作树路径；空则仓库根
 }
 
 type gitCommitRequest struct {
 	Message  string   `json:"message"`
-	Paths    []string `json:"paths"`
-	Checkout string   `json:"checkout"`
+	Paths    []string `json:"paths"`    // 非空则先暂存这些路径
+	Checkout string   `json:"checkout"` // 工作树路径；空则仓库根
 }
 
 type gitResetRequest struct {
 	Target   string `json:"target"`
-	Mode     string `json:"mode"`
-	Checkout string `json:"checkout"`
-	Confirm  bool   `json:"confirm"`
+	Mode     string `json:"mode"`     // soft / mixed / hard
+	Checkout string `json:"checkout"` // 工作树路径；空则仓库根
+	Confirm  bool   `json:"confirm"`  // mixed/hard 必须为 true
 }
 
 type gitRevertRequest struct {
 	ID       string `json:"id"`
-	Checkout string `json:"checkout"`
+	Checkout string `json:"checkout"` // 工作树路径；空则仓库根
 }
 
 type gitBranchCreateRequest struct {
 	Name     string `json:"name"`
-	Start    string `json:"start"`
-	Checkout string `json:"checkout"`
+	Start    string `json:"start"`    // 起点提交或分支；空则当前 HEAD
+	Checkout string `json:"checkout"` // 工作树路径；空则仓库根
 }
 
 type gitBranchNameRequest struct {
 	Name     string `json:"name"`
-	Checkout string `json:"checkout"`
+	Checkout string `json:"checkout"` // 工作树路径；空则仓库根
 }
 
 type gitWorktreeCreateRequest struct {
@@ -62,23 +63,23 @@ type gitWorktreeCreateRequest struct {
 
 type gitConflictWriteRequest struct {
 	Path     string `json:"path"`
-	Result   string `json:"result"`
-	Checkout string `json:"checkout"`
+	Result   string `json:"result"`   // 决议后的文件全文
+	Checkout string `json:"checkout"` // 工作树路径；空则仓库根
 }
 
 type gitStashCreateRequest struct {
-	AgentRun string `json:"agent_run"`
-	Checkout string `json:"checkout"`
+	AgentRun string `json:"agent_run"` // 对应的 Agent Run，给撤销按钮文案用
+	Checkout string `json:"checkout"`  // 工作树路径；空则仓库根
 }
 
 type gitStashRestoreRequest struct {
 	ID       string `json:"id"`
-	Checkout string `json:"checkout"`
+	Checkout string `json:"checkout"` // 必须仍是创建快照时的那份检出
 }
 
 type gitUndoClickRequest struct {
-	ID       string `json:"id"`
-	Checkout string `json:"checkout"`
+	ID       string `json:"id"`       // 按钮 ID：last_commit / uncommitted / integrate / agent_stash / path:...
+	Checkout string `json:"checkout"` // 工作树路径；空则仓库根
 }
 
 // BranchView 给分支页看当前局面和近期分叉图。ahead/behind 记在每条 Branch 上，不合成一对数字。
@@ -158,7 +159,7 @@ func sameCheckout(a, b string) bool {
 	return filepath.Clean(aa) == filepath.Clean(bb)
 }
 
-func (a *API) gitRoot() (string, error) {
+func (a *API) processGitRoot() (string, error) {
 	if a != nil && strings.TrimSpace(a.cfg.GitRepo) != "" {
 		return filepath.Abs(a.cfg.GitRepo)
 	}
@@ -169,8 +170,35 @@ func (a *API) gitRoot() (string, error) {
 	return cwd, nil
 }
 
-func (a *API) openSite(checkout string) (git.Repo, git.Checkout, error) {
-	root, err := a.gitRoot()
+func (a *API) sessionGitRoot(ctx context.Context, sessionID string) (string, error) {
+	sess, err := a.loadSessionByID(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	root := strings.TrimSpace(sess.WorkspaceID)
+	if root == "" || strings.EqualFold(root, implicitWorkspaceID) {
+		return a.processGitRoot()
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return "", cderr.Invalid("session workspace directory not found")
+	}
+	return filepath.Abs(root)
+}
+
+func (a *API) gitRoot(r *http.Request) (string, error) {
+	sessionID := ""
+	if r != nil {
+		sessionID = strings.TrimSpace(r.URL.Query().Get("session_id"))
+	}
+	if sessionID != "" {
+		return a.sessionGitRoot(r.Context(), sessionID)
+	}
+	return a.processGitRoot()
+}
+
+func (a *API) openSite(r *http.Request, checkout string) (git.Repo, git.Checkout, error) {
+	root, err := a.gitRoot(r)
 	if err != nil {
 		return git.Repo{}, git.Checkout{}, err
 	}
@@ -394,7 +422,7 @@ func undoButtons(state git.SiteState, graph git.Graph, snap AgentSnapshot) []Und
 
 // GitStatus 给界面看当前整局。
 func (a *API) GitStatus(w http.ResponseWriter, r *http.Request) {
-	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, co, err := a.openSite(r, r.URL.Query().Get("checkout"))
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -409,7 +437,7 @@ func (a *API) GitStatus(w http.ResponseWriter, r *http.Request) {
 
 // GitDiff 读已暂存或工作区差异。
 func (a *API) GitDiff(w http.ResponseWriter, r *http.Request) {
-	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, co, err := a.openSite(r, r.URL.Query().Get("checkout"))
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -428,7 +456,7 @@ func (a *API) GitDiff(w http.ResponseWriter, r *http.Request) {
 
 // GitGraph 读近期分叉图。
 func (a *API) GitGraph(w http.ResponseWriter, r *http.Request) {
-	repo, _, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, _, err := a.openSite(r, r.URL.Query().Get("checkout"))
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -443,7 +471,7 @@ func (a *API) GitGraph(w http.ResponseWriter, r *http.Request) {
 
 // GitLog 读当前检出线上的近期提交。
 func (a *API) GitLog(w http.ResponseWriter, r *http.Request) {
-	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, co, err := a.openSite(r, r.URL.Query().Get("checkout"))
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -472,7 +500,7 @@ func (a *API) GitStage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -491,7 +519,7 @@ func (a *API) GitUnstage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -510,7 +538,7 @@ func (a *API) GitDiscard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -529,7 +557,7 @@ func (a *API) GitCommit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -570,7 +598,7 @@ func (a *API) GitReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, cderr.Invalid("mixed/hard reset requires confirm"))
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -589,7 +617,7 @@ func (a *API) GitRevert(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -609,7 +637,7 @@ func (a *API) GitPush(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -628,7 +656,7 @@ func (a *API) GitPull(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -651,7 +679,7 @@ func (a *API) GitPull(w http.ResponseWriter, r *http.Request) {
 
 // GitListRemotes 列出已配置的 remote。
 func (a *API) GitListRemotes(w http.ResponseWriter, r *http.Request) {
-	repo, _, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, _, err := a.openSite(r, r.URL.Query().Get("checkout"))
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -666,7 +694,7 @@ func (a *API) GitListRemotes(w http.ResponseWriter, r *http.Request) {
 
 // GitListWorktrees 列出该仓库的全部检出。
 func (a *API) GitListWorktrees(w http.ResponseWriter, r *http.Request) {
-	repo, _, err := a.openSite("")
+	repo, _, err := a.openSite(r, "")
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -686,7 +714,7 @@ func (a *API) GitAddWorktree(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, _, err := a.openSite("")
+	repo, _, err := a.openSite(r, "")
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -701,7 +729,7 @@ func (a *API) GitAddWorktree(w http.ResponseWriter, r *http.Request) {
 
 // GitListBranches 给分支页看当前局面和近期分叉图。
 func (a *API) GitListBranches(w http.ResponseWriter, r *http.Request) {
-	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, co, err := a.openSite(r, r.URL.Query().Get("checkout"))
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -739,7 +767,7 @@ func (a *API) GitCreateBranch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -758,7 +786,7 @@ func (a *API) GitSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -777,7 +805,7 @@ func (a *API) GitDeleteBranch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, _, err := a.openSite(req.Checkout)
+	repo, _, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -791,7 +819,7 @@ func (a *API) GitDeleteBranch(w http.ResponseWriter, r *http.Request) {
 
 // GitGetConflict 打开当前冲突会话。
 func (a *API) GitGetConflict(w http.ResponseWriter, r *http.Request) {
-	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, co, err := a.openSite(r, r.URL.Query().Get("checkout"))
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -811,7 +839,7 @@ func (a *API) GitWriteConflict(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -843,7 +871,7 @@ func (a *API) GitContinueConflict(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -862,7 +890,7 @@ func (a *API) GitAbortConflict(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -881,7 +909,7 @@ func (a *API) GitCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -928,7 +956,7 @@ func hasUntrackedFiles(state git.SiteState) bool {
 
 // GitLatestSnapshot 取最近一份 Agent 快照。
 func (a *API) GitLatestSnapshot(w http.ResponseWriter, r *http.Request) {
-	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, co, err := a.openSite(r, r.URL.Query().Get("checkout"))
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -948,7 +976,7 @@ func (a *API) GitRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -992,7 +1020,7 @@ func restoreSnapshotOn(repo git.Repo, co git.Checkout, snap AgentSnapshot) error
 
 // GitListUndo 按当前 SiteState 算出能点的撤销按钮。
 func (a *API) GitListUndo(w http.ResponseWriter, r *http.Request) {
-	repo, co, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, co, err := a.openSite(r, r.URL.Query().Get("checkout"))
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -1022,7 +1050,7 @@ func (a *API) GitClickUndo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return

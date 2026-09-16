@@ -9,21 +9,23 @@ import (
 
 // History 是装载上下文所需的已准备数据。
 type History struct {
-	Run        Run
-	Turn       Turn
-	Checkpoint *CompactionCheckpoint
-	Messages   []Message
-	Tools      []tool.Definition
-	Prompt     string
+	Run           Run
+	Turn          Turn
+	Checkpoint    *CompactionCheckpoint
+	Messages      []Message
+	Tools         []tool.Definition
+	Prompt        string
+	MemoryIndexes []string
 }
 
 // Load 根据已准备数据构造上下文。
 func Load(_ context.Context, hist History) (ContextSnapshot, error) {
 	snapshot := ContextSnapshot{
-		SessionID:    hist.Run.SessionID,
-		Messages:     hist.Messages,
-		Tools:        hist.Tools,
-		SystemPrompt: hist.Prompt,
+		SessionID:     hist.Run.SessionID,
+		Messages:      hist.Messages,
+		Tools:         hist.Tools,
+		SystemPrompt:  hist.Prompt,
+		MemoryIndexes: hist.MemoryIndexes,
 	}
 	if hist.Checkpoint != nil {
 		snapshot.BaseEventSeq = hist.Checkpoint.BaseEventSeq
@@ -118,7 +120,7 @@ func compactSummary(ctx context.Context, req Compaction) string {
 		return opts.CompactSummary
 	}
 	var b strings.Builder
-	b.WriteString("Summary of earlier conversation:\n")
+	b.WriteString("此前对话摘要：\n")
 	for _, msg := range req.Snapshot.Messages {
 		text := DecodeText(msg.Content)
 		if text == "" {
@@ -130,7 +132,7 @@ func compactSummary(ctx context.Context, req Compaction) string {
 		b.WriteByte('\n')
 	}
 	if b.Len() == 0 {
-		return "Earlier conversation was compacted."
+		return "此前对话已压缩。"
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -142,7 +144,7 @@ func compactWithModel(ctx context.Context, req Compaction) (string, error) {
 		RunID:        req.Run.ID,
 		TurnID:       req.Turn.ID,
 		Model:        req.Run.Config.Model,
-		SystemPrompt: "Summarize the conversation so later turns can continue. Reply with plain text only.",
+		SystemPrompt: "把对话压成摘要，方便后续轮次继续。只回复纯文本。",
 		Messages:     req.Snapshot.Messages,
 		Attempt:      1,
 	}
@@ -158,7 +160,7 @@ func compactWithModel(ctx context.Context, req Compaction) (string, error) {
 	return DecodeText(result.Message.Content), nil
 }
 
-const indexCompactPrompt = "Rewrite this memory index so it stays within 200 lines or 25KB. Keep it as a Markdown directory of pointers to topic files. Do not include topic body. Reply with the rewritten index only."
+const indexCompactPrompt = "把这篇记忆目录改短，不超过 200 行或 25KB。保持 Markdown 目录，只保留指向专题文件的指针，不要写入专题正文。只回复改写后的目录。"
 
 // CompactIndex 用模型把超限目录改短。fake 读 IndexCompactSummary；空则返回空串由调用方裁剪。
 func CompactIndex(ctx context.Context, model ModelConfig, content string) (string, error) {

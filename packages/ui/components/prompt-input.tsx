@@ -3,6 +3,7 @@
 import type { FormEvent, HTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
 
 import { cn } from "../lib/cn.ts";
+import { useImeGuard } from "../lib/ime.ts";
 import { Button } from "./ui/button.tsx";
 
 export type PromptInputMessage = { text: string };
@@ -40,17 +41,36 @@ export function PromptInput({
 
 export function PromptInputTextarea({
   className,
+  onKeyDown,
+  onCompositionStart,
+  onCompositionEnd,
   ...props
 }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const ime = useImeGuard();
   return (
     <textarea
       name="message"
       rows={3}
       className={cn(
-        "field-sizing-content w-full resize-none bg-transparent px-3 pt-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/50",
+        "field-sizing-content w-full resize-none bg-transparent px-3 pt-2 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground/50",
         className,
       )}
       {...props}
+      onCompositionStart={(event) => {
+        ime.onCompositionStart(event);
+        onCompositionStart?.(event);
+      }}
+      onCompositionEnd={(event) => {
+        ime.onCompositionEnd(event);
+        onCompositionEnd?.(event);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && !event.shiftKey && ime.isBlocked(event)) {
+          event.preventDefault();
+          return;
+        }
+        onKeyDown?.(event);
+      }}
     />
   );
 }

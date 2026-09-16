@@ -1,75 +1,56 @@
 package tool
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
-func TestModeCapabilities(t *testing.T) {
-	cases := []struct {
-		mode string
-		want []Capability
-	}{
-		{mode: "plan", want: []Capability{CapabilityRead, CapabilityMemory}},
-		{mode: "ask", want: []Capability{CapabilityRead, CapabilityMemory}},
-		{mode: "ask_for_approval", want: []Capability{CapabilityRead, CapabilityWrite, CapabilityMemory}},
-		{mode: "auto_approve", want: []Capability{CapabilityRead, CapabilityWrite, CapabilityMemory}},
-		{mode: "yolo", want: []Capability{CapabilityRead, CapabilityWrite, CapabilityMemory}},
-		{mode: "", want: []Capability{CapabilityRead, CapabilityMemory}},
-	}
-	for _, tc := range cases {
-		got := ModeCapabilities(tc.mode)
-		if !sameCaps(got, tc.want) {
-			t.Fatalf("mode %q: got %v want %v", tc.mode, got, tc.want)
-		}
-	}
+type namedStub struct{ name string }
+
+func (s namedStub) Definition() Definition {
+	return Definition{Name: s.name, Prompt: s.name}
 }
 
-func TestCovers(t *testing.T) {
-	read := []Capability{CapabilityRead}
-	write := []Capability{CapabilityWrite}
-	both := []Capability{CapabilityRead, CapabilityWrite}
-	if !Covers(read, nil) {
-		t.Fatal("empty tool caps should pass")
-	}
-	if !Covers(read, read) {
-		t.Fatal("read should cover read")
-	}
-	if Covers(read, write) {
-		t.Fatal("read should not cover write")
-	}
-	if !Covers(both, write) {
-		t.Fatal("read+write should cover write")
-	}
-	if !Covers(both, both) {
-		t.Fatal("read+write should cover both")
-	}
-	memory := []Capability{CapabilityMemory}
-	if !Covers([]Capability{CapabilityRead, CapabilityMemory}, memory) {
-		t.Fatal("read+memory should cover memory")
-	}
-	if Covers(read, memory) {
-		t.Fatal("read should not cover memory")
-	}
+func (s namedStub) Execute(context.Context, Input) (Result, error) {
+	return Result{Name: s.name, Success: true}, nil
 }
 
 func TestVisibleDefinitions(t *testing.T) {
 	all := []Definition{
-		{Name: "ping", Permission: Permission{}},
-		{Name: "memory_read", Permission: Permission{Capabilities: []Capability{CapabilityMemory}}},
-		{Name: "memory_write", Permission: Permission{Capabilities: []Capability{CapabilityMemory}, RequiresApproval: true}},
-		{Name: "memory_search", Permission: Permission{Capabilities: []Capability{CapabilityMemory}}},
-		{Name: "file_write", Permission: Permission{Capabilities: []Capability{CapabilityWrite}}},
+		{Name: "ping", Permission: Permission{Effect: EffectAsk}},
+		{Name: "memory_read", Permission: Permission{Effect: EffectAllow}},
+		{Name: "memory_write", Permission: Permission{Effect: EffectAsk}},
+		{Name: "plan_write", Permission: Permission{Effect: EffectAllow}},
 	}
-	names := []string{"ping", "memory_read", "memory_write", "memory_search", "file_write"}
-
-	plan := namesOf(VisibleDefinitions(all, names, ModeCapabilities("plan")))
-	if !sameNames(plan, []string{"ping", "memory_read", "memory_write", "memory_search"}) {
-		t.Fatalf("plan visible = %v", plan)
+	got := namesOf(VisibleDefinitions(all, []string{"memory_read", "missing", "plan_write"}))
+	if !sameNames(got, []string{"memory_read", "plan_write"}) {
+		t.Fatalf("visible = %v", got)
 	}
-	approve := namesOf(VisibleDefinitions(all, names, ModeCapabilities("ask_for_approval")))
-	if !sameNames(approve, names) {
-		t.Fatalf("ask_for_approval visible = %v", approve)
-	}
-	if got := VisibleDefinitions(all, nil, ModeCapabilities("auto_approve")); len(got) != 0 {
+	if got := VisibleDefinitions(all, nil); len(got) != 0 {
 		t.Fatalf("empty names should bind nothing, got %d", len(got))
+	}
+}
+
+func TestDefinitionsStableOrder(t *testing.T) {
+	reg := NewRegistry()
+	for _, name := range []string{"write", "ping", "read"} {
+		if err := reg.Register(namedStub{name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var first []string
+	for i := 0; i < 20; i++ {
+		got := namesOf(Definitions(reg))
+		if first == nil {
+			first = got
+			continue
+		}
+		if !sameNames(got, first) {
+			t.Fatalf("order changed %v -> %v", first, got)
+		}
+	}
+	if !sameNames(first, []string{"ping", "read", "write"}) {
+		t.Fatalf("want alpha %v", first)
 	}
 }
 
@@ -82,18 +63,6 @@ func namesOf(defs []Definition) []string {
 }
 
 func sameNames(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func sameCaps(got, want []Capability) bool {
 	if len(got) != len(want) {
 		return false
 	}

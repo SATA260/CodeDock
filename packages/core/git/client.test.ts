@@ -124,6 +124,37 @@ test("GitClient status and mutations hit /git routes", async () => {
   assert.deepEqual(calls[13]?.body, { checkout: "" });
 });
 
+test("GitClient appends session_id to git routes", async () => {
+  const urls: string[] = [];
+  const client = new GitClient({
+    baseUrl: "http://api.test",
+    sessionId: "sess-1",
+    fetch: async (input) => {
+      urls.push(String(input));
+      return json({
+        path: "/repo",
+        is_repo: true,
+        empty: false,
+        branch: "main",
+        head: "abc",
+        detached: false,
+        upstream: "",
+        ahead: 0,
+        behind: 0,
+        upstream_gone: false,
+        integrating: "",
+        default_branch: "",
+        files: [],
+        remotes: [],
+      });
+    },
+  });
+  await client.status();
+  await client.listBranches("/wt");
+  assert.equal(urls[0], "http://api.test/git/status?session_id=sess-1");
+  assert.equal(urls[1], "http://api.test/git/branches?checkout=%2Fwt&session_id=sess-1");
+});
+
 test("GitClient maps error JSON", async () => {
   const client = new GitClient({
     baseUrl: "http://api.test",

@@ -14,7 +14,7 @@ cp apps/web/.env.example apps/web/.env.local
 pnpm install
 ```
 
-一次起 API + Web。若已有 `tmp/git-sandbox`，API 默认指到沙箱，避免在本仓上试撤回：
+一条命令同时起 Go API 和 Web。日志带 `api` / `web` 前缀；Ctrl+C 会一起停。若已有 `tmp/git-sandbox`，API 默认指到沙箱，避免在本仓上试撤回：
 
 ```bash
 pnpm dev
@@ -26,7 +26,7 @@ pnpm dev
 pnpm dev:api
 ```
 
-从 `server/` 直接 `go run` 时，未设 `GIT_REPO` 会用进程 cwd（`server/` 不是仓根）。服务会从当前目录向上查找 `.env`。
+从 `server/` 直接 `go run` 时，未设 `GIT_REPO` 会用进程 cwd（`server/` 不是仓根）。未设 `DB_DSN` 时 SQLite 写仓根 `data/`。服务会从当前目录向上查找 `.env`。
 
 Web（默认 `http://localhost:3000`）：
 
