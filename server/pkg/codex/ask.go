@@ -2,6 +2,7 @@ package codex
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 // ParseAsk 把一条服务端请求编成本模块的反问。认不出则 ok=false。
@@ -33,7 +34,18 @@ func ParseAsk(msg Message) (ApprovalAsk, bool) {
 		ask.Prompt = firstNonEmpty(rawString(raw, "reason"), "Codex 请求额外权限")
 	case MethodItemToolUserInput:
 		ask.Kind = AskQuestion
-		ask.Prompt, ask.Options, ask.Fields = questionsFromParams(raw)
+		ask.Questions = questionsFromParams(raw)
+		if len(ask.Questions) > 0 {
+			ask.Prompt = firstNonEmpty(ask.Questions[0].Header, ask.Questions[0].Prompt)
+		}
+		for _, q := range ask.Questions {
+			if q.ID != "" {
+				ask.Fields = append(ask.Fields, q.ID)
+			}
+			for _, opt := range q.Options {
+				ask.Options = append(ask.Options, firstNonEmpty(opt.Label, opt.ID))
+			}
+		}
 	case MethodMCPElicitation:
 		ask.Kind = AskForm
 		ask.Prompt = firstNonEmpty(rawString(raw, "serverName"), "MCP 表单")
@@ -115,6 +127,30 @@ func permissionScope(accepted, session bool) string {
 
 func userInputAnswers(ask ApprovalAsk, answer AskAnswer) map[string]any {
 	out := map[string]any{}
+	if len(answer.Answers) > 0 {
+		if len(ask.Questions) > 0 {
+			for _, q := range ask.Questions {
+				id := firstNonEmpty(q.ID, "answer")
+				if text := strings.TrimSpace(answer.Answers[q.ID]); text != "" {
+					out[id] = map[string]any{"answers": []string{text}}
+				} else if text := strings.TrimSpace(answer.Answers[id]); text != "" {
+					out[id] = map[string]any{"answers": []string{text}}
+				}
+			}
+			if len(out) > 0 {
+				return out
+			}
+		}
+		for id, text := range answer.Answers {
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			out[firstNonEmpty(id, "answer")] = map[string]any{"answers": []string{text}}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
 	values := answer.Values
 	if answer.Choice != "" {
 		values = []string{answer.Choice}
@@ -217,41 +253,81 @@ func fileChangeFromParams(raw map[string]json.RawMessage, params json.RawMessage
 	return paths, diff
 }
 
-func questionsFromParams(raw map[string]json.RawMessage) (prompt string, options []string, fields []string) {
+func questionsFromParams(raw map[string]json.RawMessage) []UserQuestion {
 	b, ok := raw["questions"]
 	if !ok {
-		return rawString(raw, "prompt"), nil, nil
+		prompt := rawString(raw, "prompt")
+		if prompt == "" {
+			return nil
+		}
+		return []UserQuestion{{Prompt: prompt}}
 	}
 	var questions []map[string]any
 	if err := json.Unmarshal(b, &questions); err != nil {
-		return "", nil, nil
+		return nil
 	}
+	out := make([]UserQuestion, 0, len(questions))
 	for _, q := range questions {
 		id, _ := q["id"].(string)
 		header, _ := q["header"].(string)
 		question, _ := q["question"].(string)
-		if prompt == "" {
-			prompt = firstNonEmpty(header, question)
-		}
-		if id != "" {
-			fields = append(fields, id)
+		item := UserQuestion{
+			ID:     id,
+			Header: header,
+			Prompt: question,
 		}
 		if opts, ok := q["options"].([]any); ok {
 			for _, opt := range opts {
-				switch v := opt.(type) {
-				case string:
-					options = append(options, v)
-				case map[string]any:
-					if s, _ := v["label"].(string); s != "" {
-						options = append(options, s)
-					} else if s, _ := v["id"].(string); s != "" {
-						options = append(options, s)
-					}
+				if parsed, ok := parseAskOption(opt); ok {
+					item.Options = append(item.Options, parsed)
 				}
 			}
 		}
+		if item.ID != "" || item.Header != "" || item.Prompt != "" || len(item.Options) > 0 {
+			out = append(out, item)
+		}
 	}
-	return prompt, options, fields
+	return out
+}
+
+func parseAskOption(raw any) (AskOption, bool) {
+	switch v := raw.(type) {
+	case string:
+		if v == "" {
+			return AskOption{}, false
+		}
+		return AskOption{ID: v, Label: v, Other: isOtherLabel(v)}, true
+	case map[string]any:
+		id, _ := v["id"].(string)
+		label, _ := v["label"].(string)
+		recommended, _ := v["recommended"].(bool)
+		other, _ := v["isOther"].(bool)
+		if !other {
+			other, _ = v["other"].(bool)
+		}
+		label = firstNonEmpty(label, id)
+		id = firstNonEmpty(id, label)
+		if label == "" {
+			return AskOption{}, false
+		}
+		return AskOption{
+			ID:          id,
+			Label:       label,
+			Recommended: recommended,
+			Other:       other || isOtherLabel(label),
+		}, true
+	default:
+		return AskOption{}, false
+	}
+}
+
+func isOtherLabel(label string) bool {
+	switch strings.TrimSpace(label) {
+	case "别的意思", "其他", "其它", "Other", "other":
+		return true
+	default:
+		return false
+	}
 }
 
 func formFieldsFromParams(raw map[string]json.RawMessage, params json.RawMessage) []string {

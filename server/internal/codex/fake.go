@@ -13,6 +13,7 @@ import (
 type FakeHandler struct {
 	mu         sync.Mutex
 	Threads    map[string]pkg.ThreadObject
+	loaded     map[string]struct{}
 	ThreadsN   atomic.Int64
 	Turns      atomic.Int64
 	Asks       atomic.Int64
@@ -27,8 +28,30 @@ type FakeHandler struct {
 func NewFakeHandler() *FakeHandler {
 	return &FakeHandler{
 		Threads:    map[string]pkg.ThreadObject{},
+		loaded:     map[string]struct{}{},
 		Authorized: true,
 	}
+}
+
+// SeedStored 放入一条未 resume 的历史 thread，供 thread/read 读取。
+func (f *FakeHandler) SeedStored(id, name string) pkg.ThreadObject {
+	return f.addThread(id, name)
+}
+
+func (f *FakeHandler) markLoaded(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.loaded == nil {
+		f.loaded = map[string]struct{}{}
+	}
+	f.loaded[id] = struct{}{}
+}
+
+func (f *FakeHandler) isLoaded(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.loaded[id]
+	return ok
 }
 
 // Handle 实现假 app-server。
@@ -65,6 +88,7 @@ func (f *FakeHandler) Handle(env pkg.Envelope) []pkg.Envelope {
 		return []pkg.Envelope{{ID: env.ID, Result: json.RawMessage(`{"config":{"model":"gpt-5.6","model_reasoning_effort":"medium","approval_policy":"on-request","sandbox_mode":"workspace-write"},"origins":{}}`)}}
 	case pkg.MethodThreadStart:
 		th := f.addThread("thread-"+itoa(f.ThreadsN.Add(1)), "New thread")
+		f.markLoaded(th.ID)
 		body, _ := json.Marshal(map[string]any{"thread": th, "model": "gpt-5.6", "cwd": "/tmp", "approvalPolicy": "on-request", "sandbox": "workspace-write"})
 		return []pkg.Envelope{{ID: env.ID, Result: body}}
 	case pkg.MethodThreadList:
@@ -88,10 +112,15 @@ func (f *FakeHandler) Handle(env pkg.Envelope) []pkg.Envelope {
 			body, _ := json.Marshal(map[string]any{"thread": th})
 			return []pkg.Envelope{{ID: env.ID, Result: body}}
 		}
+		if f.isLoaded(id) {
+			return []pkg.Envelope{{ID: env.ID, Error: &pkg.RPCError{Code: -32600, Message: "thread " + id + " already has an active writer"}}}
+		}
+		f.markLoaded(id)
 		body, _ := json.Marshal(map[string]any{"thread": th, "model": "gpt-5.6", "cwd": "/tmp", "approvalPolicy": "on-request", "sandbox": "workspace-write"})
 		return []pkg.Envelope{{ID: env.ID, Result: body}}
 	case pkg.MethodThreadFork:
 		th := f.addThread("thread-fork-"+itoa(f.ThreadsN.Add(1)), "Fork")
+		f.markLoaded(th.ID)
 		body, _ := json.Marshal(map[string]any{"thread": th, "model": "gpt-5.6", "cwd": "/tmp", "approvalPolicy": "on-request", "sandbox": "workspace-write"})
 		return []pkg.Envelope{{ID: env.ID, Result: body}}
 	case pkg.MethodThreadArchive, pkg.MethodThreadUnarchive, pkg.MethodThreadNameSet, pkg.MethodThreadCompact, pkg.MethodReviewStart, pkg.MethodTurnInterrupt:
@@ -106,8 +135,11 @@ func (f *FakeHandler) Handle(env pkg.Envelope) []pkg.Envelope {
 		}
 		return []pkg.Envelope{{ID: env.ID, Result: json.RawMessage(`{}`)}}
 	case pkg.MethodTurnStart:
-		turnID := "turn-" + itoa(f.Turns.Add(1))
 		threadID := jsonField(env.Params, "threadId")
+		if !f.isLoaded(threadID) {
+			return []pkg.Envelope{{ID: env.ID, Error: &pkg.RPCError{Code: -32602, Message: "thread not found: " + threadID}}}
+		}
+		turnID := "turn-" + itoa(f.Turns.Add(1))
 		result, _ := json.Marshal(map[string]any{"turn": map[string]any{"id": turnID, "status": "inProgress", "items": []any{}}})
 		delta, _ := json.Marshal(map[string]any{"threadId": threadID, "turnId": turnID, "itemId": "m1", "delta": "hello"})
 		reason, _ := json.Marshal(map[string]any{"threadId": threadID, "turnId": turnID, "itemId": "r1", "delta": "think"})

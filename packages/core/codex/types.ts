@@ -112,6 +112,20 @@ export type AskKind = "command" | "file_change" | "question" | "form" | "permiss
 
 export type DecisionScope = "once" | "session";
 
+export type AskOption = {
+  id?: string;
+  label: string;
+  recommended?: boolean;
+  other?: boolean;
+};
+
+export type AskQuestion = {
+  id?: string;
+  header?: string;
+  prompt?: string;
+  options?: AskOption[];
+};
+
 export type ApprovalAsk = {
   id: string;
   kind: AskKind;
@@ -123,6 +137,7 @@ export type ApprovalAsk = {
   diff?: string;
   prompt?: string;
   options?: string[];
+  questions?: AskQuestion[];
   fields?: string[];
   external_request_id: string;
 };
@@ -132,6 +147,7 @@ export type AskAnswer = {
   scope?: DecisionScope;
   choice?: string;
   values?: string[];
+  answers?: Record<string, string>;
 };
 
 export type CodexEventType =
@@ -144,7 +160,13 @@ export type CodexEventType =
   | "ask.required"
   | "ask.resolved"
   | "notice"
-  | "reset";
+  | "reset"
+  | "token.usage";
+
+export type TokenUsage = {
+  used: number;
+  window: number;
+};
 
 export type CodexEvent = {
   seq: number;
@@ -155,12 +177,14 @@ export type CodexEvent = {
   turn?: Turn;
   ask?: ApprovalAsk;
   notice?: string;
+  usage?: TokenUsage;
 };
 
 export type SessionDetail = {
   session: Session;
   progress: Progress[];
   asks: ApprovalAsk[];
+  usage?: TokenUsage;
 };
 
 export type TimelineItem = {
@@ -183,6 +207,7 @@ export type CodexViewState = {
   lastSeq: number;
   activeTurn: Turn | null;
   reset: boolean;
+  usage?: TokenUsage;
 };
 
 export const LIVE_TURN_STATUSES: readonly TurnStatus[] = ["queued", "running", "waiting_approval"];

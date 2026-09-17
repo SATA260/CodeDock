@@ -69,6 +69,7 @@ func (rt *Runtime) CreateSession(ctx context.Context, settings pkg.Settings) (pk
 	st := rt.state(res.Thread.ID)
 	st.mu.Lock()
 	st.settings = settings.MergeOverride(settings)
+	st.loaded = true
 	if st.settings.Cwd == "" {
 		st.settings.Cwd = res.Cwd
 	}
@@ -79,11 +80,17 @@ func (rt *Runtime) CreateSession(ctx context.Context, settings pkg.Settings) (pk
 	return pkg.MapThread(res.Thread, false, ""), nil
 }
 
-// GetSession 读一条对话：官方 thread 加本进程的执行位。
+// GetSession 打开一条对话。历史会话必须先 thread/resume，否则随后 turn/start 会报 thread not found。
 func (rt *Runtime) GetSession(ctx context.Context, sessionID string) (pkg.Session, []pkg.Progress, error) {
 	client, err := rt.ensureClient(ctx)
 	if err != nil {
 		return pkg.Session{}, nil, err
+	}
+	if resumed, err := rt.resumeThread(ctx, client, sessionID); err == nil {
+		rt.markLoaded(sessionID)
+		return rt.sessionFromThread(sessionID, resumed.Thread), pkg.HydrateProgress(resumed.Thread.Turns), nil
+	} else if !readFallback(err) {
+		return pkg.Session{}, nil, mapRPC(err)
 	}
 	res, err := client.ThreadRead(ctx, pkg.ThreadReadParams{ThreadID: sessionID, IncludeTurns: true})
 	if err != nil && includeTurnsUnavailable(err) {
@@ -95,6 +102,42 @@ func (rt *Runtime) GetSession(ctx context.Context, sessionID string) (pkg.Sessio
 		}
 		return pkg.Session{}, nil, mapRPC(err)
 	}
+	return rt.sessionFromThread(sessionID, res.Thread), pkg.HydrateProgress(res.Thread.Turns), nil
+}
+
+func (rt *Runtime) resumeThread(ctx context.Context, client *pkg.Client, sessionID string) (pkg.ThreadStartResult, error) {
+	params := pkg.ThreadResumeParams{ThreadID: sessionID}
+	if settings, err := rt.Effective(ctx, sessionID); err == nil {
+		params.Model = settings.Model
+		params.Cwd = settings.Cwd
+	}
+	return client.ThreadResume(ctx, params)
+}
+
+func (rt *Runtime) ensureResumed(ctx context.Context, client *pkg.Client, sessionID string) error {
+	st := rt.state(sessionID)
+	st.mu.Lock()
+	if st.loaded {
+		st.mu.Unlock()
+		return nil
+	}
+	st.mu.Unlock()
+	_, err := rt.resumeThread(ctx, client, sessionID)
+	if err == nil || alreadyOpen(err) {
+		rt.markLoaded(sessionID)
+		return nil
+	}
+	return err
+}
+
+func (rt *Runtime) markLoaded(sessionID string) {
+	st := rt.state(sessionID)
+	st.mu.Lock()
+	st.loaded = true
+	st.mu.Unlock()
+}
+
+func (rt *Runtime) sessionFromThread(sessionID string, th pkg.ThreadObject) pkg.Session {
 	st := rt.state(sessionID)
 	st.mu.Lock()
 	active := ""
@@ -102,8 +145,11 @@ func (rt *Runtime) GetSession(ctx context.Context, sessionID string) (pkg.Sessio
 		active = st.active.ID
 	}
 	archived := st.archived
+	if st.settings.Cwd == "" && th.Cwd != "" {
+		st.settings.Cwd = th.Cwd
+	}
 	st.mu.Unlock()
-	return pkg.MapThread(res.Thread, archived, active), pkg.HydrateProgress(res.Thread.Turns), nil
+	return pkg.MapThread(th, archived, active)
 }
 
 // Rename 改标题。
@@ -247,6 +293,34 @@ func emptyThread(err error) bool {
 	return strings.Contains(msg, "includeturns") ||
 		strings.Contains(msg, "not materialized") ||
 		strings.Contains(msg, "thread not loaded")
+}
+
+func threadUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "unknown thread") ||
+		strings.Contains(msg, "not materialized") ||
+		strings.Contains(msg, "thread not loaded")
+}
+
+func alreadyOpen(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "active writer") || strings.Contains(msg, "already loaded") {
+		return true
+	}
+	return strings.Contains(msg, "already") &&
+		(strings.Contains(msg, "open") || strings.Contains(msg, "owned") || strings.Contains(msg, "writer"))
+}
+
+func readFallback(err error) bool {
+	return threadUnavailable(err) || emptyThread(err) || alreadyOpen(err) ||
+		strings.Contains(strings.ToLower(err.Error()), "another process")
 }
 
 func stubSession(rt *Runtime, sessionID string) pkg.Session {

@@ -14,6 +14,16 @@ test("hydrateCodex and applyCodexEvent cover turn, progress, ask, reset", () => 
   assert.equal(state.items[0]?.text, "hi");
   assert.equal(state.activeTurn?.id, "t1");
   assert.equal(state.settings.model, "gpt-5.6");
+  assert.equal(state.usage, undefined);
+
+  state = applyCodexEvent(state, {
+    seq: 8,
+    type: "token.usage",
+    session_id: "th",
+    usage: { used: 250, window: 1000 },
+  });
+  assert.equal(state.usage?.used, 250);
+  assert.equal(state.usage?.window, 1000);
 
   state = applyCodexEvent(state, {
     seq: 1,
@@ -66,7 +76,7 @@ test("hydrateCodex and applyCodexEvent cover turn, progress, ask, reset", () => 
     notice: "event gap",
   });
   assert.equal(state.reset, true);
-  assert.equal(state.lastSeq, 7);
+  assert.equal(state.lastSeq, 8);
 });
 
 test("parseSSEBlock reads Codex event data", () => {

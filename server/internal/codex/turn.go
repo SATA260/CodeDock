@@ -42,9 +42,15 @@ func (rt *Runtime) dispatchTurn(ctx context.Context, sessionID string, turn pkg.
 		rt.emit(sessionID, pkg.Event{Type: pkg.EventTurnFailed, TurnID: turn.ID, Turn: &turn, Notice: turn.Error})
 		return turn, err
 	}
+	settings, err := rt.Effective(ctx, sessionID)
+	if err != nil {
+		st := rt.state(sessionID)
+		st.mu.Lock()
+		settings = st.settings
+		st.mu.Unlock()
+	}
 	st := rt.state(sessionID)
 	st.mu.Lock()
-	settings := st.settings
 	turn.Status = pkg.TurnRunning
 	copyTurn := turn
 	st.active = &copyTurn
@@ -55,7 +61,26 @@ func (rt *Runtime) dispatchTurn(ctx context.Context, sessionID string, turn pkg.
 		Input:    pkg.UserInputs(input),
 		Cwd:      settings.Cwd,
 	}, settings)
+	if err := rt.ensureResumed(ctx, client, sessionID); err != nil && !alreadyOpen(err) {
+		st.mu.Lock()
+		if st.active != nil && st.active.ID == turn.ID {
+			st.active.Status = pkg.TurnFailed
+			st.active.Error = err.Error()
+			failed := *st.active
+			st.active = nil
+			st.mu.Unlock()
+			rt.emit(sessionID, pkg.Event{Type: pkg.EventTurnFailed, TurnID: failed.ID, Turn: &failed, Notice: failed.Error})
+			return failed, mapRPC(err)
+		}
+		st.mu.Unlock()
+		return turn, mapRPC(err)
+	}
 	res, err := client.TurnStart(ctx, params)
+	if err != nil && threadUnavailable(err) {
+		if rerr := rt.ensureResumed(ctx, client, sessionID); rerr == nil {
+			res, err = client.TurnStart(ctx, params)
+		}
+	}
 	if err != nil {
 		st.mu.Lock()
 		if st.active != nil && st.active.ID == turn.ID {
@@ -135,6 +160,9 @@ func (rt *Runtime) Compact(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return err
 	}
+	if err := rt.ensureResumed(ctx, client, sessionID); err != nil {
+		return mapRPC(err)
+	}
 	return mapRPC(client.ThreadCompact(ctx, sessionID))
 }
 
@@ -143,6 +171,9 @@ func (rt *Runtime) Review(ctx context.Context, sessionID string) error {
 	client, err := rt.requireReady(ctx)
 	if err != nil {
 		return err
+	}
+	if err := rt.ensureResumed(ctx, client, sessionID); err != nil {
+		return mapRPC(err)
 	}
 	return mapRPC(client.ReviewStart(ctx, sessionID))
 }

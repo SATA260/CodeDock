@@ -110,7 +110,7 @@ export function CodexPane({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {catalog.error || session.error || composerError || notice ? (
         <div
           className={
@@ -157,6 +157,8 @@ export function CodexPane({
           onCancel={session.interrupt}
           onApply={applySettings}
           onCompact={() => session.compact()}
+          onRefreshCatalog={() => void catalog.refresh()}
+          usage={session.state.usage}
           onAttachError={(message) => fail(new Error(message), message)}
           onAttach={async (files) => {
             setComposerError(null);

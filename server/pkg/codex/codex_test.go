@@ -220,7 +220,7 @@ func TestRPCErrorAndSettings(t *testing.T) {
 		t.Fatalf("%+v", over)
 	}
 	params := ApplyTurnOverrides(TurnStartParams{ThreadID: "t", Input: UserInputs(Input{Text: "a"})}, s)
-	if params.Effort != "high" || params.SandboxPolicy == nil || params.CollaborationMode == nil {
+	if params.Model != "m" || params.Effort != "high" || params.SandboxPolicy == nil || params.CollaborationMode == nil {
 		t.Fatalf("%+v", params)
 	}
 	tp := ApplyThreadOverrides(ThreadStartParams{}, s)
@@ -287,7 +287,7 @@ func TestCollaborationAndSandboxHelpers(t *testing.T) {
 	if SandboxPolicy("read-only") == nil || SandboxPolicy("nope") != nil {
 		t.Fatal("sandbox")
 	}
-	if CollaborationModeParams("", "m") != nil || CollaborationModeParams("plan", "") == nil {
+	if CollaborationModeParams("", "m") != nil || CollaborationModeParams("default", "m") != nil || CollaborationModeParams("plan", "") == nil {
 		t.Fatal("collab")
 	}
 	if len(CollaborationModes()) != 2 {
@@ -449,6 +449,36 @@ func TestClientRPCWrappers(t *testing.T) {
 	}
 }
 
+func TestMergeConfiguredModelInsertsCustom(t *testing.T) {
+	listed := []ModelInfo{{ID: "gpt-5.6-sol", DisplayName: "GPT-5.6-Sol", IsDefault: true, Efforts: []string{"low"}}}
+	cfg := ConfigReadResult{Config: map[string]json.RawMessage{
+		"model":                  json.RawMessage(`"deepseek-flash"`),
+		"model_reasoning_effort": json.RawMessage(`"xhigh"`),
+	}}
+	got := MergeConfiguredModel(listed, cfg)
+	if len(got) != 2 || got[0].ID != "deepseek-flash" || !got[0].IsDefault || got[1].IsDefault {
+		t.Fatalf("%+v", got)
+	}
+	if got[0].DefaultEffort != "xhigh" || strings.Join(got[0].Efforts, ",") != "low,medium,high,xhigh" {
+		t.Fatalf("custom %+v", got[0])
+	}
+}
+
+func TestMergeConfiguredModelPromotesListed(t *testing.T) {
+	listed := []ModelInfo{
+		{ID: "gpt-5.6-sol", IsDefault: true, Efforts: []string{"low"}},
+		{ID: "deepseek-flash", Efforts: []string{"low"}},
+	}
+	cfg := ConfigReadResult{Config: map[string]json.RawMessage{
+		"model":                  json.RawMessage(`"deepseek-flash"`),
+		"model_reasoning_effort": json.RawMessage(`"xhigh"`),
+	}}
+	got := MergeConfiguredModel(listed, cfg)
+	if got[0].IsDefault || !got[1].IsDefault || strings.Join(got[1].Efforts, ",") != "low,xhigh" {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestParseModelAndAskEdges(t *testing.T) {
 	info, err := ParseModel(json.RawMessage(`{"id":"gpt-5.6-sol","displayName":"GPT-5.6-Sol","defaultReasoningEffort":"low","supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Fast"},{"reasoningEffort":"medium","description":"Default"},{"reasoningEffort":"xhigh","description":"Max"}],"isDefault":true}`))
 	if err != nil || info.ID != "gpt-5.6-sol" || info.DefaultEffort != "low" {
@@ -487,9 +517,13 @@ func TestParseModelAndAskEdges(t *testing.T) {
 	if !ok || len(ask.Paths) != 1 {
 		t.Fatal(ask)
 	}
-	ask, ok = ParseAsk(Message{Kind: KindRequest, ID: id, Method: MethodItemToolUserInput, Params: json.RawMessage(`{"prompt":"q","questions":[{"id":"q1","question":"pick","options":[{"id":"o1"}]}]}`)})
-	if !ok || len(ask.Options) != 1 {
-		t.Fatal(ask)
+	ask, ok = ParseAsk(Message{Kind: KindRequest, ID: id, Method: MethodItemToolUserInput, Params: json.RawMessage(`{"prompt":"q","questions":[{"id":"intent","header":"意图确认","options":[{"id":"cook","label":"真的做饭计划","recommended":true},{"id":"other","label":"别的意思","isOther":true}]},{"id":"scene","question":"场景","options":["一人食快手菜"]}]}`)})
+	if !ok || len(ask.Questions) != 2 || ask.Questions[0].Options[0].Recommended != true || !ask.Questions[0].Options[1].Other || ask.Fields[1] != "scene" {
+		t.Fatalf("%+v", ask)
+	}
+	body, _ := json.Marshal(ReplyBody(ask, AskAnswer{Approved: true, Answers: map[string]string{"intent": "周末自己炒个菜", "scene": "一人食快手菜"}}))
+	if !strings.Contains(string(body), "周末自己炒个菜") {
+		t.Fatalf("%s", body)
 	}
 	_ = ReplyBody(ask, AskAnswer{Approved: true, Values: []string{"v"}})
 	ask, ok = ParseAsk(Message{Kind: KindRequest, ID: id, Method: MethodMCPElicitation, Params: json.RawMessage(`{"message":{"requestedSchema":{"properties":{"n":{}}}}}`)})
@@ -500,6 +534,26 @@ func TestParseModelAndAskEdges(t *testing.T) {
 	_ = ReplyBody(ApprovalAsk{Method: "future"}, AskAnswer{})
 	if MapTurnStatus("failed", false) != TurnFailed || MapTurnStatus("other", false) != TurnRunning {
 		t.Fatal("status")
+	}
+}
+
+func TestParseTokenUsage(t *testing.T) {
+	v2 := Message{Kind: KindNotification, Method: MethodThreadTokenUsageUpdated, Params: json.RawMessage(`{"threadId":"t1","turnId":"u1","tokenUsage":{"modelContextWindow":1000,"last":{"totalTokens":250},"total":{"totalTokens":900}}}`)}
+	got, ok := ParseTokenUsage(v2)
+	if !ok || got.ThreadID != "t1" || got.Usage.Used != 250 || got.Usage.Window != 1000 {
+		t.Fatalf("%+v %v", got, ok)
+	}
+	pct, ok := got.Usage.RemainingPercent()
+	if !ok || pct != 75 {
+		t.Fatalf("remaining=%d", pct)
+	}
+	v1 := Message{Kind: KindNotification, Method: MethodTokenCount, Params: json.RawMessage(`{"conversationId":"t2","msg":{"info":{"model_context_window":800,"total_token_usage":{"total_tokens":200}}}}`)}
+	got, ok = ParseTokenUsage(v1)
+	if !ok || got.ThreadID != "t2" || got.Usage.Used != 200 || got.Usage.Window != 800 {
+		t.Fatalf("v1 %+v %v", got, ok)
+	}
+	if _, ok := ParseTokenUsage(Message{Kind: KindNotification, Method: MethodTurnStarted}); ok {
+		t.Fatal("not usage")
 	}
 }
 

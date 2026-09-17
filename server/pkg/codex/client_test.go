@@ -48,9 +48,13 @@ func scriptedClient(t *testing.T, handle func(server Transport, env Envelope) *E
 }
 
 func TestClientHandshakeAndCall(t *testing.T) {
+	var gotCaps map[string]any
 	client := scriptedClient(t, func(_ Transport, env Envelope) *Envelope {
 		switch env.Method {
 		case MethodInitialize:
+			var params InitializeParams
+			_ = json.Unmarshal(env.Params, &params)
+			gotCaps = params.Capabilities
 			return &Envelope{Result: json.RawMessage(`{"codexHome":"/tmp","platformFamily":"unix","platformOs":"macos","userAgent":"codex"}`)}
 		case MethodInitialized:
 			return nil
@@ -65,6 +69,9 @@ func TestClientHandshakeAndCall(t *testing.T) {
 	got, err := client.Handshake(ctx, DefaultClientInfo())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if gotCaps["experimentalApi"] != true {
+		t.Fatalf("capabilities=%v", gotCaps)
 	}
 	if got.CodexHome != "/tmp" || got.PlatformOS != "macos" {
 		t.Fatalf("%+v", got)

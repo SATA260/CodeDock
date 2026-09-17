@@ -1,6 +1,6 @@
 "use client";
 
-import type { CommandSpec, InputMode, ModeInfo, ModelInfo, Settings } from "@codedock/core/codex";
+import type { CommandSpec, InputMode, ModeInfo, ModelInfo, Settings, TokenUsage } from "@codedock/core/codex";
 import {
   Button,
   PromptInput,
@@ -15,6 +15,7 @@ import { useMemo, useRef, useState } from "react";
 
 import type { PickedLocalFile, PickFilesOptions } from "../provider.tsx";
 import { ModePermissionMenu, ModelEffortMenu } from "./composer-menus.tsx";
+import { formatTokens, remainingContext } from "./lib/format.ts";
 
 export function CodexPromptBar({
   running,
@@ -33,6 +34,8 @@ export function CodexPromptBar({
   onAttachError,
   onApply,
   onCompact,
+  onRefreshCatalog,
+  usage,
 }: {
   running: boolean;
   sending: boolean;
@@ -50,6 +53,8 @@ export function CodexPromptBar({
   onAttachError?: (message: string) => void;
   onApply: (patch: Settings) => void;
   onCompact: () => Promise<void>;
+  onRefreshCatalog?: () => void;
+  usage?: TokenUsage;
 }) {
   const [text, setText] = useState("");
   const [queue, setQueue] = useState(false);
@@ -176,11 +181,9 @@ export function CodexPromptBar({
         </div>
         <PromptInputFooter className="flex-wrap">
           <PromptInputTools>
-            <ModelEffortMenu models={models} settings={settings} onApply={onApply} />
+            <ModelEffortMenu models={models} settings={settings} onApply={onApply} onRefresh={onRefreshCatalog} />
             <ModePermissionMenu modes={modes} settings={settings} onApply={onApply} />
-            <Button size="sm" variant="outline" disabled={!sessionId} onClick={() => void onCompact()}>
-              压缩
-            </Button>
+            <CompactButton disabled={!sessionId} usage={usage} onCompact={onCompact} />
             <label className="flex items-center gap-1 text-xs text-muted-foreground">
               <input type="checkbox" checked={queue} onChange={(event) => setQueue(event.target.checked)} />
               排队
@@ -195,6 +198,27 @@ export function CodexPromptBar({
         </PromptInputFooter>
       </PromptInput>
     </div>
+  );
+}
+
+function CompactButton({
+  disabled,
+  usage,
+  onCompact,
+}: {
+  disabled: boolean;
+  usage?: TokenUsage;
+  onCompact: () => Promise<void>;
+}) {
+  const remaining = remainingContext(usage);
+  const label = remaining ? `压缩 ${remaining.percent}%` : "压缩";
+  const title = remaining
+    ? `还剩 ${formatTokens(remaining.left)} / ${formatTokens(remaining.window)}`
+    : "压缩上下文";
+  return (
+    <Button size="sm" variant="outline" disabled={disabled} title={title} onClick={() => void onCompact()}>
+      {label}
+    </Button>
   );
 }
 

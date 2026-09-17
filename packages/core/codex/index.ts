@@ -11,6 +11,8 @@ export type {
   ApprovalAsk,
   AskAnswer,
   AskKind,
+  AskOption,
+  AskQuestion,
   CodexEvent,
   CodexEventType,
   CodexViewState,
@@ -31,6 +33,7 @@ export type {
   Settings,
   StartTurnRequest,
   TimelineItem,
+  TokenUsage,
   Turn,
   TurnStatus,
 } from "./types.ts";

@@ -9,14 +9,17 @@ export function ModelEffortMenu({
   models,
   settings,
   onApply,
+  onRefresh,
 }: {
   models: ModelInfo[];
   settings: Settings;
   onApply: (patch: Settings) => void;
+  onRefresh?: () => void;
 }) {
-  const defaultModel = models.find((model) => model.is_default) ?? models[0];
+  const options = modelsWithCurrent(models, settings);
+  const defaultModel = options.find((model) => model.is_default) ?? options[0];
   const modelId = settings.model || defaultModel?.id || "";
-  const selected = models.find((model) => model.id === modelId);
+  const selected = options.find((model) => model.id === modelId);
   const efforts = selected?.efforts?.length
     ? selected.efforts
     : selected?.default_effort
@@ -30,10 +33,10 @@ export function ModelEffortMenu({
   const label = effortId ? `${modelLabel} · ${effortId}` : modelLabel;
 
   return (
-    <UpPopover label={label} ariaLabel="模型与推理强度">
+    <UpPopover label={label} ariaLabel="模型与推理强度" onOpen={onRefresh}>
       <MenuSection title="模型">
-        {models.length === 0 ? <EmptyRow>没有可选模型</EmptyRow> : null}
-        {models.map((model) => (
+        {options.length === 0 ? <EmptyRow>没有可选模型</EmptyRow> : null}
+        {options.map((model) => (
           <MenuOption
             key={model.id}
             selected={model.id === modelId}
@@ -123,11 +126,13 @@ export function UpPopover({
   label,
   ariaLabel,
   align = "left",
+  onOpen,
   children,
 }: {
   label: ReactNode;
   ariaLabel: string;
   align?: "left" | "right";
+  onOpen?: () => void;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -163,7 +168,15 @@ export function UpPopover({
         aria-label={ariaLabel}
         aria-expanded={open}
         aria-haspopup="listbox"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() =>
+          setOpen((current) => {
+            const next = !current;
+            if (next) {
+              onOpen?.();
+            }
+            return next;
+          })
+        }
       >
         <span className="max-w-40 truncate">{label}</span>
         <ChevronUp className="size-3.5 shrink-0" />
@@ -224,6 +237,28 @@ function MenuOption({
 
 function EmptyRow({ children }: { children: ReactNode }) {
   return <div className="px-2 py-1 text-xs text-muted-foreground">{children}</div>;
+}
+
+function modelsWithCurrent(models: ModelInfo[], settings: Settings): ModelInfo[] {
+  const id = settings.model?.trim();
+  if (!id || models.some((model) => model.id === id)) {
+    return models;
+  }
+  const efforts = ["low", "medium", "high", "xhigh"];
+  if (settings.effort && !efforts.includes(settings.effort)) {
+    efforts.push(settings.effort);
+  }
+  return [
+    {
+      id,
+      display_name: id,
+      efforts,
+      default_effort: settings.effort || "medium",
+      hidden: false,
+      is_default: true,
+    },
+    ...models.map((model) => ({ ...model, is_default: false })),
+  ];
 }
 
 function modeLabel(mode: ModeInfo): string {

@@ -5,14 +5,20 @@ func DefaultClientInfo() ClientInfo {
 	return ClientInfo{Name: ClientName, Title: "CodeDock", Version: ClientVersion}
 }
 
-// ApplyTurnOverrides 把用户改过的配置编进 turn/start 参数。
+// DefaultCapabilities 声明要用的官方能力。Plan 档走 experimentalApi。
+func DefaultCapabilities() map[string]any {
+	return map[string]any{"experimentalApi": true}
+}
+
+// ApplyTurnOverrides 把当前生效的模型、推理强度和用户改过的权限编进 turn/start。
+// 模型/强度必须带上：历史 thread 会记住旧模型，自定义供应商对不上就会被拒。
 func ApplyTurnOverrides(params TurnStartParams, settings Settings) TurnStartParams {
 	over := settings.Override()
-	if over.Model != "" {
-		params.Model = over.Model
+	if model := firstNonEmpty(over.Model, settings.Model); model != "" {
+		params.Model = model
 	}
-	if over.Effort != "" {
-		params.Effort = over.Effort
+	if effort := firstNonEmpty(over.Effort, settings.Effort); effort != "" {
+		params.Effort = effort
 	}
 	if over.ApprovalPolicy != "" {
 		params.ApprovalPolicy = over.ApprovalPolicy

@@ -44,7 +44,7 @@ export function useCodexSession(sessionId: string | undefined) {
       if (signal?.aborted) {
         return;
       }
-      const next = hydrateCodex({ ...detail, asks, settings });
+      const next = hydrateCodex({ ...detail, asks, settings, usage: detail.usage ?? stateRef.current.usage });
       next.lastSeq = Math.max(stateRef.current.lastSeq, next.lastSeq);
       stateRef.current = next;
       setState(next);
@@ -63,6 +63,11 @@ export function useCodexSession(sessionId: string | undefined) {
       return;
     }
     setLoading(true);
+    const empty = emptyCodexState();
+    stateRef.current = empty;
+    setState(empty);
+    setError(null);
+    setNotice(null);
     const ac = new AbortController();
     let cancelled = false;
     void (async () => {

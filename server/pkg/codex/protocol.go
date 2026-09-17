@@ -53,6 +53,8 @@ const (
 	MethodPlanDelta               = "item/plan/delta"
 	MethodError                   = "error"
 	MethodThreadStarted           = "thread/started"
+	MethodThreadTokenUsageUpdated = "thread/tokenUsage/updated"
+	MethodTokenCount              = "codex/event/token_count"
 
 	CodeParseError     = -32700
 	CodeInvalidRequest = -32600

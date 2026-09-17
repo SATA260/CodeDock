@@ -495,6 +495,29 @@ func TestRuntimeMapRPCMessages(t *testing.T) {
 	}
 }
 
+func TestRuntimeTokenUsageNotification(t *testing.T) {
+	rt := loopRT(t, nil)
+	rt.onNotification(pkg.Message{
+		Kind:   pkg.KindNotification,
+		Method: pkg.MethodThreadTokenUsageUpdated,
+		Params: []byte(`{"threadId":"th","turnId":"u1","tokenUsage":{"modelContextWindow":1000,"last":{"totalTokens":250},"total":{"totalTokens":900}}}`),
+	})
+	got := rt.Usage("th")
+	if got.Used != 250 || got.Window != 1000 {
+		t.Fatalf("%+v", got)
+	}
+	events, _ := rt.Events("th", 0)
+	found := false
+	for _, ev := range events {
+		if ev.Type == pkg.EventTokenUsage && ev.Usage != nil && ev.Usage.Used == 250 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected token.usage event")
+	}
+}
+
 func TestRuntimeResolveAskNotification(t *testing.T) {
 	rt := loopRT(t, nil)
 	st := rt.state("th")

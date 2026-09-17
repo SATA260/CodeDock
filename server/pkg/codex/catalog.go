@@ -1,5 +1,7 @@
 package codex
 
+import "slices"
+
 // EngineStatus 是本机 Codex 能不能用的体检结果。
 type EngineStatus struct {
 	Available  bool   `json:"available"`  // 本机装没装 Codex。
@@ -16,6 +18,54 @@ type ModelInfo struct {
 	DefaultEffort string   `json:"default_effort"`
 	Hidden        bool     `json:"hidden"` // Codex 自己不在选择器里列出来的模型。
 	IsDefault     bool     `json:"is_default"`
+}
+
+// MergeConfiguredModel 把 config/read 里当前模型并进 model/list。
+// 自定义供应商的模型通常不在官方目录里，选择器仍要能选到。
+func MergeConfiguredModel(models []ModelInfo, cfg ConfigReadResult) []ModelInfo {
+	id := ConfigString(cfg, "model")
+	if id == "" {
+		return models
+	}
+	effort := ConfigString(cfg, "model_reasoning_effort")
+	out := append([]ModelInfo(nil), models...)
+	for i := range out {
+		if out[i].ID != id {
+			continue
+		}
+		out[i].IsDefault = true
+		if effort != "" && !slices.Contains(out[i].Efforts, effort) {
+			out[i].Efforts = append(append([]string{}, out[i].Efforts...), effort)
+		}
+		if out[i].DefaultEffort == "" {
+			out[i].DefaultEffort = effort
+		}
+		for j := range out {
+			if j != i {
+				out[j].IsDefault = false
+			}
+		}
+		return out
+	}
+	info := ModelInfo{
+		ID:            id,
+		DisplayName:   id,
+		Efforts:       customModelEfforts(effort),
+		DefaultEffort: firstNonEmpty(effort, "medium"),
+		IsDefault:     true,
+	}
+	for i := range out {
+		out[i].IsDefault = false
+	}
+	return append([]ModelInfo{info}, out...)
+}
+
+func customModelEfforts(effort string) []string {
+	out := []string{"low", "medium", "high", "xhigh"}
+	if effort != "" && !slices.Contains(out, effort) {
+		out = append(out, effort)
+	}
+	return out
 }
 
 // ModeInfo 是一条 Codex 的 Plan 或权限预设。

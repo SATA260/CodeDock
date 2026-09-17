@@ -83,11 +83,13 @@ export class CodexClient {
       session: Session;
       progress?: SessionDetail["progress"];
       asks?: ApprovalAsk[];
+      usage?: SessionDetail["usage"];
     }>(`/codex/sessions/${sessionId}`, { signal });
     return {
       session: body.session,
       progress: body.progress ?? [],
       asks: body.asks ?? [],
+      usage: body.usage,
     };
   }
 

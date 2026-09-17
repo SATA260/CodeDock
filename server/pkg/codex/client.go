@@ -65,14 +65,8 @@ func (c *Client) Close() error {
 
 // Handshake 发送 initialize 再发 initialized 通知。
 func (c *Client) Handshake(ctx context.Context, info ClientInfo) (InitializeResult, error) {
-	if info.Name == "" {
-		info.Name = ClientName
-	}
-	if info.Version == "" {
-		info.Version = ClientVersion
-	}
 	var out InitializeResult
-	if err := c.Call(ctx, MethodInitialize, InitializeParams{ClientInfo: info}, &out); err != nil {
+	if err := c.Call(ctx, MethodInitialize, initializeParams(info), &out); err != nil {
 		return InitializeResult{}, err
 	}
 	if err := c.Notify(ctx, MethodInitialized, map[string]any{}); err != nil {

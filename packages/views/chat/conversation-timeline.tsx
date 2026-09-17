@@ -61,13 +61,13 @@ export function ConversationTimeline({
   if (items.length === 0) {
     if (loading) {
       return (
-        <Conversation>
+        <Conversation key={scrollKey ?? "agent-draft"}>
           <ConversationContent scrollKey={scrollKey} />
         </Conversation>
       );
     }
     return (
-      <Conversation>
+      <Conversation key={scrollKey ?? "agent-draft"}>
         <ConversationEmptyState description={emptyDescription} />
       </Conversation>
     );
@@ -86,7 +86,7 @@ export function ConversationTimeline({
   );
 
   return (
-    <Conversation>
+    <Conversation key={scrollKey ?? "agent-draft"}>
       <ConversationContent scrollKey={scrollKey} followKey={followKey} streaming={streaming}>
         {sections.map((section, sectionIndex) => (
           <section key={sectionKey(section)} className="flex w-full min-w-0 flex-col gap-5">

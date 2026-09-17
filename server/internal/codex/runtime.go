@@ -48,6 +48,8 @@ type sessionMem struct {
 	asks     map[string]*askMem
 	ring     *eventRing
 	archived bool
+	loaded   bool
+	usage    pkg.TokenUsage
 }
 
 type queuedTurn struct {
@@ -272,7 +274,23 @@ func (rt *Runtime) onServerRequest(client *pkg.Client, msg pkg.Message) {
 	_ = client.ReplyError(ctx, msg.ID, pkg.CodeMethodNotFound, "method not supported by codedock")
 }
 
+func (rt *Runtime) Usage(sessionID string) pkg.TokenUsage {
+	st := rt.state(sessionID)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.usage
+}
+
 func (rt *Runtime) onNotification(msg pkg.Message) {
+	if usage, ok := pkg.ParseTokenUsage(msg); ok {
+		st := rt.state(usage.ThreadID)
+		st.mu.Lock()
+		st.usage = usage.Usage
+		st.mu.Unlock()
+		got := usage.Usage
+		rt.emit(usage.ThreadID, pkg.Event{Type: pkg.EventTokenUsage, TurnID: usage.TurnID, Usage: &got})
+		return
+	}
 	threadID, turnID := idsOf(msg)
 	switch msg.Method {
 	case pkg.MethodServerRequestResolved:

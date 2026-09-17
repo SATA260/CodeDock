@@ -110,6 +110,20 @@ export function ChatPage({
     }
   };
 
+  const hideSession = async (session: SidebarSession) => {
+    const hiddenId = session.id;
+    const hiddenEngine = session.engine ?? "agent";
+    if (session.engine === "codex") {
+      await codexClient.archiveSession(session.id);
+      await codexList.refresh();
+    } else {
+      await list.removeSession(session);
+    }
+    if (sessionId === hiddenId && (engine ?? "agent") === hiddenEngine) {
+      onNewConversation();
+    }
+  };
+
   return (
     <div className="flex h-full overflow-hidden bg-background text-foreground">
       <SessionSidebar
@@ -125,33 +139,13 @@ export function ChatPage({
           await timeline.recover(runId);
           await list.refresh();
         }}
-        onDelete={async (session) => {
-          const deletedId = session.id;
-          const deletedEngine = session.engine ?? "agent";
-          if (session.engine === "codex") {
-            await codexClient.archiveSession(session.id);
-            await codexList.refresh();
-          } else {
-            await list.removeSession(session);
-          }
-          if (sessionId === deletedId && (engine ?? "agent") === deletedEngine) {
-            onNewConversation();
-          }
-        }}
         canRecoverCurrent={activeEngine === "agent" && timeline.canRecover}
-        canArchive={activeEngine === "codex" && Boolean(sessionId)}
-        onArchive={
-          activeEngine === "codex" && sessionId
-            ? async () => {
-                await codexClient.archiveSession(sessionId);
-                await codexList.refresh();
-                onNewConversation();
-              }
-            : undefined
-        }
+        onArchive={async (session) => {
+          await hideSession(session);
+        }}
         brandSrc={brandSrc}
       />
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm leading-5 text-muted-foreground">
           <span className="shrink-0">
             {sessionId ? (activeEngine === "codex" ? "Codex 对话" : "对话") : "新对话"}

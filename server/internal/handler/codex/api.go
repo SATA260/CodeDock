@@ -156,7 +156,11 @@ func (a *API) GetSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"session": session, "progress": progress, "asks": a.rt.PendingAsks(id)})
+	body := map[string]any{"session": session, "progress": progress, "asks": a.rt.PendingAsks(id)}
+	if usage := a.rt.Usage(id); usage.Window > 0 || usage.Used > 0 {
+		body["usage"] = usage
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 type patchSessionRequest struct {

@@ -18,6 +18,7 @@ export function emptyCodexState(): CodexViewState {
     lastSeq: 0,
     activeTurn: null,
     reset: false,
+    usage: undefined,
   };
 }
 
@@ -26,6 +27,7 @@ export function hydrateCodex(detail: {
   progress: Progress[];
   asks: ApprovalAsk[];
   settings?: Settings;
+  usage?: CodexViewState["usage"];
 }): CodexViewState {
   return {
     session: detail.session,
@@ -41,6 +43,7 @@ export function hydrateCodex(detail: {
         }
       : null,
     reset: false,
+    usage: detail.usage,
   };
 }
 
@@ -102,6 +105,11 @@ export function applyCodexEvent(state: CodexViewState, event: CodexEvent): Codex
     case "notice":
       if (event.notice) {
         next.items.push(noticeItem(event.notice, event.seq));
+      }
+      return next;
+    case "token.usage":
+      if (event.usage) {
+        next.usage = event.usage;
       }
       return next;
     default:

@@ -58,6 +58,9 @@ func (rt *Runtime) ListModels(ctx context.Context) ([]pkg.ModelInfo, error) {
 		}
 		cursor = page.NextCursor
 	}
+	if cfg, err := client.ConfigRead(ctx, ""); err == nil {
+		models = pkg.MergeConfiguredModel(models, cfg)
+	}
 	return models, nil
 }
 

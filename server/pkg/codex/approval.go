@@ -19,28 +19,46 @@ const (
 	AskPermissions AskKind = "permissions" // 额外权限。
 )
 
+// AskOption 是一道题里的可选项。
+type AskOption struct {
+	ID          string `json:"id,omitempty"`
+	Label       string `json:"label"`
+	Recommended bool   `json:"recommended,omitempty"`
+	Other       bool   `json:"other,omitempty"`
+}
+
+// UserQuestion 是官方 requestUserInput 的一道题。
+type UserQuestion struct {
+	ID      string      `json:"id,omitempty"`
+	Header  string      `json:"header,omitempty"`
+	Prompt  string      `json:"prompt,omitempty"`
+	Options []AskOption `json:"options,omitempty"`
+}
+
 // ApprovalAsk 是一条 Codex 已知的反问。
 type ApprovalAsk struct {
-	ID                string   `json:"id"`
-	Kind              AskKind  `json:"kind"`
-	ThreadID          string   `json:"thread_id,omitempty"`
-	TurnID            string   `json:"turn_id,omitempty"`
-	Method            string   `json:"method,omitempty"`
-	Command           string   `json:"command,omitempty"`
-	Paths             []string `json:"paths,omitempty"`
-	Diff              string   `json:"diff,omitempty"`
-	Prompt            string   `json:"prompt,omitempty"` // 选择题或表单给人看的题面。
-	Options           []string `json:"options,omitempty"`
-	Fields            []string `json:"fields,omitempty"` // MCP 表单字段名。
-	ExternalRequestID string   `json:"external_request_id"`
+	ID                string        `json:"id"`
+	Kind              AskKind       `json:"kind"`
+	ThreadID          string        `json:"thread_id,omitempty"`
+	TurnID            string        `json:"turn_id,omitempty"`
+	Method            string        `json:"method,omitempty"`
+	Command           string        `json:"command,omitempty"`
+	Paths             []string      `json:"paths,omitempty"`
+	Diff              string        `json:"diff,omitempty"`
+	Prompt            string        `json:"prompt,omitempty"` // 选择题或表单给人看的题面。
+	Options           []string      `json:"options,omitempty"`
+	Questions         []UserQuestion `json:"questions,omitempty"`
+	Fields            []string      `json:"fields,omitempty"` // 题目 id 或 MCP 表单字段名。
+	ExternalRequestID string        `json:"external_request_id"`
 }
 
 // AskAnswer 是人对这条反问的作答。
 type AskAnswer struct {
-	Approved bool          `json:"approved"`
-	Scope    DecisionScope `json:"scope,omitempty"`
-	Choice   string        `json:"choice,omitempty"` // 选择题选中的项。
-	Values   []string      `json:"values,omitempty"` // 表单填写结果。
+	Approved bool              `json:"approved"`
+	Scope    DecisionScope     `json:"scope,omitempty"`
+	Choice   string            `json:"choice,omitempty"`  // 选择题选中的项。
+	Values   []string          `json:"values,omitempty"`  // 表单填写结果。
+	Answers  map[string]string `json:"answers,omitempty"` // 题目 id → 作答（可改写）。
 }
 
 // KnownAskMethod 判断这是不是本模块能做完整界面的官方反问。

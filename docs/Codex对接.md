@@ -6,7 +6,7 @@
 
 - 发现本机是否装了 Codex、是否已取得授权、有哪些模型与模式
 - 一个对话只走 Codex，`session_id` 即官方 `thread_id`
-- 只把用户改过的模型、推理强度、Plan、权限交给 Codex
+- 回合带上当前生效的模型与推理强度（本机配置或用户改过的）；Plan、权限仍只传用户改过的
 - `/` 命令与官方扩展按钮共用同一套动作
 - 给本条消息挂文件提及或图片
 - 发送、排队、手动打断；正忙时不自动插话
@@ -14,6 +14,7 @@
 - 回放正文、推理、命令、改文件、方案
 - 回答跑命令、改文件、补一句、MCP 表单、额外权限
 - 认不出的官方反问立刻按 `-32601` 回包，避免转圈
+- 压缩按钮显示官方 `thread/tokenUsage/updated` 的剩余上下文（进程内存 + SSE，不入库）
 
 ## 边界
 
@@ -32,5 +33,5 @@
 - `internal/codex`：本机进程与内存编排
 - `internal/handler/codex`：独立 `/codex/*` HTTP
 - `packages/core/codex`：无头 `CodexClient` 与 SSE/reducer
-- `packages/views/codex`：由 `ChatPage` 在 Codex 模式下组合（输入栏设置、时间线、问票、prompt）；归档在侧栏顶部
+- `packages/views/codex`：由 `ChatPage` 在 Codex 模式下组合（输入栏设置、时间线、问票、prompt）；归档在侧栏每条会话右侧
 - `apps/web`：对话页 `/` 与 `/s/c/:id` 装配 `CodexClient`，不单独开 Codex 页

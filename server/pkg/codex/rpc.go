@@ -181,17 +181,18 @@ func SandboxPolicy(mode string) json.RawMessage {
 	}
 }
 
-// CollaborationModeParams 编 Plan 模式。settings.model 官方必填。
+// CollaborationModeParams 编 Plan 档。Default 不传，避免无 experimentalApi 时 turn/start 被拒。
 func CollaborationModeParams(mode, model string) json.RawMessage {
-	if mode == "" {
+	if mode == "" || mode == "default" {
 		return nil
 	}
-	if model == "" {
-		model = "default"
+	settings := map[string]any{"developerInstructions": nil}
+	if model != "" && model != "default" {
+		settings["model"] = model
 	}
 	body, err := json.Marshal(map[string]any{
 		"mode":     mode,
-		"settings": map[string]any{"model": model},
+		"settings": settings,
 	})
 	if err != nil {
 		return nil
@@ -202,8 +203,18 @@ func CollaborationModeParams(mode, model string) json.RawMessage {
 // Initialize 发送握手请求。
 func (c *Client) Initialize(ctx context.Context, info ClientInfo) (InitializeResult, error) {
 	var out InitializeResult
-	err := c.Call(ctx, MethodInitialize, InitializeParams{ClientInfo: info}, &out)
+	err := c.Call(ctx, MethodInitialize, initializeParams(info), &out)
 	return out, err
+}
+
+func initializeParams(info ClientInfo) InitializeParams {
+	if info.Name == "" {
+		info.Name = ClientName
+	}
+	if info.Version == "" {
+		info.Version = ClientVersion
+	}
+	return InitializeParams{ClientInfo: info, Capabilities: DefaultCapabilities()}
 }
 
 // ThreadStart 让 Codex 新建一条 thread。

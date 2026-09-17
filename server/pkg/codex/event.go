@@ -14,6 +14,7 @@ const (
 	EventAskResolved   EventType = "ask.resolved"
 	EventNotice        EventType = "notice"
 	EventReset         EventType = "reset"
+	EventTokenUsage    EventType = "token.usage"
 )
 
 // Event 是给 HTTP/SSE 的一条 Codex 领域事件。只存在当前进程里。
@@ -26,4 +27,5 @@ type Event struct {
 	Turn      *Turn        `json:"turn,omitempty"`
 	Ask       *ApprovalAsk `json:"ask,omitempty"`
 	Notice    string       `json:"notice,omitempty"`
+	Usage     *TokenUsage  `json:"usage,omitempty"`
 }
