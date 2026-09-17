@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestLoadDefaults 校验未设置环境变量时的默认配置。
@@ -18,6 +19,8 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "")
 	t.Setenv("LLM_BASE_URL", "")
 	t.Setenv("GIT_REPO", "")
+	t.Setenv("PLUGIN_DIR", "")
+	t.Setenv("PLUGIN_RPC_TIMEOUT", "")
 	t.Setenv("CODEX_BIN", "")
 
 	cfg := Load()
@@ -49,6 +52,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ToolConcurrency != 8 {
 		t.Fatalf("ToolConcurrency = %d, want 8", cfg.ToolConcurrency)
 	}
+	if cfg.PluginDir != "" {
+		t.Fatalf("PluginDir = %q, want empty", cfg.PluginDir)
+	}
+	if cfg.PluginRPCTimeout != 10*time.Second {
+		t.Fatalf("PluginRPCTimeout = %s, want 10s", cfg.PluginRPCTimeout)
+	}
 	if cfg.CodexBin != "codex" {
 		t.Fatalf("CodexBin = %q, want codex", cfg.CodexBin)
 	}
@@ -65,6 +74,8 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "sk-test")
 	t.Setenv("LLM_BASE_URL", "https://api.example.com/v1")
 	t.Setenv("GIT_REPO", "/tmp/repo")
+	t.Setenv("PLUGIN_DIR", "/tmp/plugins")
+	t.Setenv("PLUGIN_RPC_TIMEOUT", "2s")
 	t.Setenv("CODEX_BIN", "/usr/local/bin/codex")
 
 	cfg := Load()
@@ -76,6 +87,9 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.GitRepo != "/tmp/repo" {
 		t.Fatalf("GitRepo = %q, want /tmp/repo", cfg.GitRepo)
+	}
+	if cfg.PluginDir != "/tmp/plugins" || cfg.PluginRPCTimeout != 2*time.Second {
+		t.Fatalf("plugin cfg = %+v", cfg)
 	}
 	if cfg.CodexBin != "/usr/local/bin/codex" {
 		t.Fatalf("CodexBin = %q, want /usr/local/bin/codex", cfg.CodexBin)

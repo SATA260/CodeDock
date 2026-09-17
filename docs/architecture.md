@@ -55,6 +55,8 @@ CodeDock/
 │   ├── ui/                      # 无业务语义；components / lib / styles，不要 src/
 │   └── views/                   # 组合层；按业务域拆（现有 chat/ git/ codex/），不要 src/
 ├── docs/
+├── plugin/example/          # 插件拷贝模板；不改正文、不换向
+├── plugin/redact/           # 脱敏插件；PLUGIN_DIR 指到 plugin/
 ├── data/                    # 运行时文件（sqlite 等），gitignore
 ├── server/
 │   ├── cmd/server/              # 服务启动、配置、Router 和依赖装配
@@ -66,12 +68,15 @@ CodeDock/
 │   │   │   └── tools/           # 具体工具定义：ping、memory_*、编码八工具、plan_*
 │   │   ├── codex/               # 本机 app-server 生命周期与内存排队/问票/SSE
 │   │   ├── events/              # 进程内事件总线
+│   │   ├── pluginhost/          # go-plugin 宿主：拉进程、Dispatch、Host 白名单
 │   │   ├── config/
 │   │   ├── logger/
 │   │   ├── errors/
 │   │   └── util/
 │   ├── pkg/
 │   │   ├── agent/               # 全部通用无状态逻辑，含模型调用与 Tool 抽象
+│   │   │   └── seam/            # Envelope / Dispatcher / 六个口的类型常量
+│   │   ├── plugin/              # 插件 SDK 与 proto；作者只 import 这个包
 │   │   ├── git/                 # 无状态 Git CLI 操作，供 Handler 直接调用
 │   │   ├── codex/               # 看板的 Codex 子模块：协议客户端与领域类型
 │   │   └── db/                  # Client 与 sqlc 生成代码
@@ -90,6 +95,7 @@ cmd/server
   -> internal/codex
   -> internal/agent
   -> internal/events
+  -> internal/pluginhost
   -> pkg/db
 
 internal/handler
@@ -127,10 +133,26 @@ internal/agent/tools
   -> pkg/db/sqlite.Queries
   不 import 父包 internal/agent
 
+internal/pluginhost
+  -> pkg/plugin
+  -> pkg/agent / pkg/agent/seam / pkg/agent/tool
+  -> internal/agent/memory
+  -> pkg/db/sqlite.Queries
+  -> internal/events
+  不 import 父包 internal/agent
+
+pkg/plugin
+  -> pkg/agent / pkg/agent/seam / pkg/agent/tool
+  -> pkg/plugin/proto
+  不依赖 handler、internal、sqlc
+  插件作者只 import 这个包
+
 pkg/agent
   不依赖 handler、internal、sqlc
   不持有包级状态，不查库
+  不知道 gRPC / go-plugin
   Tool 包只含接口、Registry、Dispatch，不含具体工具定义
+  seam 是叶子包：信封与六个口，agent 与 tool 都能 import
 
 pkg/git
   不依赖 handler、internal、sqlc
@@ -217,6 +239,16 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 每个工具只定义入参/出参结构体；执行用 `encoding/json`，给模型的 schema 由 `jsonschema.For` 从类型推断。发给模型的是注册表全量工具；`Profile.Tools.Names` 是可执行绑定。模式规则由 `Build` 注入一条 developer 消息；发给网关时紧跟底座 system，不改底座正文。审批流水线：工具默认+参数校验 → 本 Agent `Names`（未绑定 deny，yolo / 已批准都不能抬）→ Agent `Effects` → `approval`（manual/auto/yolo）；每层只审上一层的 `ask`。一批待批工具对应一条审批，一次提交审完再流转。不 import 父包 `internal/agent`。测试用 Tool 可留在测试文件。
 
+### 插件
+
+主循环在六个口把当前数据递给 `seam.Dispatcher`：`agent/input`、`agent/pre-step`、`agent/request`、`llm/stream`、`tools/pre-execute`、`tools/post-execute`。没有 Dispatcher 时原样通过。作者侧每个口是一对入参/回包结构体（`OnAgentInput` 的 `AgentInput` / `AgentInputResult` 等），换向是回包字段，不解信封。
+
+多个插件按子目录名排序依次改同一份载荷。回包类型不变则继续；类型变成 `input/handled` / `run/blocked` / `tools/denied` / `tools/ask` 则换方向。同一条链上问过的插件记入 `Seen`，不会再问自己。插件之间的参数走 `PluginContext`（信封 `Context`），由宿主按会话/Run 暂存，不进模型、不进消息表。
+
+插件跑在独立进程里，经 go-plugin gRPC 通信。宿主白名单：`Emit`（不能发六个口的同名事件）、`RegisterMethod`、记忆读写、`Complete`、`AppendNotice`。超时或进程挂了：拦截口按否决，只改数据的口保留原样。`assistant.delta` 不发给插件。已批准的工具不再拦一次。换插件二进制要重启服务。未设 `PLUGIN_DIR` 不拉进程。
+
+详见 [plugin.md](plugin.md)。
+
 ### `pkg/git`
 
 无状态 Git CLI：`Open` / `Status`（`SiteState` 整局）/ Diff / 图 / 暂存提交 / reset / revert / 推拉 / remote / 分支 / worktree / `stash create` 副本 / 冲突读写。不进 `pkg/agent`，不写 HTTP 或产品流程。Workspace / Branch / Undo / 说明 / Agent 快照的产品组合在 Handler。
@@ -296,7 +328,7 @@ Worker
 
 ## 配置
 
-`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。未设 `DB_DSN` 时 SQLite 写仓根 `data/codedock.db`，不写 `server/`。`CODEX_BIN` 为本机 Codex CLI（默认 `codex`）。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
+`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。未设 `DB_DSN` 时 SQLite 写仓根 `data/codedock.db`，不写 `server/`。`PLUGIN_DIR` 指向插件根目录，未设则不拉插件进程；`PLUGIN_RPC_TIMEOUT` 默认 `10s`。`CODEX_BIN` 为本机 Codex CLI（默认 `codex`）。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
 
 HTTP 出站领域对象使用 snake_case JSON。Router 只对本地回环 Origin 放行 CORS，便于本机 Web 直连 `:8080`。Web 用 `NEXT_PUBLIC_API_BASE`（默认 `http://localhost:8080`）和 `NEXT_PUBLIC_USER_ID`（默认 `local`）。
 

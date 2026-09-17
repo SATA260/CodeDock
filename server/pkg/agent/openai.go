@@ -11,6 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"log/slog"
+
+	"codedock/pkg/agent/seam"
 	"codedock/pkg/agent/tool"
 )
 
@@ -101,13 +104,19 @@ func streamOpenAI(ctx context.Context, chat Chat) (ModelStream, error) {
 	if err != nil {
 		return nil, err
 	}
+	headers := map[string]string{
+		"Authorization": "Bearer " + opts.APIKey,
+		"Content-Type":  "application/json",
+		"Accept":        "text/event-stream",
+	}
+	body, headers = applyStreamSeam(ctx, chat, body, headers)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+opts.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -130,6 +139,37 @@ func streamOpenAI(ctx context.Context, chat Chat) (ModelStream, error) {
 	}
 	go consumeOpenAI(ctx, chat, resp.Body, stream)
 	return stream, nil
+}
+
+// applyStreamSeam 在真正发出 HTTP 前递请求头和请求体；出错保留原数据。
+func applyStreamSeam(ctx context.Context, chat Chat, body json.RawMessage, headers map[string]string) (json.RawMessage, map[string]string) {
+	ev, err := seam.Dispatch(ctx, chat.Dispatcher, seam.Envelope{
+		Type:      seam.TypeStream,
+		SessionID: chat.SessionID,
+		RunID:     chat.RunID,
+		TurnID:    chat.TurnID,
+		Payload:   MarshalPayload(StreamPayload{Headers: headers, Body: body}),
+	})
+	if err != nil {
+		slog.Warn("llm/stream dispatch failed", "run_id", chat.RunID, "error", err)
+		return body, headers
+	}
+	if ev.Type != seam.TypeStream || len(ev.Payload) == 0 {
+		return body, headers
+	}
+	var payload StreamPayload
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+		return body, headers
+	}
+	if payload.Headers != nil {
+		for key, value := range payload.Headers {
+			headers[key] = value
+		}
+	}
+	if len(payload.Body) > 0 {
+		body = payload.Body
+	}
+	return body, headers
 }
 
 func applyOutputLimit(req *openaiChatRequest, model string, n int64) {

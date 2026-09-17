@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"codedock/pkg/agent/seam"
 )
 
 type stubTool struct {
@@ -163,10 +165,12 @@ func TestDispatchFailFastStopsOnFirstError(t *testing.T) {
 
 type outsideTool struct{ stubTool }
 
+// Inspect 假装路径落在工作区外。
 func (outsideTool) Inspect(context.Context, Input) error { return ErrOutsideWorkspace }
 
 type allowAskTool struct{ stubTool }
 
+// ResolveEffect 把默认 ask 抬成 allow。
 func (t allowAskTool) ResolveEffect(context.Context, Input) Effect {
 	return EffectAllow
 }
@@ -198,6 +202,126 @@ func TestDispatchOutsideWorkspaceNeedsApproval(t *testing.T) {
 	out, err = Dispatch(context.Background(), inv)
 	if err != nil || len(out.Results) != 1 || !out.Results[0].Success {
 		t.Fatalf("approved outside %v %+v", err, out)
+	}
+}
+
+func TestDispatchPreExecuteRewritesArguments(t *testing.T) {
+	reg := NewRegistry()
+	_ = reg.Register(stubTool{def: Definition{Name: "ping", Permission: Permission{Effect: EffectAllow}}})
+	inv := dispatchInv(reg, []Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{"x":1}`)}}, ApprovalYolo)
+	inv.Dispatcher = seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		if ev.Type != seam.TypePreExecute {
+			return ev, nil
+		}
+		var payload PreExecutePayload
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		payload.Call.Arguments = json.RawMessage(`{"x":2}`)
+		body, _ := json.Marshal(payload)
+		ev.Payload = body
+		return ev, nil
+	})
+	out, err := Dispatch(context.Background(), inv)
+	if err != nil || len(out.Results) != 1 || !out.Results[0].Success {
+		t.Fatalf("err=%v out=%+v", err, out)
+	}
+}
+
+func TestDispatchPreExecuteDenied(t *testing.T) {
+	reg := NewRegistry()
+	_ = reg.Register(stubTool{def: Definition{Name: "ping", Permission: Permission{Effect: EffectAllow}}})
+	inv := dispatchInv(reg, []Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}}, ApprovalYolo)
+	inv.Dispatcher = seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		ev.Type = seam.TypeToolsDenied
+		return ev, nil
+	})
+	out, err := Dispatch(context.Background(), inv)
+	if err != nil || len(out.Results) != 1 || out.Results[0].Success || out.Results[0].Error != "denied by plugin" {
+		t.Fatalf("err=%v out=%+v", err, out)
+	}
+}
+
+func TestDispatchPreExecuteAsk(t *testing.T) {
+	reg := NewRegistry()
+	_ = reg.Register(stubTool{def: Definition{Name: "ping", Permission: Permission{Effect: EffectAllow}}})
+	inv := dispatchInv(reg, []Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{"x":1}`)}}, ApprovalYolo)
+	inv.Dispatcher = seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		var payload PreExecutePayload
+		_ = json.Unmarshal(ev.Payload, &payload)
+		payload.Call.Arguments = json.RawMessage(`{"x":9}`)
+		body, _ := json.Marshal(payload)
+		ev.Payload = body
+		ev.Type = seam.TypeToolsAsk
+		return ev, nil
+	})
+	out, err := Dispatch(context.Background(), inv)
+	if err != nil || !out.WaitingApproval || len(out.PendingCalls) != 1 || string(out.PendingCalls[0].Arguments) != `{"x":9}` {
+		t.Fatalf("err=%v out=%+v", err, out)
+	}
+}
+
+func TestDispatchPreExecuteSkipsApproved(t *testing.T) {
+	reg := NewRegistry()
+	_ = reg.Register(stubTool{def: Definition{Name: "ping", Permission: Permission{Effect: EffectAsk}}})
+	called := 0
+	inv := dispatchInv(reg, []Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}}, ApprovalManual)
+	inv.ApprovedCallIDs = []string{"c1"}
+	inv.Dispatcher = seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		if ev.Type == seam.TypePreExecute {
+			called++
+		}
+		return ev, nil
+	})
+	out, err := Dispatch(context.Background(), inv)
+	if err != nil || called != 0 || len(out.Results) != 1 || !out.Results[0].Success {
+		t.Fatalf("called=%d err=%v out=%+v", called, err, out)
+	}
+}
+
+func TestDispatchPostExecuteRewritesResult(t *testing.T) {
+	reg := NewRegistry()
+	_ = reg.Register(stubTool{def: Definition{Name: "ping", Permission: Permission{Effect: EffectAllow}}})
+	inv := dispatchInv(reg, []Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}}, ApprovalYolo)
+	inv.Dispatcher = seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		if ev.Type != seam.TypePostExecute {
+			return ev, nil
+		}
+		var payload PostExecutePayload
+		_ = json.Unmarshal(ev.Payload, &payload)
+		payload.Result.Output = json.RawMessage(`{"ok":false}`)
+		body, _ := json.Marshal(payload)
+		ev.Payload = body
+		return ev, nil
+	})
+	out, err := Dispatch(context.Background(), inv)
+	if err != nil || len(out.Results) != 1 || string(out.Results[0].Output) != `{"ok":false}` {
+		t.Fatalf("err=%v out=%+v", err, out)
+	}
+}
+
+func TestDispatchFailFastStopsOnPluginDenied(t *testing.T) {
+	reg := NewRegistry()
+	_ = reg.Register(stubTool{def: Definition{Name: "ping", Permission: Permission{Effect: EffectAllow}}})
+	inv := dispatchInv(reg, []Call{
+		{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)},
+		{ID: "c2", Name: "ping", Arguments: json.RawMessage(`{}`)},
+	}, ApprovalYolo)
+	inv.FailurePolicy = FailureFast
+	inv.Dispatcher = seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		var payload PreExecutePayload
+		_ = json.Unmarshal(ev.Payload, &payload)
+		if payload.Call.ID == "c1" {
+			ev.Type = seam.TypeToolsDenied
+		}
+		return ev, nil
+	})
+	out, err := Dispatch(context.Background(), inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Results) != 2 || out.Results[0].Success || out.Results[1].Success || out.Results[1].Error != "tool did not execute" {
+		t.Fatalf("out=%+v", out)
 	}
 }
 

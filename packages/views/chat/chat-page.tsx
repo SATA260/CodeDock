@@ -3,7 +3,7 @@
 import type { ApprovalMode, Session, TimelineItem, WorkMode } from "@codedock/core/chat";
 import type { Session as CodexSession } from "@codedock/core/codex";
 import { Button } from "@codedock/ui";
-import { useMemo, useState, useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { CodexPane } from "../codex/codex-pane.tsx";
 import { useCodexSessionList } from "../codex/hooks/use-session-list.ts";
@@ -37,6 +37,7 @@ export type ChatPageProps = {
   headerActions?: ReactNode;
 };
 
+// ChatPage 组合会话侧栏、时间线与输入条。
 export function ChatPage({
   sessionId,
   engine,
@@ -62,6 +63,8 @@ export function ChatPage({
   const [composerError, setComposerError] = useState<string | null>(null);
   const [workspaceDraft, setWorkspaceDraft] = useState("");
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
+
+  // 上次目录只在本机 localStorage，等 hydration 后再读，避免 SSR 文本对不上。
   useEffect(() => {
     setWorkspaceDraft(readLastWorkspace());
   }, []);
@@ -308,6 +311,7 @@ export function ChatPage({
   );
 }
 
+// mergeSessions 把 Agent 与 Codex 会话按更新时间合成侧栏列表，同引擎同 ID 只留更新的一条。
 function mergeSessions(agent: Session[], codex: CodexSession[]): SidebarSession[] {
   const mapped: SidebarSession[] = [
     ...agent.map((session) => ({ ...session, engine: "agent" as const })),
@@ -324,6 +328,7 @@ function mergeSessions(agent: Session[], codex: CodexSession[]): SidebarSession[
   return [...seen.values()].sort((left, right) => (left.updated_at < right.updated_at ? 1 : -1));
 }
 
+// asSidebarSession 把 Codex 会话收成侧栏条目，目录用 cwd，标题优先 title。
 function asSidebarSession(session: CodexSession): SidebarSession {
   return {
     id: session.id,
@@ -341,6 +346,7 @@ function asSidebarSession(session: CodexSession): SidebarSession {
   };
 }
 
+// stampToIso 把秒或毫秒时间戳收成 ISO 字符串，无效值用纪元。
 function stampToIso(value?: number): string {
   if (!value) {
     return new Date(0).toISOString();

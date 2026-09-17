@@ -15,6 +15,7 @@ type History struct {
 	Messages      []Message
 	Tools         []tool.Definition
 	Prompt        string
+	Hidden        []Message
 	MemoryIndexes []string
 }
 
@@ -25,6 +26,7 @@ func Load(_ context.Context, hist History) (ContextSnapshot, error) {
 		Messages:      hist.Messages,
 		Tools:         hist.Tools,
 		SystemPrompt:  hist.Prompt,
+		Hidden:        hist.Hidden,
 		MemoryIndexes: hist.MemoryIndexes,
 	}
 	if hist.Checkpoint != nil {
@@ -84,6 +86,9 @@ func EstimateTokens(snapshot ContextSnapshot) int64 {
 	total := CountTokens(snapshot.SystemPrompt)
 	for _, index := range snapshot.MemoryIndexes {
 		total += CountTokens(index)
+	}
+	for _, msg := range snapshot.Hidden {
+		total += CountTokens(DecodeText(msg.Content))
 	}
 	if snapshot.Summary != nil {
 		total += CountTokens(snapshot.Summary.Content)

@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package codedock.plugin.v1;
+
+option go_package = "codedock/pkg/plugin/proto;pluginpb";
+
+service Plugin {
+  rpc Bootstrap(BootstrapRequest) returns (Manifest);
+  rpc OnEvent(Envelope) returns (Envelope);
+  rpc ExecuteMethod(MethodInput) returns (MethodResult);
+}
+
+service Host {
+  rpc Emit(Envelope) returns (Empty);
+  rpc RegisterMethod(Method) returns (Empty);
+  rpc MemoryGet(MemoryKey) returns (MemoryValue);
+  rpc MemoryUpsert(MemoryEntry) returns (Empty);
+  rpc Complete(CompleteRequest) returns (CompleteResult);
+  rpc AppendNotice(Notice) returns (Empty);
+}
+
+message Empty {}
+
+message BootstrapRequest {
+  uint32 host_server_id = 1;
+}
+
+message Manifest {
+  string name = 1;
+  repeated string subscriptions = 2;
+}
+
+message Envelope {
+  string type = 1;
+  string chain_id = 2;
+  repeated string seen = 3;
+  string session_id = 4;
+  string run_id = 5;
+  string turn_id = 6;
+  bytes payload = 7;
+  bytes context = 8; // 插件共享袋子，JSON object；不进模型
+}
+
+message Method {
+  string name = 1;
+  string prompt = 2;
+  bytes parameters_schema = 3;
+  repeated string capabilities = 4;
+  bool requires_approval = 5;
+}
+
+message MethodInput {
+  string session_id = 1;
+  string run_id = 2;
+  string turn_id = 3;
+  string call_id = 4;
+  string name = 5;
+  bytes arguments = 6;
+}
+
+message MethodResult {
+  bool success = 1;
+  bytes output = 2;
+  string error = 3;
+}
+
+message MemoryKey {
+  string session_id = 1;
+  string scope = 2;
+  string name = 3;
+}
+
+message MemoryValue {
+  string text = 1;
+}
+
+message MemoryEntry {
+  MemoryKey key = 1;
+  string text = 2;
+}
+
+message CompleteRequest {
+  string session_id = 1;
+  string run_id = 2;
+  string prompt = 3;
+  string text = 4;
+}
+
+message CompleteResult {
+  string text = 1;
+}
+
+message Notice {
+  string session_id = 1;
+  string run_id = 2;
+  string text = 3;
+}

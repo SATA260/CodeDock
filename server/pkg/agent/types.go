@@ -263,6 +263,7 @@ type ContextSnapshot struct {
 	Tools           []tool.Definition  `json:"tools"`                    // 本轮可见工具定义
 	SystemPrompt    string             `json:"system_prompt"`            // 注入的系统提示（身份段；Compose 再拼工具与 Guidelines）
 	WorkspaceRoot   string             `json:"workspace_root,omitempty"` // 会话冻结的工作目录，写入 Current working directory
+	Hidden          []Message          `json:"hidden,omitempty"`         // 插件注入的隐藏消息，不入库
 	MemoryIndexes   []string           `json:"memory_indexes,omitempty"` // 冻结记忆目录
 	EstimatedTokens int64              `json:"estimated_tokens"`         // 估算 token 数
 	Version         int64              `json:"version"`                  // 快照版本

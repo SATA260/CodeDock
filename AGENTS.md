@@ -12,7 +12,8 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 本机 Codex app-server 生命周期、内存排队/问票/SSE 放在 `server/internal/codex`。不新增 Codex 业务表；凡官方 API 能读到的都不入库。
 - Markdown 记忆（热层目录+专题）与 context message 索引（冷层按工作区 FTS）放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`，不定义 Tool。
 - 具体工具定义放在 `server/internal/agent/tools`。工具名、入参/出参、schema、权限和编排都在本包；Execute 若要调外部能力，只通过 `Ports` 里的接口。Runtime `New` 时由 `cmd/server` 注入 `Ports` 的具体实现，再 `Register`。每个工具只定义入参/出参结构体，执行用 `encoding/json`，schema 从类型推断。`tools` 可 import `memory`，不 import 父包 `internal/agent`。
-- Agent 通用无状态逻辑放在 `server/pkg/agent`：类型、token 统计、提示词、上下文、Tool 抽象（不含具体工具定义）、Agent 配置、模型调用。
+- Agent 通用无状态逻辑放在 `server/pkg/agent`：类型、token 统计、提示词、上下文、Tool 抽象（不含具体工具定义）、Agent 配置、模型调用。六个口的信封放在 `pkg/agent/seam`。
+- 插件 SDK 与 proto 放在 `server/pkg/plugin`；宿主放在 `server/internal/pluginhost`。两者都不进 `pkg/agent`，也不知道主循环内部状态机。可装载的插件放在仓根 `plugin/`（子目录名即插件名）。`plugin/example` 是作者拷贝模板：不订阅、不改正文、不换向、不登记方法。不进 `pkg/plugin`。插件共享参数用 `PluginContext`，不进模型、不复用 Hidden。
 - Git CLI 操作放在 `server/pkg/git`：无状态，不写产品流程；Handler 直接调用。不进 `pkg/agent`。
 - Codex 协议与领域类型放在 `server/pkg/codex`：看板的子模块，JSONL 客户端给 `internal/codex` 调用；不查库、不 spawn CLI。不进 `pkg/agent`。
 - 进程内事件总线放在 `server/internal/events`。
@@ -41,5 +42,11 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 不要把产品工作流放入 `server/pkg`。
 - 前端三层不得反依赖：`core` 不依赖 React / Next / DOM / `process.env`；`ui` 不依赖 `core`；`views` 不 import `next/*`；`apps/web` 只做路由与平台装配。
 - 前端按业务域拆模块，不要 `src/`：`core` / `views` 用同名域目录（现有 `chat` / `git` / `codex`）；`ui` 只用 `components` / `lib` / `styles`。新业务再建目录，不预建空文件夹。
+
+## 注释规则
+
+- 每个函数、方法正上方必须有一行注释，写清它做什么。Go 用文档注释（`// Name ...`），TypeScript 同等要求。不要用注释复述函数名或参数列表。
+- 结构体 / 接口里，单看字段名读不懂含义或取值约定的属性必须加字段注释；`ID`、`Name`、`Content` 这类自明字段不必硬加。
+- 改现有代码时顺手补上缺的注释；sqlc / proto 生成文件不要手改。
 
 当需求变更没有明显的代码归属时，先依据 `docs/architecture.md` 对其分类，再开始编写代码。

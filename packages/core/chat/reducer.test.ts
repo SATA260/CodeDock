@@ -10,6 +10,7 @@ import {
   applyEvent,
   applyLocalCancel,
   applyOptimisticUser,
+  dropOptimisticUser,
   decisionsForApproval,
   emptyState,
   hydrate,
@@ -506,6 +507,13 @@ test("applyLocalCancel clears the executing run", () => {
   const optimistic = state.items.find((item) => item.kind === "user" && item.text === "next");
   assert.ok(optimistic && optimistic.kind === "user");
   assert.equal(optimistic.queued, false);
+});
+
+test("dropOptimisticUser removes a handled local bubble", () => {
+  let state = applyOptimisticUser(emptyState(), { runId: "local:1", text: "/skip" });
+  assert.equal(state.items.length, 1);
+  state = dropOptimisticUser(state, "local:1");
+  assert.equal(state.items.length, 0);
 });
 
 test("optimistic user is replaced when run.created arrives", () => {

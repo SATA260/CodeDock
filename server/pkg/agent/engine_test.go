@@ -6,11 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"codedock/pkg/agent/seam"
 )
 
 type memFacts struct {
@@ -69,6 +74,65 @@ func mustRaw(v any) json.RawMessage {
 		panic(err)
 	}
 	return body
+}
+
+func TestEngineRequestSeamRewritesChat(t *testing.T) {
+	var gotSystem string
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Plugin")
+		body, _ := io.ReadAll(r.Body)
+		var req openaiChatRequest
+		_ = json.Unmarshal(body, &req)
+		if len(req.Messages) > 0 && req.Messages[0].Role == "system" {
+			gotSystem = req.Messages[0].Content
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	engine, _, _ := testEngine(t)
+	engine.SetDispatcher(seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		switch ev.Type {
+		case seam.TypeRequest:
+			var payload RequestPayload
+			_ = json.Unmarshal(ev.Payload, &payload)
+			payload.SystemPrompt = "from-plugin"
+			ev.Payload = MarshalPayload(payload)
+		case seam.TypeStream:
+			var payload StreamPayload
+			_ = json.Unmarshal(ev.Payload, &payload)
+			if payload.Headers == nil {
+				payload.Headers = map[string]string{}
+			}
+			payload.Headers["X-Plugin"] = "1"
+			ev.Payload = MarshalPayload(payload)
+		}
+		return ev, nil
+	}))
+	opts, _ := json.Marshal(map[string]string{"api_key": "sk-test", "base_url": srv.URL})
+	cfg := DefaultRunConfig(WorkAgent, ModelConfig{Provider: "openai", Model: "gpt-test", Options: opts})
+	hist := fakeHistory("run-1", FakeOptions{})
+	hist.Run.Config = cfg
+	got, err := engine.Step(context.Background(), StepInput{
+		State:   AgentState{SessionID: "sess-1", RunID: "run-1", Config: cfg},
+		Job:     StepJob{RunID: "run-1", StepIndex: 1, Phase: PhaseUserInput},
+		History: hist,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Status != RunRunningLLM {
+		t.Fatalf("status=%s", got.State.Status)
+	}
+	if gotSystem != "from-plugin" {
+		t.Fatalf("system=%q", gotSystem)
+	}
+	if gotHeader != "1" {
+		t.Fatalf("header=%q", gotHeader)
+	}
 }
 
 func TestEngineStepCallsDecide(t *testing.T) {

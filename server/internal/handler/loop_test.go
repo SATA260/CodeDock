@@ -3,12 +3,14 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
 	"codedock/internal/handler"
 	pkgagent "codedock/pkg/agent"
+	"codedock/pkg/agent/seam"
 )
 
 func TestLoopPlainText(t *testing.T) {
@@ -238,6 +240,83 @@ func TestLoopModeSmoke(t *testing.T) {
 	}
 }
 
+func TestLoopStartInputHandled(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	f.runtime.SetDispatcher(seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		if ev.Type == seam.TypeInput {
+			ev.Type = seam.TypeInputHandled
+		}
+		return ev, nil
+	}))
+	rec := f.do(t, http.MethodPost, "/sessions/"+sessionID+"/runs", handler.StartRunRequest{
+		Content: "skip me",
+		Mode:    pkgagent.WorkAgent,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handled start %d %s", rec.Code, rec.Body.String())
+	}
+	var resp handler.StartRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Handled || resp.RunID != "" || resp.SessionID != sessionID {
+		t.Fatalf("resp=%+v", resp)
+	}
+	f.runtime.SetDispatcher(nil)
+	second := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "now start",
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+			Turns: []pkgagent.FakeTurn{{Text: "ok"}},
+		}),
+	})
+	f.waitRun(t, second, pkgagent.RunCompleted)
+}
+
+func TestLoopStartInputRewritesContent(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	f.runtime.SetDispatcher(seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		if ev.Type != seam.TypeInput {
+			return ev, nil
+		}
+		var payload pkgagent.InputPayload
+		_ = json.Unmarshal(ev.Payload, &payload)
+		payload.Content = "rewritten"
+		ev.Payload = pkgagent.MarshalPayload(payload)
+		return ev, nil
+	}))
+	runID := f.start(t, sessionID, handler.StartRunRequest{
+		Content: "original",
+		Mode:    pkgagent.WorkAgent,
+		Config: withFake(pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{}), pkgagent.FakeOptions{
+			Turns: []pkgagent.FakeTurn{{Text: "ok"}},
+		}),
+	})
+	f.waitRun(t, runID, pkgagent.RunCompleted)
+	msgs := listMessages(t, f, sessionID, "")
+	if len(msgs.Messages) == 0 || pkgagent.DecodeText(msgs.Messages[0].Content) != "rewritten" {
+		t.Fatalf("messages=%+v", msgs.Messages)
+	}
+}
+
+func TestLoopStartInputDispatchError(t *testing.T) {
+	f := newFixture(t)
+	sessionID := f.createSession(t)
+	f.runtime.SetDispatcher(seam.Func(func(context.Context, seam.Envelope) (seam.Envelope, error) {
+		return seam.Envelope{}, fmt.Errorf("plugin down")
+	}))
+	rec := f.do(t, http.MethodPost, "/sessions/"+sessionID+"/runs", handler.StartRunRequest{
+		Content: "x",
+		Mode:    pkgagent.WorkAgent,
+	})
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLoopStartWhileActiveConflicts 确认已有活跃 Run 时再开一轮 409，但插件 handled 不算冲突。
 func TestLoopStartWhileActiveConflicts(t *testing.T) {
 	f := newFixture(t)
 	sessionID := f.createSession(t)
@@ -256,6 +335,27 @@ func TestLoopStartWhileActiveConflicts(t *testing.T) {
 	})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	f.runtime.SetDispatcher(seam.Func(func(_ context.Context, ev seam.Envelope) (seam.Envelope, error) {
+		if ev.Type == seam.TypeInput {
+			ev.Type = seam.TypeInputHandled
+		}
+		return ev, nil
+	}))
+	handled := f.do(t, http.MethodPost, "/sessions/"+sessionID+"/runs", handler.StartRunRequest{
+		Content: "plugin takes this",
+		Mode:    pkgagent.WorkAgent,
+	})
+	if handled.Code != http.StatusOK {
+		t.Fatalf("handled during active %d %s", handled.Code, handled.Body.String())
+	}
+	var resp handler.StartRunResponse
+	if err := json.Unmarshal(handled.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Handled || resp.RunID != "" {
+		t.Fatalf("handled during active resp=%+v", resp)
 	}
 }
 
