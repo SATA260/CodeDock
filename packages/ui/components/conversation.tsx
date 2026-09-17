@@ -18,12 +18,10 @@ import { Button } from "./ui/button.tsx";
 const LATEST_ANCHOR = 0.7;
 /** 新消息入列后再滚到锚点的时长。 */
 const FOLLOW_MS = 200;
-/** 流式生成时按这个间隔把最新内容拉回锚点。 */
-const STREAM_FOLLOW_MS = 500;
 
 export function Conversation({ className, children, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn("relative flex min-h-0 flex-1 flex-col", className)} {...props}>
+    <div className={cn("relative flex min-h-0 flex-1 flex-col overflow-hidden", className)} {...props}>
       {children}
     </div>
   );
@@ -117,24 +115,33 @@ export function ConversationContent({
 
   useLayoutEffect(() => {
     applyPad();
+  });
+
+  useLayoutEffect(() => {
     if (!skipFollow.current) {
       return;
     }
     goToLatest(0);
-  });
+    skipFollow.current = false;
+  }, [goToLatest, scrollKey]);
 
   useEffect(() => {
     const el = ref.current;
+    const inner = innerRef.current;
     if (!el) {
       return;
     }
-    const ro = new ResizeObserver(() => {
+    const sync = () => {
       applyPad();
       if (following.current && !animating.current) {
         el.scrollTop = targetTop(streaming ? "bottom" : "top");
       }
-    });
+    };
+    const ro = new ResizeObserver(sync);
     ro.observe(el);
+    if (inner) {
+      ro.observe(inner);
+    }
     return () => ro.disconnect();
   }, [applyPad, streaming, targetTop]);
 
@@ -155,19 +162,7 @@ export function ConversationContent({
       cancelAnimationFrame(inner);
       stopAnim();
     };
-  }, [followKey, goToLatest, stopAnim]);
-
-  useEffect(() => {
-    if (!streaming) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      if (following.current) {
-        goToLatest(FOLLOW_MS, "bottom");
-      }
-    }, STREAM_FOLLOW_MS);
-    return () => window.clearInterval(timer);
-  }, [goToLatest, streaming]);
+  }, [followKey, goToLatest, scrollKey, stopAnim]);
 
   useEffect(() => {
     const ended = wasStreaming.current && !streaming;
@@ -198,10 +193,14 @@ export function ConversationContent({
         onPointerDown={() => {
           stopAnim();
         }}
-        className="mx-auto min-h-0 w-full max-w-3xl flex-1 overflow-y-auto"
+        className="min-h-0 w-full flex-1 overflow-y-auto"
         data-conversation-scroll=""
       >
-        <div ref={innerRef} className={cn("flex flex-col gap-5 px-4 py-4", className)} {...props}>
+        <div
+          ref={innerRef}
+          className={cn("mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-4", className)}
+          {...props}
+        >
           {children}
         </div>
       </div>
@@ -222,7 +221,7 @@ export function ConversationContent({
 export function ConversationEmptyState({
   className,
   title = "开始一段对话",
-  description = "在下方输入消息，Agent 的思考与工具会按瀑布展开。",
+  description = "在下方输入消息，Local 的思考与工具会按瀑布展开。",
   icon,
   children,
 }: {

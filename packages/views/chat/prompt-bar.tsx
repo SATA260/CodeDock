@@ -3,6 +3,7 @@
 import type { ApprovalMode, WorkMode } from "@codedock/core/chat";
 import {
   Button,
+  cn,
   PromptInput,
   PromptInputFooter,
   PromptInputSubmit,
@@ -10,10 +11,8 @@ import {
   PromptInputTools,
   isImeConfirm,
 } from "@codedock/ui";
-import { ChevronUp, FolderOpen } from "lucide-react";
+import { ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-
-import { shortWorkspace } from "./lib/format.ts";
 
 const workModes: { value: WorkMode; label: string }[] = [
   { value: "agent", label: "agent" },
@@ -30,26 +29,26 @@ const approvalModes: { value: ApprovalMode; label: string }[] = [
 export function PromptBar({
   running,
   sending,
-  workspace,
-  onPickWorkspace,
-  onClearWorkspace,
   onSend,
   onCancel,
+  className,
 }: {
   running: boolean;
   sending: boolean;
-  workspace?: string;
-  onPickWorkspace?: () => Promise<void>;
-  onClearWorkspace?: () => void;
   onSend: (text: string, mode: WorkMode, approval: ApprovalMode) => Promise<void>;
   onCancel: () => Promise<void>;
+  className?: string;
 }) {
   const [text, setText] = useState("");
   const [mode, setMode] = useState<WorkMode>("agent");
   const [approval, setApproval] = useState<ApprovalMode>("manual");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const keepFocus = () => {
+    inputRef.current?.focus();
+  };
 
   return (
-    <div className="relative z-30 mx-auto w-full max-w-3xl px-4 pb-4">
+    <div className={cn("relative z-30 mx-auto w-full max-w-3xl px-4 pb-4", className)}>
       <PromptInput
         onSend={async (message) => {
           const next = message.text.trim();
@@ -57,41 +56,19 @@ export function PromptBar({
             return;
           }
           setText("");
-          await onSend(next, mode, approval);
+          keepFocus();
+          try {
+            await onSend(next, mode, approval);
+          } finally {
+            keepFocus();
+          }
         }}
       >
-        {onPickWorkspace ? (
-          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
-            <span className="shrink-0 text-xs text-muted-foreground">工作目录</span>
-            <button
-              data-workspace-pick=""
-              type="button"
-              disabled={sending}
-              title={workspace?.trim() || "打开目录选择框"}
-              className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-xs leading-5 text-foreground hover:bg-muted disabled:opacity-50"
-              onClick={() => void onPickWorkspace()}
-            >
-              <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 truncate">
-                {workspace?.trim() ? shortWorkspace(workspace) : "选择目录（默认仓库）"}
-              </span>
-            </button>
-            {workspace?.trim() && onClearWorkspace ? (
-              <button
-                type="button"
-                disabled={sending}
-                className="shrink-0 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-                onClick={onClearWorkspace}
-              >
-                默认
-              </button>
-            ) : null}
-          </div>
-        ) : null}
         <PromptInputTextarea
+          ref={inputRef}
           value={text}
-          disabled={sending}
-          placeholder="给 Agent 发消息…"
+          autoFocus
+          placeholder="给 Local 发消息…"
           onChange={(event) => setText(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.shiftKey || isImeConfirm(event)) {

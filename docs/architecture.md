@@ -7,7 +7,7 @@ Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runt
 ## 总体架构
 
 ```text
-apps/web  (路由 + NEXT_PUBLIC_* + AgentClient / AgentProvider)
+apps/web  (路由 + NEXT_PUBLIC_* + AgentClient / GitClient / CodexClient)
     |
     v
 packages/views  (Chat 壳 / hooks，无 next/*)
@@ -39,6 +39,7 @@ server/internal/agent
     v
 server/pkg/agent
 server/pkg/git
+server/pkg/codex
 ```
 
 `pkg/ai` 已删除。大模型调用放在 `pkg/agent`，由 `ModelConfig` 在方法内创建，不由 Runtime 注入。
@@ -50,18 +51,20 @@ CodeDock/
 ├── apps/
 │   └── web/                     # Next.js 路由与平台装配；不解析 SSE
 ├── packages/
-│   ├── core/                    # 无头业务；按业务域拆（现有 chat/），不要 src/
+│   ├── core/                    # 无头业务；按业务域拆（现有 chat/ git/ codex/），不要 src/
 │   ├── ui/                      # 无业务语义；components / lib / styles，不要 src/
-│   └── views/                   # 组合层；按业务域拆（现有 chat/），不要 src/
+│   └── views/                   # 组合层；按业务域拆（现有 chat/ git/ codex/），不要 src/
 ├── docs/
 ├── data/                    # 运行时文件（sqlite 等），gitignore
 ├── server/
 │   ├── cmd/server/              # 服务启动、配置、Router 和依赖装配
 │   ├── internal/
 │   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel、记忆查看/删除、Git
+│   │   │   └── codex/           # 独立 /codex HTTP 薄桥接
 │   │   ├── agent/               # 运行时编排 + sqlc 持久化
 │   │   │   ├── memory/          # 热层目录+专题，冷层工作区 FTS 索引
 │   │   │   └── tools/           # 具体工具定义：ping、memory_*、编码八工具、plan_*
+│   │   ├── codex/               # 本机 app-server 生命周期与内存排队/问票/SSE
 │   │   ├── events/              # 进程内事件总线
 │   │   ├── config/
 │   │   ├── logger/
@@ -70,6 +73,7 @@ CodeDock/
 │   ├── pkg/
 │   │   ├── agent/               # 全部通用无状态逻辑，含模型调用与 Tool 抽象
 │   │   ├── git/                 # 无状态 Git CLI 操作，供 Handler 直接调用
+│   │   ├── codex/               # 看板的 Codex 子模块：协议客户端与领域类型
 │   │   └── db/                  # Client 与 sqlc 生成代码
 │   ├── migrations/
 │   ├── go.mod
@@ -82,6 +86,8 @@ CodeDock/
 ```text
 cmd/server
   -> internal/handler
+  -> internal/handler/codex
+  -> internal/codex
   -> internal/agent
   -> internal/events
   -> pkg/db
@@ -92,6 +98,15 @@ internal/handler
   -> pkg/git            # 本机 Git CLI 操作
   -> internal/agent     # Worker 领取后的 Loop
   -> internal/agent/memory  # 用户侧记忆响应类型
+
+internal/handler/codex
+  -> internal/codex
+  -> pkg/codex
+
+internal/codex
+  -> pkg/codex          # JSONL 协议客户端；不查库
+  启动本机 `codex app-server --stdio`
+  排队、草稿、问票、SSE 只放内存
 
 internal/agent
   -> pkg/db/sqlite.Queries
@@ -121,9 +136,15 @@ pkg/git
   不依赖 handler、internal、sqlc
   无状态，只 exec 本机 git；不写产品流程
 
+pkg/codex
+  看板的 Codex 子模块：领域类型与 app-server JSONL 协议客户端
+  不依赖 handler、internal、sqlc
+  不查库、不 spawn `codex`；Transport 由 internal/codex 注入
+  不进 pkg/agent
+
 packages/core
   不依赖 React、Next、DOM、process.env、AI SDK
-  按业务域拆目录（chat），不要 src/
+  按业务域拆目录（chat / git / codex），不要 src/
   文件直接落在 packages/core/<domain>/
   baseUrl / userId 由调用方注入
 
@@ -136,12 +157,13 @@ packages/views
   -> packages/core
   -> packages/ui
   不 import next/*
-  按业务域拆目录，与 core 对齐（现有 chat）
-  AgentProvider 在包根注入 client + userId；导航用回调
+  按业务域拆目录，与 core 对齐（现有 chat / git / codex）
+  AgentProvider 在包根注入 client + userId；CodexProvider 注入 CodexClient
+  ChatPage 在新建会话时选择 Agent / Codex 模式；导航用回调
 
 apps/web
   -> packages/views
-  -> packages/core          # 创建 AgentClient
+  -> packages/core          # 创建 AgentClient / GitClient / CodexClient
   -> packages/ui            # 引入 tokens.css
   不直接解析 SSE 或 event type
 ```
@@ -152,7 +174,7 @@ apps/web
 
 承担大部分接口逻辑：
 
-- Session / Message / Usage / Approval 的增删改查。创建 Session 时在本包冻结 `workspace_id`（工作目录）：用户指定的路径必须是已存在目录，否则 400；未指定（空或 `default`）则 `GIT_REPO`，再否则 cwd。不 import `internal/agent/tools`。新对话选目录由 web 弹出目录浏览框。`sessions.summary` 在首次用户消息写入，列表与详情返回
+- Session / Message / Usage / Approval 的增删改查。创建 Session 时在本包冻结 `workspace_id`（工作目录）：用户指定的路径必须是已存在目录，否则 400；未指定（空或 `default`）则 `GIT_REPO`，再否则 cwd。不 import `internal/agent/tools`。新对话选目录由 web 弹出系统目录选择框。`sessions.summary` 在首次用户消息写入，列表与详情返回
 - 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引；List 用 user_id / workspace_id，Get/Delete 用 name 默认目录）
 - SSE：先按 `afterSeq` / `Last-Event-ID` 回放已落库事件，再 `SubscribeAll` 并按 Session 过滤；客户端断开不取消 Run
 - 事件 JSON 回放：`GET /sessions/{id}/event-log`，供前端一次 hydrate，不替代 SSE 直播
@@ -212,6 +234,18 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
   - `fake`：读 `Model.Options` 脚本（多段 text / tool_calls、失败次数、可取消挂起），测试不打外网
   - `openai`：OpenAI 兼容 HTTP（`BaseURL` + API Key）
 
+### `pkg/codex`
+
+看板的 Codex 子模块。领域类型与 `codex app-server` JSONL 协议客户端给看板 / `internal/codex` 调用。不查库、不 spawn CLI。`session_id` 即官方 `thread_id`。不进 `pkg/agent`。
+
+### `internal/codex`
+
+本机 `codex app-server --stdio` 生命周期与内存编排：懒启动、握手、崩溃后不重发当前回合。官方 `thread/list/read` 是历史数据源；排队、附件草稿、问票和 SSE 环只驻进程内。未安装或未授权不能拖垮主服务。
+
+### `internal/handler/codex`
+
+独立 `/codex/*` HTTP 薄桥接。不写 Codex 业务表。
+
 ### `pkg/db`
 
 统一数据库入口。SQLite 已接入 sqlc；Handler 和运行时直接使用 `*sqlite.Queries`。启动时按文件名顺序应用 `migrations/*.sql`。
@@ -222,7 +256,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/core`
 
-跨端无头业务，无 UI。按业务域拆目录，文件直接放在 `packages/core/<domain>/`，不要 `src/`。现有 `chat/`：Session / Message / Run / 审批的 HTTP、SSE、Timeline reducer。有鉴权再加 `auth/`，有记忆再加 `memory/`，Git 前端在 `git/`（`GitClient`，不扩 `AgentClient`）。`baseUrl` / `userId` 由调用方注入。不依赖 React。第一版 thinking 用 Run 状态（`queued` / `loading_context` / `running_llm`），不是模型 reasoning token。
+跨端无头业务，无 UI。按业务域拆目录，文件直接放在 `packages/core/<domain>/`，不要 `src/`。现有 `chat/`：Session / Message / Run / 审批的 HTTP、SSE、Timeline reducer。Git 前端在 `git/`（`GitClient`，不扩 `AgentClient`）。Codex 前端在 `codex/`（`CodexClient`，不扩 `AgentClient`）。`baseUrl` / `userId` 由调用方注入。不依赖 React。第一版 thinking 用 Run 状态（`queued` / `loading_context` / `running_llm`），不是模型 reasoning token。
 
 ### `packages/ui`
 
@@ -236,11 +270,11 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/views`
 
-组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage`、侧栏、瀑布、审批、prompt。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，不进 `AgentContext`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
+组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage`、侧栏、瀑布、审批、prompt；新建会话可选 Agent 或 Codex 模式。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，不进 `AgentContext`。Codex 在 `codex/`：`CodexProvider` 只注入 `CodexClient`，由 `ChatPage` 组合，不单独做 Codex 页。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
 
 ### `apps/web`
 
-路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient`、包 `AgentProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。Git 页在 `(chat)` 组外的 `/git`，只装配 `GitClient`。开发态顶栏（对话 / 仓库）只放 web，views 不知道路径。
+路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient` / `CodexClient`、包 `AgentProvider` / `CodexProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。Git 页在 `(chat)` 组外的 `/git`，只装配 `GitClient`。Codex 不单独路由，走对话页的 `/` 与 `/s/c/:id`。开发态顶栏（对话 / 仓库）只放 web，views 不知道路径。
 
 ## 组装关系
 
@@ -262,7 +296,7 @@ Worker
 
 ## 配置
 
-`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。未设 `DB_DSN` 时 SQLite 写仓根 `data/codedock.db`，不写 `server/`。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
+`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。未设 `DB_DSN` 时 SQLite 写仓根 `data/codedock.db`，不写 `server/`。`CODEX_BIN` 为本机 Codex CLI（默认 `codex`）。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
 
 HTTP 出站领域对象使用 snake_case JSON。Router 只对本地回环 Origin 放行 CORS，便于本机 Web 直连 `:8080`。Web 用 `NEXT_PUBLIC_API_BASE`（默认 `http://localhost:8080`）和 `NEXT_PUBLIC_USER_ID`（默认 `local`）。
 

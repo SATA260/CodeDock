@@ -13,9 +13,11 @@ import (
 
 	"codedock/internal/agent"
 	agenttools "codedock/internal/agent/tools"
+	intcodex "codedock/internal/codex"
 	"codedock/internal/config"
 	"codedock/internal/events"
 	"codedock/internal/handler"
+	codexhttp "codedock/internal/handler/codex"
 	"codedock/internal/logger"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/db"
@@ -65,10 +67,13 @@ func main() {
 
 	defaults := pkgagent.DefaultRunConfig(pkgagent.WorkAgent, model)
 	api := handler.New(client, queries, runtime, bus, defaults, cfg, logger.NewLogger("handler"))
+	codexRT := intcodex.New(intcodex.Options{Bin: cfg.CodexBin})
+	defer func() { _ = codexRT.Close() }()
+	codexAPI := codexhttp.New(codexRT)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           newRouter(log, api),
+		Handler:           newRouter(log, api, codexAPI),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

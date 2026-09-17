@@ -6,7 +6,8 @@
   "exports": {
     ".": "./index.ts",
     "./chat": "./chat/index.ts",
-    "./git": "./git/index.ts"
+    "./git": "./git/index.ts",
+    "./codex": "./codex/index.ts"
   },
   "dependencies": {
     "@codedock/core": "workspace:*",

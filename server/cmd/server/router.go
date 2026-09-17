@@ -5,13 +5,14 @@ import (
 	"net/http"
 
 	"codedock/internal/handler"
+	codexhttp "codedock/internal/handler/codex"
 	"codedock/internal/logger"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// newRouter 注册健康检查与 Session / Run / Approval / Memory / Git 路由。
-func newRouter(log *slog.Logger, api *handler.API) http.Handler {
+// newRouter 注册健康检查、Agent CRUD 与独立 /codex 路由。
+func newRouter(log *slog.Logger, api *handler.API, codexAPI *codexhttp.API) http.Handler {
 	router := chi.NewRouter()
 	router.Use(cors)
 	router.Use(middleware.RequestID)
@@ -85,6 +86,9 @@ func newRouter(log *slog.Logger, api *handler.API) http.Handler {
 			r.Get("/undo", api.GitListUndo)
 			r.Post("/undo", api.GitClickUndo)
 		})
+	}
+	if codexAPI != nil {
+		codexAPI.Mount(router)
 	}
 
 	return router

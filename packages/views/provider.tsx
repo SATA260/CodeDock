@@ -3,21 +3,26 @@
 import type { AgentClient } from "@codedock/core/chat";
 import { createContext, useContext, type ReactNode } from "react";
 
-export type DirectoryEntry = {
-  name: string;
+export type PickedLocalFile = {
   path: string;
+  name: string;
 };
 
-export type DirectoryListing = {
-  path: string;
-  parent?: string;
-  entries: DirectoryEntry[];
+export type PickFilesOptions = {
+  images?: boolean;
+  multiple?: boolean;
+  start?: string;
+};
+
+export type PickDirectoryOptions = {
+  start?: string;
 };
 
 type AgentContextValue = {
   client: AgentClient;
   userId: string;
-  listDirectories?: (path?: string) => Promise<DirectoryListing>;
+  pickDirectory?: (options?: PickDirectoryOptions) => Promise<string | undefined>;
+  pickFiles?: (options?: PickFilesOptions) => Promise<PickedLocalFile[]>;
 };
 
 const AgentContext = createContext<AgentContextValue | null>(null);
@@ -25,16 +30,18 @@ const AgentContext = createContext<AgentContextValue | null>(null);
 export function AgentProvider({
   client,
   userId,
-  listDirectories,
+  pickDirectory,
+  pickFiles,
   children,
 }: {
   client: AgentClient;
   userId: string;
-  listDirectories?: (path?: string) => Promise<DirectoryListing>;
+  pickDirectory?: (options?: PickDirectoryOptions) => Promise<string | undefined>;
+  pickFiles?: (options?: PickFilesOptions) => Promise<PickedLocalFile[]>;
   children: ReactNode;
 }) {
   return (
-    <AgentContext.Provider value={{ client, userId, listDirectories }}>
+    <AgentContext.Provider value={{ client, userId, pickDirectory, pickFiles }}>
       {children}
     </AgentContext.Provider>
   );

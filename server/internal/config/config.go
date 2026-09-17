@@ -20,6 +20,7 @@ type Config struct {
 	GitRepo         string // 默认仓库根；会话未指定工作目录时回落到这里，再否则 cwd
 	LLMConcurrency  int    // 进程内同时进行的模型调用上限；0 表示不限制
 	ToolConcurrency int    // 进程内同时执行的工具调用上限；0 表示不限制
+	CodexBin        string // 本机 Codex CLI；未安装时主服务仍可启动
 }
 
 // Load 从环境变量读取配置，未设置时使用默认值。
@@ -36,6 +37,7 @@ func Load() Config {
 		GitRepo:         env("GIT_REPO", ""),
 		LLMConcurrency:  envInt("LLM_CONCURRENCY", 4),
 		ToolConcurrency: envInt("TOOL_CONCURRENCY", 8),
+		CodexBin:        env("CODEX_BIN", "codex"),
 	}
 }
 

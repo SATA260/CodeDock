@@ -1,10 +1,12 @@
 export {
   AgentProvider,
   useAgent,
-  type DirectoryEntry,
-  type DirectoryListing,
+  type PickedLocalFile,
+  type PickDirectoryOptions,
+  type PickFilesOptions,
 } from "./provider.tsx";
 export { GitPage, GitProvider, useGit, type GitPageProps } from "./git/index.ts";
+export { CodexPane, CodexProvider, useCodex } from "./codex/index.ts";
 export {
   ChatPage,
   ConversationTimeline,
@@ -13,4 +15,6 @@ export {
   useSessionList,
   useSessionTimeline,
   type ChatPageProps,
+  type SessionEngine,
+  type SidebarSession,
 } from "./chat/index.ts";
