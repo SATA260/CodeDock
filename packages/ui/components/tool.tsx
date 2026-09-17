@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDownIcon, WrenchIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "../lib/cn.ts";
 import { formatJSON } from "../lib/json.ts";
@@ -21,6 +21,78 @@ const stateLabel: Record<ToolState, string> = {
   denied: "已拒绝",
 };
 
+type OpenContextValue = {
+  isOpen: boolean;
+};
+
+const ToolGroupContext = createContext<OpenContextValue | null>(null);
+const ToolContext = createContext<OpenContextValue | null>(null);
+
+export function ToolGroup({
+  className,
+  defaultOpen = false,
+  children,
+}: {
+  className?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const value = useMemo(() => ({ isOpen: open }), [open]);
+  return (
+    <ToolGroupContext.Provider value={value}>
+      <Collapsible
+        open={open}
+        onOpenChange={setOpen}
+        className={cn("w-full text-sm leading-5 text-muted-foreground", className)}
+      >
+        {children}
+      </Collapsible>
+    </ToolGroupContext.Provider>
+  );
+}
+
+export function ToolGroupHeader({
+  count,
+  state,
+  className,
+}: {
+  count: number;
+  state: ToolState;
+  className?: string;
+}) {
+  const ctx = useContext(ToolGroupContext);
+  return (
+    <CollapsibleTrigger
+      className={cn(
+        "flex items-center gap-2 text-muted-foreground transition-colors hover:text-accent-foreground",
+        className,
+      )}
+    >
+      <WrenchIcon className="size-3.5" />
+      <span>{count === 1 ? "调用了 1 个工具" : `调用了 ${count} 个工具`}</span>
+      <span className="text-muted-foreground/70">{stateLabel[state]}</span>
+      <ChevronDownIcon
+        className={cn("size-3.5 transition-transform", ctx?.isOpen && "rotate-180")}
+      />
+    </CollapsibleTrigger>
+  );
+}
+
+export function ToolGroupContent({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <CollapsibleContent className={cn("mt-1 space-y-0.5 pl-6", className)}>
+      {children}
+    </CollapsibleContent>
+  );
+}
+
 export function Tool({
   className,
   defaultOpen = false,
@@ -31,14 +103,13 @@ export function Tool({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const value = useMemo(() => ({ isOpen: open }), [open]);
   return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className={cn("w-full rounded-lg border border-border bg-accent/60", className)}
-    >
-      {children}
-    </Collapsible>
+    <ToolContext.Provider value={value}>
+      <Collapsible open={open} onOpenChange={setOpen} className={cn("w-full", className)}>
+        {children}
+      </Collapsible>
+    </ToolContext.Provider>
   );
 }
 
@@ -52,33 +123,40 @@ export function ToolHeader({
   className?: string;
 }) {
   const name = type.startsWith("tool-") ? type.slice(5) : type;
+  const ctx = useContext(ToolContext);
   return (
     <CollapsibleTrigger
       className={cn(
-        "flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:text-accent-foreground",
+        "flex items-center gap-2 py-0.5 text-xs leading-4 text-muted-foreground transition-colors hover:text-accent-foreground",
         className,
       )}
     >
-      <WrenchIcon className="size-3.5" />
       <span className="font-mono text-accent-foreground">{name}</span>
-      <span className="text-muted-foreground">{stateLabel[state]}</span>
-      <ChevronDownIcon className="ml-auto size-3.5" />
+      <span>{stateLabel[state]}</span>
+      <ChevronDownIcon
+        className={cn("size-3.5 transition-transform", ctx?.isOpen && "rotate-180")}
+      />
     </CollapsibleTrigger>
   );
 }
 
 export function ToolContent({ children, className }: { children: ReactNode; className?: string }) {
-  return <CollapsibleContent className={cn("space-y-2 px-3 pb-3", className)}>{children}</CollapsibleContent>;
+  return (
+    <CollapsibleContent className={cn("space-y-1.5 pb-1.5 pt-1", className)}>{children}</CollapsibleContent>
+  );
 }
 
 export function ToolInput({ input }: { input: unknown }) {
   if (input == null) {
-    return null;
+    return <p className="text-[11px] leading-4 text-muted-foreground/70">无参数</p>;
   }
   return (
-    <pre className="overflow-x-auto rounded-md bg-background/50 p-2 font-mono text-xs leading-5 text-muted-foreground">
-      {formatJSON(input)}
-    </pre>
+    <div className="space-y-1">
+      <div className="text-[11px] leading-4 text-muted-foreground/70">参数</div>
+      <pre className="overflow-x-auto rounded-md bg-muted/60 p-2 font-mono text-xs leading-5 text-muted-foreground">
+        {formatJSON(input)}
+      </pre>
+    </div>
   );
 }
 
@@ -90,14 +168,22 @@ export function ToolOutput({
   errorText?: string;
 }) {
   if (errorText) {
-    return <p className="text-xs text-destructive">{errorText}</p>;
+    return (
+      <div className="space-y-1">
+        <div className="text-[11px] leading-4 text-destructive">错误</div>
+        <p className="text-xs leading-5 text-destructive">{errorText}</p>
+      </div>
+    );
   }
   if (output == null) {
     return null;
   }
   return (
-    <pre className="overflow-x-auto rounded-md bg-background/50 p-2 font-mono text-xs leading-5 text-foreground/80">
-      {formatJSON(output)}
-    </pre>
+    <div className="space-y-1">
+      <div className="text-[11px] leading-4 text-muted-foreground/70">输出</div>
+      <pre className="overflow-x-auto rounded-md bg-muted/60 p-2 font-mono text-xs leading-5 text-foreground/80">
+        {formatJSON(output)}
+      </pre>
+    </div>
   );
 }

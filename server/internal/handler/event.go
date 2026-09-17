@@ -123,5 +123,5 @@ func writeSSE(w http.ResponseWriter, ev pkgagent.AgentEvent) {
 	}
 	_, _ = fmt.Fprintf(w, "id: %d\n", ev.Seq)
 	_, _ = fmt.Fprintf(w, "event: %s\n", ev.Type)
-	_, _ = fmt.Fprintf(w, "data: %s\n\n", body)
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", redactJSONSecrets(body))
 }

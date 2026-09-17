@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"codedock/pkg/agent/seam"
 	"codedock/pkg/agent/tool"
 )
 
@@ -25,6 +26,7 @@ type Chat struct {
 	SessionID       string
 	RunID           string
 	TurnID          string
+	Kind            string // 空为普通对话；reviewer 为审批复审
 	Model           ModelConfig
 	SystemPrompt    string
 	Messages        []Message
@@ -32,6 +34,7 @@ type Chat struct {
 	MaxInputTokens  int64
 	MaxOutputTokens int64
 	Attempt         int
+	Dispatcher      seam.Dispatcher
 }
 
 // ModelStreamEvent 是一条模型流事件。

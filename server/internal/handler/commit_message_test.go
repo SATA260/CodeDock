@@ -1,14 +1,15 @@
 package handler
 
 import (
-	"context"
-	"strings"
-	"testing"
-	"time"
-
 	"codedock/internal/config"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/git"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
 )
 
 func TestClassifyPatchAndGeneratedPath(t *testing.T) {
@@ -148,5 +149,66 @@ func TestResolvePrompt(t *testing.T) {
 	}
 	if resolvePrompt(promptStore{Selected: "standard"}) != conventionalCommitPrompt {
 		t.Fatal("old standard maps to conventional")
+	}
+}
+
+func TestCommitDraftHelpers(t *testing.T) {
+	api := &API{cfg: config.Config{LLMProvider: "fake", LLMModel: "fake"}, defaults: pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{Provider: "fake", Model: "fake"})}
+	files := []git.DiffFile{
+		{Path: "a.go", Patch: "@@\n+hello\n" + strings.Repeat("+x\n", 50), Kind: "modified"},
+		{Path: "package-lock.json", Patch: "+lock", Kind: "modified"},
+		{Path: "pic.bin", Binary: true, Kind: "modified"},
+		{Path: "empty.txt", Patch: "  ", Kind: "modified"},
+	}
+	draft := api.generateDraft(context.Background(), git.Repo{}, files)
+	if draft.Title == "" {
+		t.Fatal("fallback title")
+	}
+	if classifyPatch(git.DiffFile{Binary: true}) != "binary" || classifyPatch(git.DiffFile{Path: "yarn.lock"}) != "generated" || classifyPatch(git.DiffFile{}) != "empty" {
+		t.Fatal("classify")
+	}
+	if clipPatch(strings.Repeat("a", 10000), 1) == "" {
+		t.Fatal("clip")
+	}
+	if parseDraft("title only").Title != "title only" || parseDraft("t\nbody").Body != "body" {
+		t.Fatal("parse")
+	}
+	_ = fallbackDraft(nil)
+	_ = fallbackDraft(files)
+	_ = promptConfigFrom(promptStore{Selected: "nope"})
+}
+
+func TestGitOpenNonRepoAndPageErrors(t *testing.T) {
+	api := New(nil, nil, nil, nil, pkgagent.RunConfigSnapshot{}, config.Config{GitRepo: "/no/such/codedock-repo"}, nil)
+	r := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/git/worktrees", nil)
+	api.GitListWorktrees(r, req)
+	req = httptest.NewRequest(http.MethodGet, "/git/graph", nil)
+	api.GitGraph(httptest.NewRecorder(), req)
+	req = httptest.NewRequest(http.MethodGet, "/git/remotes", nil)
+	api.GitListRemotes(httptest.NewRecorder(), req)
+	req = httptest.NewRequest(http.MethodGet, "/sessions?page=abc", nil)
+	if _, err := ParsePageQuery(req, usagePageDefaults); err == nil {
+		t.Fatal("page")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/sessions?page=-1", nil)
+	if _, err := ParsePageQuery(req, usagePageDefaults); err == nil {
+		t.Fatal("neg page")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/sessions?page_size=abc", nil)
+	if _, err := ParsePageQuery(req, usagePageDefaults); err == nil {
+		t.Fatal("size")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/sessions?page_size=-1", nil)
+	if _, err := ParsePageQuery(req, usagePageDefaults); err == nil {
+		t.Fatal("neg size")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/sessions?page_size=1000&sort_by=nope&sort_order=sideways", nil)
+	if _, err := ParsePageQuery(req, usagePageDefaults); err == nil {
+		t.Fatal("sort")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/sessions?page_size=1000&sort_order=asc", nil)
+	if _, err := ParsePageQuery(req, usagePageDefaults); err != nil {
+		t.Fatal(err)
 	}
 }

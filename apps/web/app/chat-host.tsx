@@ -1,21 +1,28 @@
 "use client";
 
-import { ChatPage } from "@codedock/views/chat";
+import { ChatPage, type SessionEngine } from "@codedock/views/chat";
 import { usePathname, useRouter } from "next/navigation";
+
+import { rememberSession } from "@/lib/session";
 
 export function ChatHost() {
   const pathname = usePathname();
   const router = useRouter();
-  const match = pathname.match(/^\/s\/([^/]+)/);
-  const sessionId = match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  const parsed = parseChatPath(pathname);
+  if (parsed.sessionId && parsed.engine === "agent") {
+    rememberSession(parsed.sessionId);
+  }
 
   return (
     <ChatPage
-      sessionId={sessionId}
+      sessionId={parsed.sessionId}
+      engine={parsed.engine}
       brandSrc="/brand/codedock-berth-mark.svg"
-      onOpenSession={(id) => {
-        if (id !== sessionId) {
-          router.push(`/s/${id}`);
+      codexIconSrc="/brand/codex-app-icon.png"
+      onOpenSession={(id, engine = parsed.engine ?? "agent") => {
+        const path = engine === "codex" ? `/s/c/${id}` : `/s/${id}`;
+        if (pathname !== path) {
+          router.push(path);
         }
       }}
       onNewConversation={() => {
@@ -25,4 +32,16 @@ export function ChatHost() {
       }}
     />
   );
+}
+
+function parseChatPath(pathname: string): { sessionId?: string; engine?: SessionEngine } {
+  const codex = pathname.match(/^\/s\/c\/([^/]+)/);
+  if (codex?.[1]) {
+    return { sessionId: decodeURIComponent(codex[1]), engine: "codex" };
+  }
+  const agent = pathname.match(/^\/s\/([^/]+)/);
+  if (agent?.[1] && agent[1] !== "c") {
+    return { sessionId: decodeURIComponent(agent[1]), engine: "agent" };
+  }
+  return {};
 }

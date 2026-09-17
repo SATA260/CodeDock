@@ -2,30 +2,44 @@
 
 import type { Session } from "@codedock/core/chat";
 import { Button, cn } from "@codedock/ui";
-import { PlusIcon } from "lucide-react";
+import { Archive, PlusIcon } from "lucide-react";
 
 import { relativeTime, sessionTitle, shortId } from "./lib/format.ts";
+
+export type SidebarSession = Session & { engine?: "agent" | "codex" };
 
 export function SessionSidebar({
   sessions,
   currentId,
   busy,
   error,
+  hasMore = false,
+  onLoadMore,
   onCreate,
   onSelect,
+  onRecover,
+  onArchive,
+  canRecoverCurrent = false,
   brandSrc,
+  codexIconSrc,
 }: {
-  sessions: Session[];
+  sessions: SidebarSession[];
   currentId?: string;
   busy: boolean;
   error: string | null;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
   onCreate: () => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, engine?: "agent" | "codex") => void;
+  onRecover?: (runId: string) => Promise<void>;
+  onArchive?: (session: SidebarSession) => Promise<void>;
+  canRecoverCurrent?: boolean;
   brandSrc?: string;
+  codexIconSrc?: string;
 }) {
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-background">
-      <div className="flex items-center justify-between gap-2 px-3 py-3">
+      <div className="flex items-center justify-between gap-2 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           {brandSrc ? (
             <img src={brandSrc} alt="" className="size-6 shrink-0" />
@@ -44,32 +58,115 @@ export function SessionSidebar({
         ) : (
           <ul className="space-y-0.5">
             {sessions.map((session) => {
-              const active = session.id === currentId;
+              const engine = session.engine ?? "agent";
+              const rowKey = `${engine}:${session.id}`;
+              const active = rowKey === currentId;
               return (
-                <li key={session.id}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(session.id)}
+                <li key={rowKey}>
+                  <div
                     className={cn(
-                      "w-full rounded-md px-2 py-2 text-left transition-colors",
+                      "group flex w-full items-center gap-1 rounded-md px-2 py-1.5 leading-5 transition-colors",
                       active
                         ? "bg-muted text-foreground"
                         : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                     )}
                   >
-                    <div className="truncate text-sm font-medium">
-                      {sessionTitle(session.id, session.summary)}
-                    </div>
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground/70">
-                      {relativeTime(session.updated_at) || shortId(session.id)}
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(session.id, engine)}
+                      className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                    >
+                      <SessionEngineMark
+                        engine={engine}
+                        brandSrc={brandSrc}
+                        codexIconSrc={codexIconSrc}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
+                          {sessionTitle(session.id, session.summary)}
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs text-muted-foreground/70">
+                          {relativeTime(session.updated_at) || shortId(session.id)}
+                        </span>
+                      </span>
+                    </button>
+                    {engine !== "codex" &&
+                    session.needs_recover &&
+                    session.active_run_id &&
+                    onRecover &&
+                    (rowKey !== currentId || canRecoverCurrent) ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-6 shrink-0 px-2 text-xs"
+                        onClick={() => {
+                          void onRecover(session.active_run_id as string);
+                        }}
+                      >
+                        恢复
+                      </Button>
+                    ) : null}
+                    {onArchive ? (
+                      <button
+                        type="button"
+                        aria-label={`归档 ${sessionTitle(session.id, session.summary)}`}
+                        disabled={busy}
+                        className={cn(
+                          "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/55 transition-colors",
+                          "hover:bg-muted hover:text-foreground",
+                          "opacity-80 group-hover:opacity-100 focus-visible:opacity-100",
+                        )}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void onArchive(session);
+                        }}
+                      >
+                        <Archive className="size-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
                 </li>
               );
             })}
           </ul>
         )}
+        {hasMore && onLoadMore ? (
+          <Button className="mt-2 w-full" size="sm" variant="ghost" onClick={onLoadMore}>
+            加载更多
+          </Button>
+        ) : null}
       </nav>
     </aside>
+  );
+}
+
+function SessionEngineMark({
+  engine,
+  brandSrc,
+  codexIconSrc,
+}: {
+  engine: "agent" | "codex";
+  brandSrc?: string;
+  codexIconSrc?: string;
+}) {
+  if (engine === "codex") {
+    if (!codexIconSrc) {
+      return null;
+    }
+    return (
+      <img
+        src={codexIconSrc}
+        alt="Codex"
+        className="size-8 shrink-0 rounded-[8px] shadow-[0_0_0_1px_rgba(255,255,255,0.28),0_0_12px_rgba(88,122,255,0.55)]"
+      />
+    );
+  }
+  if (!brandSrc) {
+    return null;
+  }
+  return (
+    <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-zinc-800 shadow-[0_0_0_1px_rgba(255,255,255,0.22),0_0_10px_rgba(244,244,245,0.2)]">
+      <img src={brandSrc} alt="Local" className="size-6" />
+    </span>
   );
 }

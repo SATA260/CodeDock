@@ -1,20 +1,28 @@
 "use client";
 
-import type { AgentMode } from "@codedock/core/chat";
+import type { ApprovalMode, WorkMode } from "@codedock/core/chat";
 import {
   Button,
+  cn,
   PromptInput,
   PromptInputFooter,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
+  isImeConfirm,
 } from "@codedock/ui";
 import { ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-const modes: { value: AgentMode; label: string }[] = [
-  { value: "ask_for_approval", label: "manual" },
-  { value: "auto_approve", label: "auto" },
+const workModes: { value: WorkMode; label: string }[] = [
+  { value: "agent", label: "agent" },
+  { value: "ask", label: "ask" },
+  { value: "plan", label: "plan" },
+];
+
+const approvalModes: { value: ApprovalMode; label: string }[] = [
+  { value: "manual", label: "manual" },
+  { value: "auto", label: "auto" },
   { value: "yolo", label: "yolo" },
 ];
 
@@ -23,17 +31,24 @@ export function PromptBar({
   sending,
   onSend,
   onCancel,
+  className,
 }: {
   running: boolean;
   sending: boolean;
-  onSend: (text: string, mode: AgentMode) => Promise<void>;
+  onSend: (text: string, mode: WorkMode, approval: ApprovalMode) => Promise<void>;
   onCancel: () => Promise<void>;
+  className?: string;
 }) {
   const [text, setText] = useState("");
-  const [mode, setMode] = useState<AgentMode>("ask_for_approval");
+  const [mode, setMode] = useState<WorkMode>("agent");
+  const [approval, setApproval] = useState<ApprovalMode>("manual");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const keepFocus = () => {
+    inputRef.current?.focus();
+  };
 
   return (
-    <div className="relative z-30 mx-auto w-full max-w-3xl px-4 pb-4">
+    <div className={cn("relative z-30 mx-auto w-full max-w-3xl px-4 pb-4", className)}>
       <PromptInput
         onSend={async (message) => {
           const next = message.text.trim();
@@ -41,24 +56,32 @@ export function PromptBar({
             return;
           }
           setText("");
-          await onSend(next, mode);
+          keepFocus();
+          try {
+            await onSend(next, mode, approval);
+          } finally {
+            keepFocus();
+          }
         }}
       >
         <PromptInputTextarea
+          ref={inputRef}
           value={text}
-          disabled={sending}
-          placeholder="给 Agent 发消息…"
+          autoFocus
+          placeholder="给 Local 发消息…"
           onChange={(event) => setText(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
+            if (event.key !== "Enter" || event.shiftKey || isImeConfirm(event)) {
+              return;
             }
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
           }}
         />
         <PromptInputFooter>
           <PromptInputTools>
-            <ModeMenu value={mode} onChange={setMode} />
+            <ChoiceMenu value={mode} options={workModes} onChange={setMode} />
+            <ChoiceMenu value={approval} options={approvalModes} onChange={setApproval} />
             {running ? (
               <Button size="sm" variant="outline" onClick={() => void onCancel()}>
                 取消
@@ -75,16 +98,18 @@ export function PromptBar({
   );
 }
 
-function ModeMenu({
+function ChoiceMenu<T extends string>({
   value,
+  options,
   onChange,
 }: {
-  value: AgentMode;
-  onChange: (mode: AgentMode) => void;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const current = modes.find((item) => item.value === value)?.label ?? "manual";
+  const current = options.find((item) => item.value === value)?.label ?? value;
 
   useEffect(() => {
     if (!open) {
@@ -125,7 +150,7 @@ function ModeMenu({
           className="absolute bottom-full left-0 z-50 mb-1 min-w-28 overflow-hidden rounded-md border border-border bg-zinc-900 p-1 shadow-lg"
           role="listbox"
         >
-          {modes.map((item) => (
+          {options.map((item) => (
             <button
               key={item.value}
               type="button"

@@ -1,7 +1,12 @@
 .env
 .env.local
+/data/
 *.db
+*.db-shm
+*.db-wal
 tmp/
+/plugin/*/*
+!/plugin/*/*.*
 .DS_Store
 node_modules
 .pnpm-store

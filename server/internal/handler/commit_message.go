@@ -160,7 +160,7 @@ func (a *API) resolvedPrompt(repo git.Repo) string {
 
 // GitGetPrompt 读本仓生成说明用的提示词整局。
 func (a *API) GitGetPrompt(w http.ResponseWriter, r *http.Request) {
-	repo, _, err := a.openSite(r.URL.Query().Get("checkout"))
+	repo, _, err := a.openSite(r, r.URL.Query().Get("checkout"))
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -179,7 +179,7 @@ func (a *API) GitSetPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, cderr.Invalid("unknown prompt id"))
 		return
 	}
-	repo, _, err := a.openSite("")
+	repo, _, err := a.openSite(r, "")
 	if err != nil {
 		writeGitError(w, err)
 		return
@@ -199,7 +199,7 @@ func (a *API) GitGenerateMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	repo, co, err := a.openSite(req.Checkout)
+	repo, co, err := a.openSite(r, req.Checkout)
 	if err != nil {
 		writeGitError(w, err)
 		return

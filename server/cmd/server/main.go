@@ -13,10 +13,13 @@ import (
 
 	"codedock/internal/agent"
 	agenttools "codedock/internal/agent/tools"
+	intcodex "codedock/internal/codex"
 	"codedock/internal/config"
 	"codedock/internal/events"
 	"codedock/internal/handler"
+	codexhttp "codedock/internal/handler/codex"
 	"codedock/internal/logger"
+	"codedock/internal/pluginhost"
 	pkgagent "codedock/pkg/agent"
 	"codedock/pkg/db"
 )
@@ -55,16 +58,49 @@ func main() {
 		Model:    cfg.LLMModel,
 		Options:  modelOptions(cfg),
 	}
-	runtime := agent.New(client, queries, bus, nil, logger.NewLogger("agent"), agenttools.Ports{})
+	runtime := agent.New(client, queries, bus, nil, logger.NewLogger("agent"), agenttools.Ports{
+		WorkspaceRoot: cfg.DefaultRoot(), // 进程回落；会话工作区由 Handler 创建时冻结
+	})
 	runtime.SetModel(model)
+	runtime.SetConcurrency(cfg.LLMConcurrency, cfg.ToolConcurrency)
+	log.Info("concurrency", "llm", cfg.LLMConcurrency, "tool", cfg.ToolConcurrency)
+
+	var pluginHost *pluginhost.Host
+	if cfg.PluginDir != "" {
+		host, err := pluginhost.Load(ctx, pluginhost.Options{
+			Dir:      cfg.PluginDir,
+			Timeout:  cfg.PluginRPCTimeout,
+			Registry: runtime.Tools(),
+			Queries:  queries,
+			Model:    model,
+			Log:      logger.NewLogger("plugin"),
+		})
+		if err != nil {
+			log.Error("load plugins", "error", err)
+			os.Exit(1)
+		}
+		pluginHost = host
+		if pluginHost != nil {
+			runtime.SetDispatcher(pluginHost)
+			pluginHost.Attach(bus)
+			log.Info("plugins loaded", "dir", cfg.PluginDir)
+		}
+	}
+	if pluginHost != nil {
+		defer func() { _ = pluginHost.Close() }()
+	}
+
 	runtime.Start(ctx)
 
-	defaults := pkgagent.DefaultRunConfig(pkgagent.ModeAskForApproval, model)
+	defaults := pkgagent.DefaultRunConfig(pkgagent.WorkAgent, model)
 	api := handler.New(client, queries, runtime, bus, defaults, cfg, logger.NewLogger("handler"))
+	codexRT := intcodex.New(intcodex.Options{Bin: cfg.CodexBin})
+	defer func() { _ = codexRT.Close() }()
+	codexAPI := codexhttp.New(codexRT)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           newRouter(log, api),
+		Handler:           newRouter(log, api, codexAPI),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

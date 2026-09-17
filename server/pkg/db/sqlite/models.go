@@ -82,6 +82,13 @@ type Run struct {
 	FinishedAt       sql.NullString
 }
 
+type RunOverlay struct {
+	RunID        string
+	SystemPrompt string
+	Hidden       string
+	UpdatedAt    string
+}
+
 type RunToolCheckpoint struct {
 	RunID          string
 	TurnID         string
@@ -120,6 +127,17 @@ type SessionLease struct {
 	FencingToken int64
 	HeartbeatAt  string
 	ExpiresAt    string
+}
+
+type StepJob struct {
+	RunID     string
+	StepIndex int64
+	Phase     string
+	Payload   string
+	Status    string
+	Attempt   int64
+	CreatedAt string
+	UpdatedAt string
 }
 
 type TextMemory struct {

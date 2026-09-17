@@ -49,10 +49,17 @@ func streamFake(ctx context.Context, chat Chat) (ModelStream, error) {
 	return emitStream(ctx, chat, text, calls, usage, opts.Hang), nil
 }
 
-// assistantTurns 统计历史中的助手消息数，用来选取 fake 脚本的第几轮。
+// assistantTurns 统计当前用户消息之后的助手条数，用来选取 fake 脚本的第几轮。
+// 只数最后一条 user 之后的 assistant，这样同一会话连续多轮 Run 各自从 Turns[0] 开始。
 func assistantTurns(messages []Message) int {
+	start := 0
+	for i, msg := range messages {
+		if msg.Role == RoleUser {
+			start = i + 1
+		}
+	}
 	count := 0
-	for _, msg := range messages {
+	for _, msg := range messages[start:] {
 		if msg.Role == RoleAssistant {
 			count++
 		}

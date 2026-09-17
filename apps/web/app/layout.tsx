@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "CodeDock",
-  description: "Agent 对话工作台",
+  description: "Local 对话工作台",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

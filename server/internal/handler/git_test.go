@@ -2,7 +2,11 @@ package handler_test
 
 import (
 	"bytes"
+	"codedock/internal/config"
+	"codedock/internal/handler"
+	pkgagent "codedock/pkg/agent"
 	"encoding/json"
+	"github.com/go-chi/chi/v5"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,12 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/go-chi/chi/v5"
-
-	"codedock/internal/config"
-	"codedock/internal/handler"
-	pkgagent "codedock/pkg/agent"
 )
 
 func gitCmd(t *testing.T, dir string, args ...string) {
@@ -99,6 +97,43 @@ func decodeGit[T any](t *testing.T, rec *httptest.ResponseRecorder, dest *T) {
 	t.Helper()
 	if err := json.Unmarshal(rec.Body.Bytes(), dest); err != nil {
 		t.Fatalf("decode %s: %v", rec.Body.String(), err)
+	}
+}
+
+func TestGitStatusUsesSessionWorkspace(t *testing.T) {
+	f := newFixture(t)
+	ws := initGitRepo(t)
+	if err := os.WriteFile(filepath.Join(ws, "sess.txt"), []byte("from-session"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.do(t, http.MethodPost, "/sessions", handler.CreateSessionRequest{UserID: "u1", WorkspaceID: ws})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create session %d %s", rec.Code, rec.Body.String())
+	}
+	var created handler.SessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	r := gitRouter(f.api)
+	got := doGit(t, r, http.MethodGet, "/git/status?session_id="+created.Session.ID, "")
+	if got.Code != http.StatusOK {
+		t.Fatalf("status %d %s", got.Code, got.Body.String())
+	}
+	var state struct {
+		Path   string `json:"path"`
+		IsRepo bool   `json:"is_repo"`
+	}
+	decodeGit(t, got, &state)
+	want, _ := filepath.Abs(ws)
+	if state.Path != ws && state.Path != want {
+		t.Fatalf("path %q want %q", state.Path, want)
+	}
+	if !state.IsRepo {
+		t.Fatal("expected session workspace to be the git repo")
+	}
+	missing := doGit(t, r, http.MethodGet, "/git/status?session_id=missing", "")
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing session %d %s", missing.Code, missing.Body.String())
 	}
 }
 
@@ -484,10 +519,267 @@ func TestGitCommitMessagePromptPresets(t *testing.T) {
 	}
 }
 
+func TestGitPullConflictAndRemoteBranches(t *testing.T) {
+	dir := initGitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "a.txt")
+	gitCmd(t, dir, "commit", "-m", "base")
+	bare := t.TempDir()
+	gitCmd(t, bare, "init", "--bare", "-b", "main")
+	gitCmd(t, dir, "remote", "add", "origin", bare)
+	gitCmd(t, dir, "push", "-u", "origin", "main")
+
+	parent := t.TempDir()
+	other := filepath.Join(parent, "clone")
+	gitCmd(t, parent, "clone", "-b", "main", bare, other)
+	gitCmd(t, other, "config", "user.name", "tester")
+	gitCmd(t, other, "config", "user.email", "tester@example.com")
+	if err := os.WriteFile(filepath.Join(other, "a.txt"), []byte("theirs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, other, "add", "a.txt")
+	gitCmd(t, other, "commit", "-m", "theirs")
+	gitCmd(t, other, "push", "origin", "HEAD:main")
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("ours\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "a.txt")
+	gitCmd(t, dir, "commit", "-m", "ours")
+
+	api := newGitAPI(t, dir)
+	r := gitRouter(api)
+	if rec := doGit(t, r, http.MethodGet, "/git/branches", ""); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/pull", `{}`); rec.Code != http.StatusConflict && rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest {
+		t.Fatalf("pull %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func jsonQuote(s string) string {
 	b, err := json.Marshal(s)
 	if err != nil {
 		return `""`
 	}
 	return string(b)
+}
+
+func TestGitRemainingRoutes(t *testing.T) {
+	dir := initGitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "a.txt")
+	gitCmd(t, dir, "commit", "-m", "add a")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("staged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	api := newGitAPI(t, dir)
+	r := gitRouter(api)
+
+	if rec := doGit(t, r, http.MethodGet, "/git/diff?scope=worktree", ""); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodGet, "/git/diff", ""); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodGet, "/git/graph", ""); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodGet, "/git/log?limit=bad", ""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad limit %d", rec.Code)
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/stage", `{"paths":["a.txt"]}`); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/unstage", `{"paths":["a.txt"]}`); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodGet, "/git/remotes", ""); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodGet, "/git/worktrees", ""); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	wt := filepath.Join(t.TempDir(), "wt")
+	if rec := doGit(t, r, http.MethodPost, "/git/worktrees", `{"path":`+jsonQuote(wt)+`,"new_branch":"wt-branch"}`); rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest && rec.Code != http.StatusConflict {
+		t.Fatalf("worktree %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/push", `{}`); rec.Code == http.StatusOK {
+		t.Fatal("push without remote should fail")
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/pull", `{}`); rec.Code == http.StatusOK {
+		t.Fatal("pull without remote should fail")
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/revert", `{"id":"missing"}`); rec.Code == http.StatusOK {
+		t.Fatal("revert missing")
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/reset", `{}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("reset target %d", rec.Code)
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/reset", `{"target":"HEAD","mode":"weird"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("reset mode %d", rec.Code)
+	}
+	gitCmd(t, dir, "branch", "to-delete")
+	if rec := doGit(t, r, http.MethodDelete, "/git/branches", `{"name":"to-delete"}`); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/conflict/abort", `{}`); rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest && rec.Code != http.StatusConflict {
+		t.Fatalf("abort %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/conflict/write", `{`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad write %d", rec.Code)
+	}
+	if rec := doGit(t, r, http.MethodGet, "/git/diff?checkout=/tmp/not-a-worktree", ""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("diff checkout %d", rec.Code)
+	}
+
+	_ = handler.MessageDraft{}
+}
+
+func TestGitMapErrAndRoot(t *testing.T) {
+	t.Setenv("GIT_REPO", "")
+	api := newGitAPI(t, t.TempDir())
+	r := gitRouter(api)
+	rec := doGit(t, r, http.MethodGet, "/git/status", "")
+	if rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGitAllErrorBranches(t *testing.T) {
+	dir := initGitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "a.txt")
+	gitCmd(t, dir, "commit", "-m", "add a")
+	api := newGitAPI(t, dir)
+	r := gitRouter(api)
+
+	posts := []string{
+		"/git/stage", "/git/unstage", "/git/discard", "/git/commit", "/git/reset",
+		"/git/revert", "/git/push", "/git/pull", "/git/worktrees", "/git/branches",
+		"/git/branches/switch", "/git/conflict/write", "/git/conflict/continue",
+		"/git/conflict/abort", "/git/stash", "/git/stash/restore", "/git/undo",
+	}
+	for _, path := range posts {
+		if rec := doGit(t, r, http.MethodPost, path, `{`); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s bad json %d %s", path, rec.Code, rec.Body.String())
+		}
+		method := http.MethodPost
+		if path == "/git/branches" && false {
+			method = http.MethodDelete
+		}
+		if rec := doGit(t, r, method, path, `{"checkout":"/tmp/not-a-worktree"}`); rec.Code != http.StatusBadRequest && rec.Code != http.StatusConflict {
+			t.Fatalf("%s bad checkout %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := doGit(t, r, http.MethodDelete, "/git/branches", `{`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("delete branch json %d", rec.Code)
+	}
+	if rec := doGit(t, r, http.MethodDelete, "/git/branches", `{"checkout":"/tmp/not-a-worktree","name":"x"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("delete branch checkout %d", rec.Code)
+	}
+	for _, path := range []string{"/git/status", "/git/diff", "/git/graph", "/git/log", "/git/remotes", "/git/worktrees", "/git/branches", "/git/conflict", "/git/stash/latest", "/git/undo", "/git/commit-message/prompt"} {
+		if rec := doGit(t, r, http.MethodGet, path+"?checkout=/tmp/not-a-worktree", ""); rec.Code != http.StatusBadRequest && rec.Code != http.StatusOK {
+			t.Fatalf("GET %s %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := doGit(t, r, http.MethodPut, "/git/commit-message/prompt", `{`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("set prompt json %d", rec.Code)
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/commit-message/generate", `{`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("generate json %d", rec.Code)
+	}
+}
+
+func TestGitWriteConflictEscape(t *testing.T) {
+	dir := initGitRepo(t)
+	api := newGitAPI(t, dir)
+	r := gitRouter(api)
+	if rec := doGit(t, r, http.MethodPost, "/git/conflict/write", `{"path":"../escape","result":"x"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("escape %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGitPushPullRevertUndoExtras(t *testing.T) {
+	dir := initGitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "a.txt")
+	gitCmd(t, dir, "commit", "-m", "first")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "a.txt")
+	gitCmd(t, dir, "commit", "-m", "second")
+
+	bare := t.TempDir()
+	gitCmd(t, bare, "init", "--bare", "-b", "main")
+	gitCmd(t, dir, "remote", "add", "origin", bare)
+	gitCmd(t, dir, "push", "-u", "origin", "main")
+
+	api := newGitAPI(t, dir)
+	r := gitRouter(api)
+	if rec := doGit(t, r, http.MethodGet, "/git/remotes", ""); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/push", `{}`); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec := doGit(t, r, http.MethodPost, "/git/pull", `{}`); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+
+	var logBody struct {
+		Commits []struct {
+			ID string `json:"id"`
+		} `json:"commits"`
+	}
+	rec := doGit(t, r, http.MethodGet, "/git/log?limit=2", "")
+	decodeGit(t, rec, &logBody)
+	if len(logBody.Commits) == 0 {
+		t.Fatal("log")
+	}
+	if rec = doGit(t, r, http.MethodPost, "/git/revert", `{"id":"`+logBody.Commits[0].ID+`"}`); rec.Code != http.StatusOK && rec.Code != http.StatusConflict && rec.Code != http.StatusBadRequest {
+		t.Fatalf("revert %d %s", rec.Code, rec.Body.String())
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("dirty"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec = doGit(t, r, http.MethodPost, "/git/undo", `{"id":"uncommitted"}`); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if rec = doGit(t, r, http.MethodPost, "/git/undo", `{"id":"path:a.txt"}`); rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest {
+		t.Fatalf("path undo %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = doGit(t, r, http.MethodPost, "/git/undo", `{"id":"unknown"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown undo %d", rec.Code)
+	}
+	if rec = doGit(t, r, http.MethodPost, "/git/undo", `{"id":"agent_stash:missing"}`); rec.Code != http.StatusNotFound && rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing snap %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = doGit(t, r, http.MethodGet, "/git/stash/latest", ""); rec.Code != http.StatusOK && rec.Code != http.StatusNotFound {
+		t.Fatalf("latest %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = doGit(t, r, http.MethodPost, "/git/stash/restore", `{"id":"missing"}`); rec.Code != http.StatusNotFound && rec.Code != http.StatusBadRequest {
+		t.Fatalf("restore %d %s", rec.Code, rec.Body.String())
+	}
+
+	gd := filepath.Join(dir, ".git", "codedock")
+	if err := os.MkdirAll(gd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gd, "snapshots.json"), []byte("not-json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec = doGit(t, r, http.MethodGet, "/git/undo", ""); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
 }

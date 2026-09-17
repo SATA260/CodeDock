@@ -24,15 +24,30 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: server/go.mod
-          cache-dependency-path: server/go.sum
+          cache-dependency-path: |
+            server/go.sum
+            plugin/example/go.sum
+            plugin/redact/go.sum
 
       - name: Lint
         run: |
-          test -z "$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
+          test -z "$(gofmt -l . ../plugin)" || { echo "gofmt needed:"; gofmt -l . ../plugin; exit 1; }
           go vet ./...
 
       - name: Test
-        run: go test ./...
+        run: |
+          go test ./...
+          (cd ../plugin/redact && go test .)
+
+      - name: Codex coverage
+        run: |
+          go test -covermode=atomic -coverprofile=/tmp/codex.out \
+            -coverpkg=codedock/pkg/codex,codedock/internal/codex,codedock/internal/handler/codex \
+            ./pkg/codex ./internal/codex ./internal/handler/codex
+          total=$(go tool cover -func=/tmp/codex.out | awk '/^total:/ {print $3}' | tr -d '%')
+          echo "codex coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { if (t+0 < 85) { print "codex coverage below 85%"; exit 1 } }'
+
 
       - name: Build
         run: go build -o /tmp/codedock ./cmd/server
@@ -42,7 +57,7 @@ jobs:
           HTTP_ADDR: :18080
           LLM_PROVIDER: fake
           LLM_MODEL: fake
-          DB_DSN: file:ci.db
+          DB_DSN: file:../data/ci.db
           LOG_LEVEL: info
         run: |
           set -euo pipefail

@@ -3,7 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestLoadDefaults 校验未设置环境变量时的默认配置。
@@ -17,6 +19,9 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "")
 	t.Setenv("LLM_BASE_URL", "")
 	t.Setenv("GIT_REPO", "")
+	t.Setenv("PLUGIN_DIR", "")
+	t.Setenv("PLUGIN_RPC_TIMEOUT", "")
+	t.Setenv("CODEX_BIN", "")
 
 	cfg := Load()
 	if cfg.HTTPAddr != ":8080" {
@@ -28,8 +33,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DBEngine != "sqlite" {
 		t.Fatalf("DBEngine = %q, want sqlite", cfg.DBEngine)
 	}
-	if cfg.DBDSN != "file:codedock.db" {
-		t.Fatalf("DBDSN = %q, want file:codedock.db", cfg.DBDSN)
+	wantSuffix := filepath.Join("data", "codedock.db")
+	if !strings.HasPrefix(cfg.DBDSN, "file:") || !strings.HasSuffix(cfg.DBDSN, wantSuffix) {
+		t.Fatalf("DBDSN = %q, want file:.../%s", cfg.DBDSN, wantSuffix)
 	}
 	if cfg.LLMProvider != "fake" {
 		t.Fatalf("LLMProvider = %q, want fake", cfg.LLMProvider)
@@ -39,6 +45,21 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.GitRepo != "" {
 		t.Fatalf("GitRepo = %q, want empty", cfg.GitRepo)
+	}
+	if cfg.LLMConcurrency != 4 {
+		t.Fatalf("LLMConcurrency = %d, want 4", cfg.LLMConcurrency)
+	}
+	if cfg.ToolConcurrency != 8 {
+		t.Fatalf("ToolConcurrency = %d, want 8", cfg.ToolConcurrency)
+	}
+	if cfg.PluginDir != "" {
+		t.Fatalf("PluginDir = %q, want empty", cfg.PluginDir)
+	}
+	if cfg.PluginRPCTimeout != 10*time.Second {
+		t.Fatalf("PluginRPCTimeout = %s, want 10s", cfg.PluginRPCTimeout)
+	}
+	if cfg.CodexBin != "codex" {
+		t.Fatalf("CodexBin = %q, want codex", cfg.CodexBin)
 	}
 }
 
@@ -53,6 +74,9 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "sk-test")
 	t.Setenv("LLM_BASE_URL", "https://api.example.com/v1")
 	t.Setenv("GIT_REPO", "/tmp/repo")
+	t.Setenv("PLUGIN_DIR", "/tmp/plugins")
+	t.Setenv("PLUGIN_RPC_TIMEOUT", "2s")
+	t.Setenv("CODEX_BIN", "/usr/local/bin/codex")
 
 	cfg := Load()
 	if cfg.HTTPAddr != ":9090" || cfg.LogLevel != "info" || cfg.DBEngine != "postgres" || cfg.DBDSN != "postgres://localhost" {
@@ -63,6 +87,34 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.GitRepo != "/tmp/repo" {
 		t.Fatalf("GitRepo = %q, want /tmp/repo", cfg.GitRepo)
+	}
+	if cfg.PluginDir != "/tmp/plugins" || cfg.PluginRPCTimeout != 2*time.Second {
+		t.Fatalf("plugin cfg = %+v", cfg)
+	}
+	if cfg.CodexBin != "/usr/local/bin/codex" {
+		t.Fatalf("CodexBin = %q, want /usr/local/bin/codex", cfg.CodexBin)
+	}
+}
+
+func TestDataDir(t *testing.T) {
+	got := DataDir()
+	if !strings.HasSuffix(got, string(filepath.Separator)+"data") && !strings.HasSuffix(got, "/data") {
+		t.Fatalf("DataDir() = %q, want .../data", got)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(got), "pnpm-workspace.yaml")); err != nil {
+		t.Fatalf("DataDir parent is not repo root: %v", err)
+	}
+}
+
+func TestDefaultRoot(t *testing.T) {
+	dir := t.TempDir()
+	got := Config{GitRepo: dir}.DefaultRoot()
+	want, _ := filepath.Abs(dir)
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if (Config{}).DefaultRoot() == "" {
+		t.Fatal("empty git repo should fall back to cwd")
 	}
 }
 

@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
+
+	"codedock/pkg/agent/seam"
 )
 
 // Dispatch 按权限与审批策略调度工具调用。
@@ -48,9 +51,10 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 			})
 			continue
 		}
-		item, wait := prepareCall(inv, call, approved)
+		item, wait, updated := prepareCall(ctx, inv, call, approved)
+		inv.Calls[i] = updated
 		if wait {
-			approvalCalls = append(approvalCalls, call)
+			approvalCalls = append(approvalCalls, updated)
 			continue
 		}
 		prepared = append(prepared, item)
@@ -83,24 +87,151 @@ type preparedCall struct {
 }
 
 // prepareCall 查找工具并做参数、权限、审批校验；wait=true 表示需先审批。
-// 查不到、参数错、权限不足都写成失败 Result，不返回 error。
-func prepareCall(inv Invocation, call Call, approved map[string]struct{}) (preparedCall, bool) {
+// 查不到、参数错、权限不足、插件否决都写成失败 Result，不返回 error。
+// 未批准的调用在流水线之后再走 tools/pre-execute，可改参、否决或抬到审批。
+func prepareCall(ctx context.Context, inv Invocation, call Call, approved map[string]struct{}) (preparedCall, bool, Call) {
 	emit(inv, "call_started", call, max(1, call.Attempt), nil)
 	item, err := inv.Registry.Get(Reference{Name: call.Name})
 	if err != nil {
-		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
+		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false, call
 	}
 	def := item.Definition()
-	if err := validateArguments(def, call.Arguments); err != nil {
-		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
+	bound := Bound(inv.BoundNames, call.Name)
+	toolInput := Input{
+		SessionID:     inv.SessionID,
+		RunID:         inv.RunID,
+		TurnID:        inv.TurnID,
+		WorkspaceRoot: inv.WorkspaceRoot,
+		Call:          call,
 	}
-	if err := checkPermission(inv.PermissionPolicy, inv.AgentMode, def); err != nil {
-		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false
+	inspectErr := validateArguments(def, call.Arguments)
+	outside := false
+	if inspectErr == nil {
+		if inspector, ok := item.(Inspector); ok {
+			inspectErr = inspector.Inspect(ctx, toolInput)
+			if errors.Is(inspectErr, ErrOutsideWorkspace) {
+				outside = true
+				inspectErr = nil
+			}
+		}
 	}
-	if requiresApproval(inv.AgentMode, inv.ApprovalPolicy, def, call.ID, approved) {
-		return preparedCall{}, true
+	defaultEffect := def.Permission.Effect
+	if resolver, ok := item.(EffectResolver); ok {
+		if resolved := resolver.ResolveEffect(ctx, toolInput); resolved == EffectAllow || resolved == EffectAsk {
+			defaultEffect = resolved
+		}
 	}
-	return preparedCall{call: call, tool: item}, false
+	_, hasAgent := inv.Effects[def.Name]
+	_, already := approved[call.ID]
+	effect := Pipeline(PipelineInput{
+		Default:          defaultEffect,
+		InspectErr:       inspectErr,
+		Bound:            bound,
+		OutsideWorkspace: outside,
+		AgentEffect:      inv.Effects[def.Name],
+		HasAgentEffect:   hasAgent,
+		Approval:         inv.Approval,
+		Approved:         already,
+	})
+	if effect == EffectDeny {
+		msg := "permission denied"
+		if !bound {
+			msg = "tool is not bound"
+		}
+		if inspectErr != nil {
+			msg = inspectErr.Error()
+		}
+		return preparedCall{call: call, result: failResult(call, msg), skip: true}, false, call
+	}
+	if !already {
+		updated, denied, ask := applyPreExecute(ctx, inv, call)
+		call = updated
+		if denied {
+			return preparedCall{call: call, result: failResult(call, "denied by plugin"), skip: true}, false, call
+		}
+		if ask {
+			return preparedCall{}, true, call
+		}
+	}
+	if effect == EffectAsk {
+		return preparedCall{}, true, call
+	}
+	return preparedCall{call: call, tool: item}, false, call
+}
+
+// applyPreExecute 在审批判断前递工具入参。已批准的调用不会走到这里。
+func applyPreExecute(ctx context.Context, inv Invocation, call Call) (Call, bool, bool) {
+	ev, err := seam.Dispatch(ctx, inv.Dispatcher, seam.Envelope{
+		Type:      seam.TypePreExecute,
+		SessionID: inv.SessionID,
+		RunID:     inv.RunID,
+		TurnID:    inv.TurnID,
+		Payload:   mustJSON(PreExecutePayload{Call: call}),
+	})
+	if err != nil {
+		slog.Warn("tools/pre-execute dispatch failed", "run_id", inv.RunID, "call_id", call.ID, "error", err)
+		return call, true, false
+	}
+	updated := call
+	if ev.Type == seam.TypePreExecute || ev.Type == seam.TypeToolsAsk {
+		if len(ev.Payload) > 0 {
+			var payload PreExecutePayload
+			if err := json.Unmarshal(ev.Payload, &payload); err == nil {
+				if payload.Call.ID == "" {
+					payload.Call.ID = call.ID
+				}
+				if payload.Call.Name == "" {
+					payload.Call.Name = call.Name
+				}
+				updated = payload.Call
+			}
+		}
+	}
+	switch ev.Type {
+	case seam.TypeToolsDenied:
+		return call, true, false
+	case seam.TypeToolsAsk:
+		return updated, false, true
+	default:
+		return updated, false, false
+	}
+}
+
+func mustJSON(v any) json.RawMessage {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return body
+}
+
+// applyPostExecute 在写结果前递工具结果；出错保留原结果。
+func applyPostExecute(ctx context.Context, inv Invocation, call Call, result Result) Result {
+	ev, err := seam.Dispatch(ctx, inv.Dispatcher, seam.Envelope{
+		Type:      seam.TypePostExecute,
+		SessionID: inv.SessionID,
+		RunID:     inv.RunID,
+		TurnID:    inv.TurnID,
+		Payload:   mustJSON(PostExecutePayload{Call: call, Result: result}),
+	})
+	if err != nil {
+		slog.Warn("tools/post-execute dispatch failed", "run_id", inv.RunID, "call_id", call.ID, "error", err)
+		return result
+	}
+	if ev.Type != seam.TypePostExecute || len(ev.Payload) == 0 {
+		return result
+	}
+	var payload PostExecutePayload
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+		return result
+	}
+	if payload.Result.CallID == "" {
+		payload.Result.CallID = result.CallID
+	}
+	if payload.Result.Name == "" {
+		payload.Result.Name = result.Name
+	}
+	return payload.Result
 }
 
 // runSerial 按调用顺序执行工具；fail_fast 遇失败 Result 后不再跑后续调用。
@@ -171,13 +302,22 @@ func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result,
 		if err := ctx.Err(); err != nil {
 			return failResult(item.call, err.Error()), err
 		}
+		if inv.Gate != nil {
+			if err := inv.Gate.Acquire(ctx); err != nil {
+				return failResult(item.call, err.Error()), err
+			}
+		}
 		emit(inv, "execution_started", item.call, attempt, nil)
 		result, err := item.tool.Execute(ctx, Input{
-			SessionID: inv.SessionID,
-			RunID:     inv.RunID,
-			TurnID:    inv.TurnID,
-			Call:      item.call,
+			SessionID:     inv.SessionID,
+			RunID:         inv.RunID,
+			TurnID:        inv.TurnID,
+			WorkspaceRoot: inv.WorkspaceRoot,
+			Call:          item.call,
 		})
+		if inv.Gate != nil {
+			inv.Gate.Release()
+		}
 		result.CallID = item.call.ID
 		if result.Name == "" {
 			result.Name = item.call.Name
@@ -198,6 +338,7 @@ func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result,
 		}
 		last = result
 		if last.Success {
+			last = applyPostExecute(ctx, inv, item.call, last)
 			emit(inv, "execution_result", item.call, attempt, &last)
 			return last, nil
 		}
@@ -206,6 +347,7 @@ func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result,
 			retryErr = fmt.Errorf("tool failed")
 		}
 		if !def.SupportsRetry || !retryableTool(retryErr) || attempt >= maxAttempts(inv) {
+			last = applyPostExecute(ctx, inv, item.call, last)
 			emit(inv, "execution_result", item.call, attempt, &last)
 			return last, nil
 		}
@@ -291,36 +433,6 @@ func validateArguments(def Definition, raw json.RawMessage) error {
 		}
 	}
 	return nil
-}
-
-// checkPermission 按 DeniedTools 与模式能力覆盖鉴权。
-func checkPermission(policy PermissionPolicy, mode string, def Definition) error {
-	for _, denied := range policy.DeniedTools {
-		if denied == def.Name {
-			return fmt.Errorf("%w: tool %q is denied", errPermissionDenied, def.Name)
-		}
-	}
-	if !Covers(ModeCapabilities(mode), def.Permission.Capabilities) {
-		return fmt.Errorf("%w: tool %q capabilities not covered by mode %s", errPermissionDenied, def.Name, mode)
-	}
-	return nil
-}
-
-// requiresApproval 判断该调用是否还要等人审；已批准、自动放行模式或工具声明无需审批则放行。
-func requiresApproval(mode string, policy ApprovalPolicy, def Definition, callID string, approved map[string]struct{}) bool {
-	if _, ok := approved[callID]; ok {
-		return false
-	}
-	switch mode {
-	case "auto_approve", "yolo", "ask", "plan":
-		return false
-	}
-	for _, item := range policy.AutoApprovedTools {
-		if item == def.Name {
-			return false
-		}
-	}
-	return def.Permission.RequiresApproval
 }
 
 // failResult 构造一条失败的工具结果。
