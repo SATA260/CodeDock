@@ -20,6 +20,7 @@ export function CodexPane({
   onOpenSession,
   onNewConversation,
   onListChange,
+  composeOnly = false,
 }: {
   sessionId?: string;
   workspace?: string;
@@ -27,6 +28,7 @@ export function CodexPane({
   onOpenSession: (id: string) => void;
   onNewConversation: () => void;
   onListChange?: () => Promise<void>;
+  composeOnly?: boolean;
 }) {
   const catalog = useCodexCatalog();
   const session = useCodexSession(sessionId);
@@ -109,31 +111,128 @@ export function CodexPane({
     }
   };
 
+  const composer = (
+    <CodexPromptBar
+      className={composeOnly ? "mx-0 max-w-none px-0 pb-0" : undefined}
+      running={session.running}
+      sending={session.sending || starting}
+      sessionId={sessionId}
+      workspace={workspace}
+      pickFiles={pickFiles}
+      commands={catalog.commands}
+      models={catalog.models}
+      modes={catalog.modes}
+      settings={settings}
+      onSend={onSend}
+      onCancel={session.interrupt}
+      onApply={applySettings}
+      onCompact={() => session.compact()}
+      onRefreshCatalog={() => void catalog.refresh()}
+      usage={session.state.usage}
+      onAttachError={(message) => fail(new Error(message), message)}
+      onAttach={async (files) => {
+        setComposerError(null);
+        const cwd = workspace?.trim();
+        try {
+          const id = sessionId ?? (await createWithSettings());
+          const names: string[] = [];
+          for (const file of files) {
+            if (imageExt.test(file.path)) {
+              if (id === sessionId) {
+                await session.attachImage(file.path);
+              } else {
+                await client.attachImage(id, file.path);
+              }
+            } else {
+              const path = mentionPath(file.path, cwd);
+              if (id === sessionId) {
+                await session.attachMention(path);
+              } else {
+                await client.mention(id, path);
+              }
+            }
+            names.push(file.name);
+          }
+          if (id !== sessionId) {
+            setPageNotice(`已挂 ${names.join("、")}，随下一条发送`);
+            await openCreated(id);
+          }
+        } catch (err) {
+          fail(err, "挂文件失败");
+        }
+      }}
+      onCommand={async (name, args) => {
+        setComposerError(null);
+        try {
+          if (!sessionId) {
+            const id = await createWithSettings();
+            const result = await client.invokeCommand(id, name, args);
+            if (result.hint) {
+              setPageNotice(result.hint);
+            }
+            await openCreated(id);
+            return;
+          }
+          if (name === "archive") {
+            await session.archive();
+            await refreshList();
+            onNewConversation();
+            return;
+          }
+          if (name === "fork") {
+            await onFork();
+            return;
+          }
+          if (name === "stop") {
+            await session.interrupt();
+            return;
+          }
+          await session.runCommand(name, args);
+          await refreshList();
+        } catch (err) {
+          fail(err, "命令失败");
+        }
+      }}
+    />
+  );
+
+  const banner =
+    catalog.error || session.error || composerError || notice ? (
+      <div
+        className={
+          catalog.error || session.error || composerError
+            ? "flex shrink-0 items-center justify-between gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-red-300"
+            : "flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground"
+        }
+      >
+        <span>{catalog.error ?? session.error ?? composerError ?? notice}</span>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            session.setNotice(null);
+            session.setError(null);
+            setComposerError(null);
+            setPageNotice(null);
+          }}
+        >
+          关闭
+        </Button>
+      </div>
+    ) : null;
+
+  if (composeOnly) {
+    return (
+      <div className="w-full">
+        {banner}
+        {composer}
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {catalog.error || session.error || composerError || notice ? (
-        <div
-          className={
-            catalog.error || session.error || composerError
-              ? "flex shrink-0 items-center justify-between gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-red-300"
-              : "flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground"
-          }
-        >
-          <span>{catalog.error ?? session.error ?? composerError ?? notice}</span>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              session.setNotice(null);
-              session.setError(null);
-              setComposerError(null);
-              setPageNotice(null);
-            }}
-          >
-            关闭
-          </Button>
-        </div>
-      ) : null}
+      {banner}
       <CodexTimeline
         state={session.state}
         loading={session.loading}
@@ -143,87 +242,7 @@ export function CodexPane({
       />
       <div className="relative z-30 shrink-0">
         <CodexAskDock asks={session.state.asks} onDecide={session.decide} onExpire={session.expire} />
-        <CodexPromptBar
-          running={session.running}
-          sending={session.sending || starting}
-          sessionId={sessionId}
-          workspace={workspace}
-          pickFiles={pickFiles}
-          commands={catalog.commands}
-          models={catalog.models}
-          modes={catalog.modes}
-          settings={settings}
-          onSend={onSend}
-          onCancel={session.interrupt}
-          onApply={applySettings}
-          onCompact={() => session.compact()}
-          onRefreshCatalog={() => void catalog.refresh()}
-          usage={session.state.usage}
-          onAttachError={(message) => fail(new Error(message), message)}
-          onAttach={async (files) => {
-            setComposerError(null);
-            const cwd = workspace?.trim();
-            try {
-              const id = sessionId ?? (await createWithSettings());
-              const names: string[] = [];
-              for (const file of files) {
-                if (imageExt.test(file.path)) {
-                  if (id === sessionId) {
-                    await session.attachImage(file.path);
-                  } else {
-                    await client.attachImage(id, file.path);
-                  }
-                } else {
-                  const path = mentionPath(file.path, cwd);
-                  if (id === sessionId) {
-                    await session.attachMention(path);
-                  } else {
-                    await client.mention(id, path);
-                  }
-                }
-                names.push(file.name);
-              }
-              if (id !== sessionId) {
-                setPageNotice(`已挂 ${names.join("、")}，随下一条发送`);
-                await openCreated(id);
-              }
-            } catch (err) {
-              fail(err, "挂文件失败");
-            }
-          }}
-          onCommand={async (name, args) => {
-            setComposerError(null);
-            try {
-              if (!sessionId) {
-                const id = await createWithSettings();
-                const result = await client.invokeCommand(id, name, args);
-                if (result.hint) {
-                  setPageNotice(result.hint);
-                }
-                await openCreated(id);
-                return;
-              }
-              if (name === "archive") {
-                await session.archive();
-                await refreshList();
-                onNewConversation();
-                return;
-              }
-              if (name === "fork") {
-                await onFork();
-                return;
-              }
-              if (name === "stop") {
-                await session.interrupt();
-                return;
-              }
-              await session.runCommand(name, args);
-              await refreshList();
-            } catch (err) {
-              fail(err, "命令失败");
-            }
-          }}
-        />
+        {composer}
       </div>
     </div>
   );

@@ -21,6 +21,7 @@ export function SessionSidebar({
   onArchive,
   canRecoverCurrent = false,
   brandSrc,
+  codexIconSrc,
 }: {
   sessions: SidebarSession[];
   currentId?: string;
@@ -34,6 +35,7 @@ export function SessionSidebar({
   onArchive?: (session: SidebarSession) => Promise<void>;
   canRecoverCurrent?: boolean;
   brandSrc?: string;
+  codexIconSrc?: string;
 }) {
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-background">
@@ -63,7 +65,7 @@ export function SessionSidebar({
                 <li key={rowKey}>
                   <div
                     className={cn(
-                      "group flex w-full items-start gap-1 rounded-md px-2 py-1.5 leading-5 transition-colors",
+                      "group flex w-full items-center gap-1 rounded-md px-2 py-1.5 leading-5 transition-colors",
                       active
                         ? "bg-muted text-foreground"
                         : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
@@ -72,21 +74,21 @@ export function SessionSidebar({
                     <button
                       type="button"
                       onClick={() => onSelect(session.id, engine)}
-                      className="min-w-0 flex-1 text-left"
+                      className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
                     >
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-sm font-medium">
+                      <SessionEngineMark
+                        engine={engine}
+                        brandSrc={brandSrc}
+                        codexIconSrc={codexIconSrc}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
                           {sessionTitle(session.id, session.summary)}
                         </span>
-                        {engine === "codex" ? (
-                          <span className="shrink-0 rounded bg-muted px-1 text-[10px] leading-4 text-muted-foreground">
-                            Codex
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="mt-0.5 truncate text-xs text-muted-foreground/70">
-                        {relativeTime(session.updated_at) || shortId(session.id)}
-                      </div>
+                        <span className="mt-0.5 block truncate text-xs text-muted-foreground/70">
+                          {relativeTime(session.updated_at) || shortId(session.id)}
+                        </span>
+                      </span>
                     </button>
                     {engine !== "codex" &&
                     session.needs_recover &&
@@ -135,5 +137,36 @@ export function SessionSidebar({
         ) : null}
       </nav>
     </aside>
+  );
+}
+
+function SessionEngineMark({
+  engine,
+  brandSrc,
+  codexIconSrc,
+}: {
+  engine: "agent" | "codex";
+  brandSrc?: string;
+  codexIconSrc?: string;
+}) {
+  if (engine === "codex") {
+    if (!codexIconSrc) {
+      return null;
+    }
+    return (
+      <img
+        src={codexIconSrc}
+        alt="Codex"
+        className="size-8 shrink-0 rounded-[8px] shadow-[0_0_0_1px_rgba(255,255,255,0.28),0_0_12px_rgba(88,122,255,0.55)]"
+      />
+    );
+  }
+  if (!brandSrc) {
+    return null;
+  }
+  return (
+    <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-zinc-800 shadow-[0_0_0_1px_rgba(255,255,255,0.22),0_0_10px_rgba(244,244,245,0.2)]">
+      <img src={brandSrc} alt="Local" className="size-6" />
+    </span>
   );
 }

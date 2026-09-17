@@ -221,7 +221,7 @@ export function ConversationContent({
 export function ConversationEmptyState({
   className,
   title = "开始一段对话",
-  description = "在下方输入消息，Agent 的思考与工具会按瀑布展开。",
+  description = "在下方输入消息，Local 的思考与工具会按瀑布展开。",
   icon,
   children,
 }: {

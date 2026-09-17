@@ -18,6 +18,7 @@ export function ChatHost() {
       sessionId={parsed.sessionId}
       engine={parsed.engine}
       brandSrc="/brand/codedock-berth-mark.svg"
+      codexIconSrc="/brand/codex-app-icon.png"
       onOpenSession={(id, engine = parsed.engine ?? "agent") => {
         const path = engine === "codex" ? `/s/c/${id}` : `/s/${id}`;
         if (pathname !== path) {

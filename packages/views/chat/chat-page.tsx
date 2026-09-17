@@ -3,7 +3,6 @@
 import type { ApprovalMode, Session, TimelineItem, WorkMode } from "@codedock/core/chat";
 import type { Session as CodexSession } from "@codedock/core/codex";
 import { Button } from "@codedock/ui";
-import { FolderOpen } from "lucide-react";
 import { useMemo, useState, useEffect, type ReactNode } from "react";
 
 import { CodexPane } from "../codex/codex-pane.tsx";
@@ -21,6 +20,7 @@ import {
   readLastWorkspace,
   writeLastWorkspace,
 } from "./lib/workspace.ts";
+import { NewConversation } from "./new-conversation.tsx";
 import { PendingDock } from "./pending-dock.tsx";
 import { PromptBar } from "./prompt-bar.tsx";
 import { SessionSidebar, type SidebarSession } from "./session-sidebar.tsx";
@@ -33,6 +33,7 @@ export type ChatPageProps = {
   onOpenSession: (id: string, engine?: SessionEngine) => void;
   onNewConversation: () => void;
   brandSrc?: string;
+  codexIconSrc?: string;
   headerActions?: ReactNode;
 };
 
@@ -42,6 +43,7 @@ export function ChatPage({
   onOpenSession,
   onNewConversation,
   brandSrc,
+  codexIconSrc,
   headerActions,
 }: ChatPageProps) {
   const { client, pickDirectory, pickFiles } = useAgent();
@@ -110,6 +112,28 @@ export function ChatPage({
     }
   };
 
+  const pickWorkspace = () => {
+    if (!pickDirectory || pickingWorkspace) {
+      return;
+    }
+    setComposerError(null);
+    setPickingWorkspace(true);
+    void pickDirectory({ start: workspaceDraft.trim() || undefined })
+      .then((path) => {
+        if (!path) {
+          return;
+        }
+        setWorkspaceDraft(path);
+        writeLastWorkspace(path);
+      })
+      .catch((err: unknown) => {
+        setComposerError(err instanceof Error ? err.message : "无法选择目录");
+      })
+      .finally(() => {
+        setPickingWorkspace(false);
+      });
+  };
+
   const hideSession = async (session: SidebarSession) => {
     const hiddenId = session.id;
     const hiddenEngine = session.engine ?? "agent";
@@ -144,36 +168,15 @@ export function ChatPage({
           await hideSession(session);
         }}
         brandSrc={brandSrc}
+        codexIconSrc={codexIconSrc}
       />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm leading-5 text-muted-foreground">
-          <span className="shrink-0">
-            {sessionId ? (activeEngine === "codex" ? "Codex 对话" : "对话") : "新对话"}
-          </span>
-          {sessionId ? null : (
-            <div className="flex shrink-0 items-center rounded-md border border-border p-0.5" role="group" aria-label="会话模式">
-              <EngineToggle
-                active={draftEngine === "agent"}
-                onClick={() => {
-                  setDraftEngine("agent");
-                  setComposerError(null);
-                }}
-              >
-                Agent
-              </EngineToggle>
-              <EngineToggle
-                active={draftEngine === "codex"}
-                onClick={() => {
-                  setDraftEngine("codex");
-                  setComposerError(null);
-                }}
-              >
-                Codex
-              </EngineToggle>
-            </div>
-          )}
-          {sessionId ? (
-            workspaceLabel ? (
+        {sessionId ? (
+          <header className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm leading-5 text-muted-foreground">
+            <span className="shrink-0">
+              {activeEngine === "codex" ? "Codex 对话" : "Local 对话"}
+            </span>
+            {workspaceLabel ? (
               <>
                 <span className="text-border">·</span>
                 <span
@@ -184,152 +187,124 @@ export function ChatPage({
                   {workspaceLabel}
                 </span>
               </>
-            ) : null
-          ) : (
-            <div className="flex min-w-0 items-center gap-1.5">
-              <button
-                data-workspace-pick=""
-                type="button"
-                disabled={!pickDirectory || pickingWorkspace}
-                title={workspaceDraft.trim() || "打开系统目录选择框"}
-                className="flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-xs leading-5 text-foreground hover:bg-muted disabled:opacity-50"
-                onClick={() => {
-                  if (!pickDirectory || pickingWorkspace) {
-                    return;
-                  }
-                  setComposerError(null);
-                  setPickingWorkspace(true);
-                  void pickDirectory({ start: workspaceDraft.trim() || undefined })
-                    .then((path) => {
-                      if (!path) {
-                        return;
-                      }
-                      setWorkspaceDraft(path);
-                      writeLastWorkspace(path);
-                    })
-                    .catch((err: unknown) => {
-                      setComposerError(err instanceof Error ? err.message : "无法选择目录");
-                    })
-                    .finally(() => {
-                      setPickingWorkspace(false);
-                    });
+            ) : null}
+            {activeEngine === "agent" && timeline.canRecover ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={async () => {
+                  await timeline.recover();
+                  await list.refresh();
                 }}
               >
-                <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-                <span
-                  className="min-w-0 truncate font-mono"
-                  title={workspaceTitle}
-                  data-workspace-path={workspaceTitle}
-                >
-                  {workspaceDraft.trim() ? workspaceLabel : "选择目录（默认仓库）"}
-                </span>
-              </button>
-              {workspaceDraft.trim() ? (
-                <button
-                  type="button"
-                  className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() => {
-                    setWorkspaceDraft("");
-                    clearLastWorkspace();
-                  }}
-                >
-                  默认
-                </button>
+                恢复
+              </Button>
+            ) : null}
+            {headerActions ? <div className="ml-auto flex items-center gap-2">{headerActions}</div> : null}
+          </header>
+        ) : headerActions ? (
+          <header className="flex h-10 items-center justify-end border-b border-border px-4">
+            <div className="flex items-center gap-2">{headerActions}</div>
+          </header>
+        ) : null}
+        {sessionId ? (
+          activeEngine === "codex" ? (
+            <>
+              {composerError ? (
+                <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-red-300">
+                  {composerError}
+                </div>
               ) : null}
-            </div>
-          )}
-          {activeEngine === "agent" && timeline.canRecover ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={async () => {
-                await timeline.recover();
-                await list.refresh();
-              }}
-            >
-              恢复
-            </Button>
-          ) : null}
-          {headerActions ? <div className="ml-auto flex items-center gap-2">{headerActions}</div> : null}
-        </header>
-        {activeEngine === "codex" ? (
+              <CodexPane
+                sessionId={sessionId}
+                workspace={frozenWorkspace}
+                pickFiles={pickFiles}
+                onOpenSession={(id) => onOpenSession(id, "codex")}
+                onNewConversation={onNewConversation}
+                onListChange={codexList.refresh}
+              />
+            </>
+          ) : (
+            <>
+              {timeline.error || composerError ? (
+                <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-red-300">
+                  {timeline.error ?? composerError}
+                </div>
+              ) : null}
+              <ConversationTimeline
+                state={timeline.state}
+                loading={timeline.loading}
+                scrollKey={sessionId}
+              />
+              <div className="relative z-30 shrink-0">
+                <PendingDock
+                  items={timeline.pending}
+                  editingId={timeline.editingId}
+                  onBeginEdit={timeline.beginEditPending}
+                  onCancelEdit={timeline.cancelEditPending}
+                  onSave={timeline.savePending}
+                  onDelete={timeline.deletePending}
+                  onSendNow={timeline.sendNow}
+                />
+                <ApprovalDock items={pendingApprovals} onDecide={timeline.decide} />
+                <PromptBar
+                  running={timeline.running}
+                  sending={timeline.sending || starting}
+                  onSend={onSend}
+                  onCancel={timeline.cancel}
+                />
+              </div>
+            </>
+          )
+        ) : (
           <>
             {composerError ? (
               <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-red-300">
                 {composerError}
               </div>
             ) : null}
-            <CodexPane
-              sessionId={sessionId}
-              workspace={sessionId ? frozenWorkspace : workspaceDraft}
-              pickFiles={pickFiles}
-              onOpenSession={(id) => onOpenSession(id, "codex")}
-              onNewConversation={onNewConversation}
-              onListChange={codexList.refresh}
-            />
-          </>
-        ) : (
-          <>
-            {timeline.error || composerError ? (
-              <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-red-300">
-                {timeline.error ?? composerError}
-              </div>
-            ) : null}
-            <ConversationTimeline
-              state={timeline.state}
-              loading={timeline.loading}
-              scrollKey={sessionId}
-              emptyDescription={
-                sessionId ? undefined : "选择会话模式与工作目录，或直接发送以使用默认仓库目录。"
-              }
-            />
-            <div className="relative z-30 shrink-0">
-              <PendingDock
-                items={timeline.pending}
-                editingId={timeline.editingId}
-                onBeginEdit={timeline.beginEditPending}
-                onCancelEdit={timeline.cancelEditPending}
-                onSave={timeline.savePending}
-                onDelete={timeline.deletePending}
-                onSendNow={timeline.sendNow}
-              />
-              <ApprovalDock items={pendingApprovals} onDecide={timeline.decide} />
-              <PromptBar
-                running={timeline.running}
-                sending={timeline.sending || starting}
-                onSend={onSend}
-                onCancel={timeline.cancel}
-              />
-            </div>
+            <NewConversation
+              brandSrc={brandSrc}
+              codexIconSrc={codexIconSrc}
+              engine={draftEngine}
+              onEngine={(next) => {
+                setDraftEngine(next);
+                setComposerError(null);
+              }}
+              workspaceLabel={workspaceLabel}
+              workspaceTitle={workspaceTitle}
+              picking={pickingWorkspace}
+              canPick={Boolean(pickDirectory)}
+              onPick={pickWorkspace}
+              canClear={Boolean(workspaceDraft.trim())}
+              onClear={() => {
+                setWorkspaceDraft("");
+                clearLastWorkspace();
+              }}
+            >
+              {draftEngine === "codex" ? (
+                <CodexPane
+                  composeOnly
+                  workspace={workspaceDraft}
+                  pickFiles={pickFiles}
+                  onOpenSession={(id) => onOpenSession(id, "codex")}
+                  onNewConversation={onNewConversation}
+                  onListChange={codexList.refresh}
+                />
+              ) : (
+                <PromptBar
+                  className="mx-0 max-w-none px-0 pb-0"
+                  running={false}
+                  sending={starting}
+                  onSend={onSend}
+                  onCancel={async () => undefined}
+                />
+              )}
+            </NewConversation>
           </>
         )}
       </main>
     </div>
-  );
-}
-
-function EngineToggle({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      className={
-        active
-          ? "h-6 rounded px-2 text-xs font-medium text-foreground bg-muted"
-          : "h-6 rounded px-2 text-xs text-muted-foreground hover:text-foreground"
-      }
-      onClick={onClick}
-    >
-      {children}
-    </button>
   );
 }
 

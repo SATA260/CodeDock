@@ -3,6 +3,7 @@
 import type { ApprovalMode, WorkMode } from "@codedock/core/chat";
 import {
   Button,
+  cn,
   PromptInput,
   PromptInputFooter,
   PromptInputSubmit,
@@ -30,11 +31,13 @@ export function PromptBar({
   sending,
   onSend,
   onCancel,
+  className,
 }: {
   running: boolean;
   sending: boolean;
   onSend: (text: string, mode: WorkMode, approval: ApprovalMode) => Promise<void>;
   onCancel: () => Promise<void>;
+  className?: string;
 }) {
   const [text, setText] = useState("");
   const [mode, setMode] = useState<WorkMode>("agent");
@@ -45,7 +48,7 @@ export function PromptBar({
   };
 
   return (
-    <div className="relative z-30 mx-auto w-full max-w-3xl px-4 pb-4">
+    <div className={cn("relative z-30 mx-auto w-full max-w-3xl px-4 pb-4", className)}>
       <PromptInput
         onSend={async (message) => {
           const next = message.text.trim();
@@ -65,7 +68,7 @@ export function PromptBar({
           ref={inputRef}
           value={text}
           autoFocus
-          placeholder="给 Agent 发消息…"
+          placeholder="给 Local 发消息…"
           onChange={(event) => setText(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.shiftKey || isImeConfirm(event)) {

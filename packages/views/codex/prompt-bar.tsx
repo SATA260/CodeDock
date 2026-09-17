@@ -3,6 +3,7 @@
 import type { CommandSpec, InputMode, ModeInfo, ModelInfo, Settings, TokenUsage } from "@codedock/core/codex";
 import {
   Button,
+  cn,
   PromptInput,
   PromptInputFooter,
   PromptInputSubmit,
@@ -36,6 +37,7 @@ export function CodexPromptBar({
   onCompact,
   onRefreshCatalog,
   usage,
+  className,
 }: {
   running: boolean;
   sending: boolean;
@@ -55,6 +57,7 @@ export function CodexPromptBar({
   onCompact: () => Promise<void>;
   onRefreshCatalog?: () => void;
   usage?: TokenUsage;
+  className?: string;
 }) {
   const [text, setText] = useState("");
   const [queue, setQueue] = useState(false);
@@ -74,7 +77,7 @@ export function CodexPromptBar({
   }, [commands, text]);
 
   return (
-    <div className="relative z-30 mx-auto w-full max-w-3xl px-4 pb-4">
+    <div className={cn("relative z-30 mx-auto w-full max-w-3xl px-4 pb-4", className)}>
       {slash.length > 0 ? (
         <div className="mb-1 rounded-md border border-border bg-zinc-900 p-1 text-xs">
           {slash.map((item) => (
