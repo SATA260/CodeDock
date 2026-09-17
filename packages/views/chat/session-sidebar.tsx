@@ -2,35 +2,45 @@
 
 import type { Session } from "@codedock/core/chat";
 import { Button, cn } from "@codedock/ui";
-import { PlusIcon, Trash2Icon } from "lucide-react";
+import { Archive, PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { relativeTime, sessionTitle, shortId } from "./lib/format.ts";
+
+export type SidebarSession = Session & { engine?: "agent" | "codex" };
 
 export function SessionSidebar({
   sessions,
   currentId,
   busy,
   error,
+  hasMore = false,
+  onLoadMore,
   onCreate,
   onSelect,
   onRecover,
   onDelete,
+  onArchive,
   canRecoverCurrent = false,
+  canArchive = false,
   brandSrc,
 }: {
-  sessions: Session[];
+  sessions: SidebarSession[];
   currentId?: string;
   busy: boolean;
   error: string | null;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
   onCreate: () => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, engine?: "agent" | "codex") => void;
   onRecover?: (runId: string) => Promise<void>;
-  onDelete?: (session: Session) => Promise<void>;
+  onDelete?: (session: SidebarSession) => Promise<void>;
+  onArchive?: () => Promise<void>;
   canRecoverCurrent?: boolean;
+  canArchive?: boolean;
   brandSrc?: string;
 }) {
-  const [pending, setPending] = useState<Session | null>(null);
+  const [pending, setPending] = useState<SidebarSession | null>(null);
 
   useEffect(() => {
     if (!pending) {
@@ -60,15 +70,25 @@ export function SessionSidebar({
         </Button>
       </div>
       {error ? <p className="px-3 pb-2 text-xs text-destructive">{error}</p> : null}
+      {canArchive && onArchive ? (
+        <div className="px-3 pb-2">
+          <Button size="sm" variant="outline" className="w-full" disabled={busy} onClick={() => void onArchive()}>
+            <Archive className="size-3.5" />
+            归档当前对话
+          </Button>
+        </div>
+      ) : null}
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         {sessions.length === 0 ? (
           <p className="px-2 py-6 text-xs text-muted-foreground">还没有会话</p>
         ) : (
           <ul className="space-y-0.5">
             {sessions.map((session) => {
-              const active = session.id === currentId;
+              const engine = session.engine ?? "agent";
+              const rowKey = `${engine}:${session.id}`;
+              const active = rowKey === currentId;
               return (
-                <li key={session.id}>
+                <li key={rowKey}>
                   <div
                     className={cn(
                       "group flex w-full items-start gap-1 rounded-md px-2 py-1.5 leading-5 transition-colors",
@@ -79,20 +99,28 @@ export function SessionSidebar({
                   >
                     <button
                       type="button"
-                      onClick={() => onSelect(session.id)}
+                      onClick={() => onSelect(session.id, engine)}
                       className="min-w-0 flex-1 text-left"
                     >
-                      <div className="truncate text-sm font-medium">
-                        {sessionTitle(session.id, session.summary)}
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-medium">
+                          {sessionTitle(session.id, session.summary)}
+                        </span>
+                        {engine === "codex" ? (
+                          <span className="shrink-0 rounded bg-muted px-1 text-[10px] leading-4 text-muted-foreground">
+                            Codex
+                          </span>
+                        ) : null}
                       </div>
                       <div className="mt-0.5 truncate text-xs text-muted-foreground/70">
                         {relativeTime(session.updated_at) || shortId(session.id)}
                       </div>
                     </button>
-                    {session.needs_recover &&
+                    {engine !== "codex" &&
+                    session.needs_recover &&
                     session.active_run_id &&
                     onRecover &&
-                    (session.id !== currentId || canRecoverCurrent) ? (
+                    (rowKey !== currentId || canRecoverCurrent) ? (
                       <Button
                         size="sm"
                         variant="secondary"
@@ -128,6 +156,11 @@ export function SessionSidebar({
             })}
           </ul>
         )}
+        {hasMore && onLoadMore ? (
+          <Button className="mt-2 w-full" size="sm" variant="ghost" onClick={onLoadMore}>
+            加载更多
+          </Button>
+        ) : null}
       </nav>
       {pending && onDelete ? (
         <div

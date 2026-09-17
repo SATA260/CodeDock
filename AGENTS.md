@@ -7,7 +7,7 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 ## 目录放置规则
 
 - 服务启动、配置读取、Router 和依赖装配放在 `server/cmd/server`。
-- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，用户侧记忆查看/删除，以及 Git（直接调 `pkg/git`）。创建 Session 时在本包冻结 `workspace_id`。不 import `internal/agent/tools`。新对话选目录由 web 弹出目录浏览框（`apps/web` 列本机目录），不走 Agent Tool。Codex 的独立 `/codex` HTTP 放在 `server/internal/handler/codex`。
+- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel，审批裁决，用户侧记忆查看/删除，以及 Git（直接调 `pkg/git`）。创建 Session 时在本包冻结 `workspace_id`。不 import `internal/agent/tools`。新对话选目录由 web 弹出系统目录选择框，不走 Agent Tool。Codex 的独立 `/codex` HTTP 放在 `server/internal/handler/codex`。
 - Agent 运行时编排和 sqlc 持久化放在 `server/internal/agent`。
 - 本机 Codex app-server 生命周期、内存排队/问票/SSE 放在 `server/internal/codex`。不新增 Codex 业务表；凡官方 API 能读到的都不入库。
 - Markdown 记忆（热层目录+专题）与 context message 索引（冷层按工作区 FTS）放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`，不定义 Tool。
@@ -22,7 +22,7 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - 无头业务放在 `packages/core`（`@codedock/core`）：按业务域拆（现有 `chat/`、`git/`、`codex/`），文件直接在域目录下，不要 `src/`。不依赖 React、Next、DOM、`process.env`。`baseUrl` / `userId` 由调用方注入。Git 用独立 `GitClient`。Codex 用独立 `CodexClient`，不扩 `AgentClient`。
 - 无业务 UI 放在 `packages/ui`（`@codedock/ui`）：`components/`、`lib/`、`styles/`，不要 `src/`，不按业务域拆。不依赖 core，不知道 Session / Run / TimelineItem。
 - 组合层放在 `packages/views`（`@codedock/views`）：按业务域拆，与 core 对齐（现有 `chat/`、`git/`、`codex/`）。包根 `provider.tsx` 注入 Agent client；Git 用 `views/git` 的 `GitProvider`；Codex 用 `views/codex` 的 `CodexProvider`，由 `ChatPage` 在 Codex 模式下组合，不单独做 Codex 页。不 import `next/*`；导航用回调。不要 `src/`，不预建空业务域。
-- Web 路由和平台装配放在 `apps/web`：读 `NEXT_PUBLIC_*`、创建 `AgentClient` / `GitClient` / `CodexClient`、包对应 Provider、`router.push`。`/git` 放在 `(chat)` 组外。Codex 不单独路由，走 `/` 与 `/s/...`。开发态切页顶栏只放 web。不解析 SSE。
+- Web 路由和平台装配放在 `apps/web`：读 `NEXT_PUBLIC_*`、创建 `AgentClient` / `GitClient` / `CodexClient`、包对应 Provider、`router.push`。`/git` 放在 `(chat)` 组外。Codex 不单独路由，走 `/` 与 `/s/c/:id`。开发态切页顶栏只放 web。不解析 SSE。
 - 依赖方向：`apps/web` → `packages/views` → `packages/core`；`packages/views` → `packages/ui`。`ui` 不依赖 `core`。未来 CLI 只依赖 `core`。
 - 不要创建 `server/pkg/ai`。大模型调用属于 `pkg/agent`。
 

@@ -346,17 +346,8 @@ func ParseModel(raw json.RawMessage) (ModelInfo, error) {
 	}
 	efforts := make([]string, 0, len(row.SupportedReasoningEfforts))
 	for _, item := range row.SupportedReasoningEfforts {
-		switch v := item.(type) {
-		case string:
-			if v != "" {
-				efforts = append(efforts, v)
-			}
-		case map[string]any:
-			if s, _ := v["effort"].(string); s != "" {
-				efforts = append(efforts, s)
-			} else if s, _ := v["id"].(string); s != "" {
-				efforts = append(efforts, s)
-			}
+		if s := effortID(item); s != "" {
+			efforts = append(efforts, s)
 		}
 	}
 	return ModelInfo{
@@ -367,6 +358,20 @@ func ParseModel(raw json.RawMessage) (ModelInfo, error) {
 		Hidden:        row.Hidden,
 		IsDefault:     row.IsDefault,
 	}, nil
+}
+
+func effortID(item any) string {
+	switch v := item.(type) {
+	case string:
+		return v
+	case map[string]any:
+		for _, key := range []string{"reasoningEffort", "effort", "id"} {
+			if s, _ := v[key].(string); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 // ParsePermissionProfile 从 permissionProfile/list 的一条里取出 ModeInfo。

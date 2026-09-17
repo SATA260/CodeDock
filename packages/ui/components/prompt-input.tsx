@@ -31,6 +31,8 @@ export function PromptInput({
           return;
         }
         onSend?.({ text });
+        const box = form.querySelector<HTMLTextAreaElement>('textarea[name="message"]');
+        box?.focus();
       }}
       {...props}
     >

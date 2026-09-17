@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"strings"
 
 	cderr "codedock/internal/errors"
 	pkg "codedock/pkg/codex"
@@ -30,7 +31,28 @@ func (rt *Runtime) ListSessions(ctx context.Context, archived bool, cursor strin
 		st.mu.Unlock()
 		out.Sessions = append(out.Sessions, pkg.MapThread(th, archived, active))
 	}
+	out.Sessions = dedupeSessions(out.Sessions)
 	return out, nil
+}
+
+// dedupeSessions 去掉官方 thread/list 里同一 thread_id 的重复行，留下更新时间最新的一条。
+func dedupeSessions(in []pkg.Session) []pkg.Session {
+	if len(in) < 2 {
+		return in
+	}
+	index := make(map[string]int, len(in))
+	out := make([]pkg.Session, 0, len(in))
+	for _, sess := range in {
+		if i, ok := index[sess.ID]; ok {
+			if sess.UpdatedAt >= out[i].UpdatedAt {
+				out[i] = sess
+			}
+			continue
+		}
+		index[sess.ID] = len(out)
+		out = append(out, sess)
+	}
+	return out
 }
 
 // CreateSession 向 Codex 开一条 thread，session_id 即 thread_id。
@@ -64,7 +86,13 @@ func (rt *Runtime) GetSession(ctx context.Context, sessionID string) (pkg.Sessio
 		return pkg.Session{}, nil, err
 	}
 	res, err := client.ThreadRead(ctx, pkg.ThreadReadParams{ThreadID: sessionID, IncludeTurns: true})
+	if err != nil && includeTurnsUnavailable(err) {
+		res, err = client.ThreadRead(ctx, pkg.ThreadReadParams{ThreadID: sessionID})
+	}
 	if err != nil {
+		if emptyThread(err) {
+			return stubSession(rt, sessionID), nil, nil
+		}
 		return pkg.Session{}, nil, mapRPC(err)
 	}
 	st := rt.state(sessionID)
@@ -205,4 +233,35 @@ func (rt *Runtime) takeDraft(sessionID string, content string, extra pkg.Input) 
 	in.Mentions = append(in.Mentions, extra.Mentions...)
 	in.Images = append(in.Images, extra.Images...)
 	return in
+}
+
+func includeTurnsUnavailable(err error) bool {
+	return emptyThread(err)
+}
+
+func emptyThread(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "includeturns") ||
+		strings.Contains(msg, "not materialized") ||
+		strings.Contains(msg, "thread not loaded")
+}
+
+func stubSession(rt *Runtime, sessionID string) pkg.Session {
+	st := rt.state(sessionID)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	active := ""
+	if st.active != nil {
+		active = st.active.ID
+	}
+	return pkg.Session{
+		ID:           sessionID,
+		ThreadID:     sessionID,
+		Cwd:          st.settings.Cwd,
+		ActiveTurnID: active,
+		Archived:     st.archived,
+	}
 }

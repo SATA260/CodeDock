@@ -18,6 +18,7 @@
 ## 边界
 
 - 不走本地对话的工具、记忆和压缩
+- 前端复用 Agent 对话页：新建会话时选 Agent 或 Codex，Codex 会话走 `/s/c/:id`，不单独开页面
 - 绑了 Codex 的对话不能中途改成本地模型
 - 一条对话同时只有一个进行中的回合；多条对话可以并行
 - 共用本机 `~/.codex` 配置与授权，不另存密钥
@@ -30,3 +31,6 @@
 - `pkg/codex`：领域类型与协议客户端，不 spawn CLI
 - `internal/codex`：本机进程与内存编排
 - `internal/handler/codex`：独立 `/codex/*` HTTP
+- `packages/core/codex`：无头 `CodexClient` 与 SSE/reducer
+- `packages/views/codex`：由 `ChatPage` 在 Codex 模式下组合（输入栏设置、时间线、问票、prompt）；归档在侧栏顶部
+- `apps/web`：对话页 `/` 与 `/s/c/:id` 装配 `CodexClient`，不单独开 Codex 页

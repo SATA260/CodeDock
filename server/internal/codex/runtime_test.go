@@ -366,7 +366,7 @@ func TestRuntimeHandshakeStartAndVersionErrors(t *testing.T) {
 	})
 	defer rt.Close()
 	status, err := rt.Probe(ctx)
-	if err != nil || !status.Available {
+	if err != nil || !status.Available || status.Version != "" {
 		t.Fatal(status, err)
 	}
 

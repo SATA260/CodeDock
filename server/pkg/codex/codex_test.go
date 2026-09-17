@@ -450,6 +450,13 @@ func TestClientRPCWrappers(t *testing.T) {
 }
 
 func TestParseModelAndAskEdges(t *testing.T) {
+	info, err := ParseModel(json.RawMessage(`{"id":"gpt-5.6-sol","displayName":"GPT-5.6-Sol","defaultReasoningEffort":"low","supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Fast"},{"reasoningEffort":"medium","description":"Default"},{"reasoningEffort":"xhigh","description":"Max"}],"isDefault":true}`))
+	if err != nil || info.ID != "gpt-5.6-sol" || info.DefaultEffort != "low" {
+		t.Fatal(info, err)
+	}
+	if strings.Join(info.Efforts, ",") != "low,medium,xhigh" {
+		t.Fatalf("efforts=%v", info.Efforts)
+	}
 	if _, err := ParseModel(json.RawMessage(`{`)); err == nil {
 		t.Fatal("bad model")
 	}

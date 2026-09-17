@@ -163,7 +163,7 @@ packages/views
 
 apps/web
   -> packages/views
-  -> packages/core          # 创建 AgentClient
+  -> packages/core          # 创建 AgentClient / GitClient / CodexClient
   -> packages/ui            # 引入 tokens.css
   不直接解析 SSE 或 event type
 ```
@@ -174,7 +174,7 @@ apps/web
 
 承担大部分接口逻辑：
 
-- Session / Message / Usage / Approval 的增删改查。创建 Session 时在本包冻结 `workspace_id`（工作目录）：用户指定的路径必须是已存在目录，否则 400；未指定（空或 `default`）则 `GIT_REPO`，再否则 cwd。不 import `internal/agent/tools`。新对话选目录由 web 弹出目录浏览框。`sessions.summary` 在首次用户消息写入，列表与详情返回
+- Session / Message / Usage / Approval 的增删改查。创建 Session 时在本包冻结 `workspace_id`（工作目录）：用户指定的路径必须是已存在目录，否则 400；未指定（空或 `default`）则 `GIT_REPO`，再否则 cwd。不 import `internal/agent/tools`。新对话选目录由 web 弹出系统目录选择框。`sessions.summary` 在首次用户消息写入，列表与详情返回
 - 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引；List 用 user_id / workspace_id，Get/Delete 用 name 默认目录）
 - SSE：先按 `afterSeq` / `Last-Event-ID` 回放已落库事件，再 `SubscribeAll` 并按 Session 过滤；客户端断开不取消 Run
 - 事件 JSON 回放：`GET /sessions/{id}/event-log`，供前端一次 hydrate，不替代 SSE 直播

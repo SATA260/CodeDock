@@ -2,24 +2,19 @@ package codex
 
 import (
 	"context"
-	"strings"
 
 	cderr "codedock/internal/errors"
 	pkg "codedock/pkg/codex"
 )
 
-// Probe 体检本机 Codex：装没装、版本、有没有授权。
+// Probe 体检本机 Codex：装没装、版本、有没有授权。版本读不到就留空，不单独报错。
 func (rt *Runtime) Probe(ctx context.Context) (pkg.EngineStatus, error) {
 	path, err := rt.lookPath(rt.bin)
 	if err != nil {
 		return pkg.EngineStatus{Hint: "本机没有安装 Codex CLI。"}, nil
 	}
-	out, err := rt.version(ctx, path)
-	version := ParseVersion(out)
-	if err != nil && version == "" {
-		return pkg.EngineStatus{Available: true, Version: strings.TrimSpace(out), Hint: "无法读取 Codex 版本。"}, nil
-	}
-	status := pkg.EngineStatus{Available: true, Version: version}
+	out, _ := rt.version(ctx, path)
+	status := pkg.EngineStatus{Available: true, Version: ParseVersion(out)}
 	client, err := rt.ensureClient(ctx)
 	if err != nil {
 		status.Hint = err.Error()

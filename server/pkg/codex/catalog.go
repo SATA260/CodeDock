@@ -4,7 +4,7 @@ package codex
 type EngineStatus struct {
 	Available  bool   `json:"available"`  // 本机装没装 Codex。
 	Authorized bool   `json:"authorized"` // 有没有取得 Codex 授权；没授权可以看选项，但不能开回合。
-	Version    string `json:"version"`
+	Version    string `json:"version,omitempty"`
 	Hint       string `json:"hint,omitempty"` // 不可用时给人看的原因，如未安装或未授权。
 }
 
