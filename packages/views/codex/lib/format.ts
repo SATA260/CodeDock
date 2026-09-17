@@ -25,12 +25,33 @@ export function shortId(id: string): string {
   return id.replace(/-/g, "").slice(0, 8);
 }
 
+// sessionTitle 对话标题：正文中间可省略，末尾 (n) 必须留下。
 export function sessionTitle(session: { id: string; title?: string; preview?: string }): string {
   const text = session.title?.trim() || session.preview?.trim();
-  if (text) {
-    return text.length > 36 ? `${text.slice(0, 36)}…` : text;
+  if (!text) {
+    return `对话 ${shortId(session.id)}`;
   }
-  return `对话 ${shortId(session.id)}`;
+  const match = text.match(/ \((\d+)\)$/);
+  const suffix = match && match.index != null ? text.slice(match.index) : "";
+  const stem = match && match.index != null ? text.slice(0, match.index) : text;
+  if ([...text].length <= 36) {
+    return text;
+  }
+  return `${clipMiddle(stem, Math.max(8, 36 - [...suffix].length))}${suffix}`;
+}
+
+// clipMiddle 超长正文留头尾，中间用省略号。
+function clipMiddle(text: string, max: number): string {
+  const runes = [...text];
+  if (runes.length <= max) {
+    return text.trim();
+  }
+  const keep = Math.max(1, max - 1);
+  const head = Math.max(1, Math.ceil(keep * 0.55));
+  const tail = Math.max(0, keep - head);
+  const start = runes.slice(0, head).join("").trimEnd();
+  const end = tail > 0 ? runes.slice(-tail).join("").trimStart() : "";
+  return end ? `${start}…${end}` : `${start}…`;
 }
 
 export function formatStamp(value?: number): string {

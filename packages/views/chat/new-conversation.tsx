@@ -4,9 +4,13 @@ import { cn } from "@codedock/ui";
 import { FolderOpen } from "lucide-react";
 import type { ReactNode } from "react";
 
+import type { SessionEngine } from "./chat-page.tsx";
+
+// NewConversation 居中偏上；模式切换放在标语下，目录条贴在输入框正上方且等宽。
 export function NewConversation({
   brandSrc,
   codexIconSrc,
+  claudeIconSrc,
   engine,
   onEngine,
   workspaceLabel,
@@ -20,8 +24,9 @@ export function NewConversation({
 }: {
   brandSrc?: string;
   codexIconSrc?: string;
-  engine: "agent" | "codex";
-  onEngine: (engine: "agent" | "codex") => void;
+  claudeIconSrc?: string;
+  engine: SessionEngine;
+  onEngine: (engine: SessionEngine) => void;
   workspaceLabel: string;
   workspaceTitle: string;
   picking: boolean;
@@ -40,7 +45,7 @@ export function NewConversation({
         <h1 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">CodeDock</h1>
         <p className="mt-2 text-xs tracking-[0.18em] text-muted-foreground/70">以issue驱动开发，把对话停在codedock</p>
         <div
-          className="mt-3 flex items-center rounded-lg border border-border p-1"
+          className="mt-4 flex flex-wrap items-center justify-center rounded-lg border border-border p-1"
           role="group"
           aria-label="会话模式"
         >
@@ -53,8 +58,16 @@ export function NewConversation({
           <EngineChoice
             active={engine === "codex"}
             icon={codexIconSrc}
+            rounded
             label="Codex"
             onClick={() => onEngine("codex")}
+          />
+          <EngineChoice
+            active={engine === "claude"}
+            icon={claudeIconSrc}
+            rounded
+            label="Claude"
+            onClick={() => onEngine("claude")}
           />
         </div>
 
@@ -94,14 +107,17 @@ export function NewConversation({
   );
 }
 
+// EngineChoice 用图标加短名切换引擎，不另贴文字徽章。
 function EngineChoice({
   active,
   icon,
+  rounded,
   label,
   onClick,
 }: {
   active: boolean;
   icon?: string;
+  rounded?: boolean;
   label: string;
   onClick: () => void;
 }) {
@@ -117,7 +133,7 @@ function EngineChoice({
       )}
       onClick={onClick}
     >
-      {icon ? <img src={icon} alt="" className={label === "Codex" ? "size-5 rounded-[4px]" : "size-5"} /> : null}
+      {icon ? <img src={icon} alt="" className={rounded ? "size-5 rounded-[4px]" : "size-5"} /> : null}
       {label}
     </button>
   );

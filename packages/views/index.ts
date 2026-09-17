@@ -7,6 +7,7 @@ export {
 } from "./provider.tsx";
 export { GitPage, GitProvider, useGit, type GitPageProps } from "./git/index.ts";
 export { CodexPane, CodexProvider, useCodex } from "./codex/index.ts";
+export { ClaudePane, ClaudeProvider, useClaude } from "./claude/index.ts";
 export {
   ChatPage,
   ConversationTimeline,

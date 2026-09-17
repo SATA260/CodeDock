@@ -1,10 +1,14 @@
 "use client";
 
 import type { ApprovalMode, Session, TimelineItem, WorkMode } from "@codedock/core/chat";
+import type { ClaudeSession } from "@codedock/core/claude";
 import type { Session as CodexSession } from "@codedock/core/codex";
 import { Button } from "@codedock/ui";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { ClaudePane } from "../claude/claude-pane.tsx";
+import { useClaudeSessionList } from "../claude/hooks/use-session-list.ts";
+import { useClaude } from "../claude/provider.tsx";
 import { CodexPane } from "../codex/codex-pane.tsx";
 import { useCodexSessionList } from "../codex/hooks/use-session-list.ts";
 import { useCodex } from "../codex/provider.tsx";
@@ -25,7 +29,7 @@ import { PendingDock } from "./pending-dock.tsx";
 import { PromptBar } from "./prompt-bar.tsx";
 import { SessionSidebar, type SidebarSession } from "./session-sidebar.tsx";
 
-export type SessionEngine = "agent" | "codex";
+export type SessionEngine = "agent" | "codex" | "claude";
 
 export type ChatPageProps = {
   sessionId?: string;
@@ -34,6 +38,7 @@ export type ChatPageProps = {
   onNewConversation: () => void;
   brandSrc?: string;
   codexIconSrc?: string;
+  claudeIconSrc?: string;
   headerActions?: ReactNode;
 };
 
@@ -45,12 +50,15 @@ export function ChatPage({
   onNewConversation,
   brandSrc,
   codexIconSrc,
+  claudeIconSrc,
   headerActions,
 }: ChatPageProps) {
   const { client, pickDirectory, pickFiles } = useAgent();
   const { client: codexClient } = useCodex();
+  const { client: claudeClient } = useClaude();
   const list = useSessionList();
   const codexList = useCodexSessionList();
+  const claudeList = useClaudeSessionList();
   const [draftEngine, setDraftEngine] = useState<SessionEngine>(engine ?? "agent");
   const activeEngine: SessionEngine = sessionId ? (engine ?? "agent") : draftEngine;
   useEffect(() => {
@@ -70,8 +78,8 @@ export function ChatPage({
   }, []);
 
   const sessions = useMemo(
-    () => mergeSessions(list.sessions, codexList.sessions),
-    [codexList.sessions, list.sessions],
+    () => mergeSessions(list.sessions, codexList.sessions, claudeList.sessions),
+    [claudeList.sessions, codexList.sessions, list.sessions],
   );
   const currentKey = sessionId ? `${activeEngine}:${sessionId}` : undefined;
   const current = sessions.find((session) => `${session.engine}:${session.id}` === currentKey);
@@ -137,12 +145,16 @@ export function ChatPage({
       });
   };
 
+  // hideSession 按引擎归档或删除，当前打开的那条会回到新建页。
   const hideSession = async (session: SidebarSession) => {
     const hiddenId = session.id;
     const hiddenEngine = session.engine ?? "agent";
     if (session.engine === "codex") {
       await codexClient.archiveSession(session.id);
       await codexList.refresh();
+    } else if (session.engine === "claude") {
+      await claudeClient.archiveSession(session.id);
+      await claudeList.refresh();
     } else {
       await list.removeSession(session);
     }
@@ -156,8 +168,14 @@ export function ChatPage({
       <SessionSidebar
         sessions={sessions}
         currentId={currentKey}
-        busy={list.busy || codexList.busy}
-        error={activeEngine === "codex" ? codexList.error : list.error}
+        busy={list.busy || codexList.busy || claudeList.busy}
+        error={
+          activeEngine === "codex"
+            ? codexList.error
+            : activeEngine === "claude"
+              ? claudeList.error
+              : list.error
+        }
         hasMore={codexList.hasMore}
         onLoadMore={codexList.hasMore ? () => void codexList.loadMore() : undefined}
         onCreate={onNewConversation}
@@ -172,12 +190,17 @@ export function ChatPage({
         }}
         brandSrc={brandSrc}
         codexIconSrc={codexIconSrc}
+        claudeIconSrc={claudeIconSrc}
       />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {sessionId ? (
           <header className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm leading-5 text-muted-foreground">
             <span className="shrink-0">
-              {activeEngine === "codex" ? "Codex 对话" : "Local 对话"}
+              {activeEngine === "codex"
+                ? "Codex 对话"
+                : activeEngine === "claude"
+                  ? "Claude 对话"
+                  : "Local 对话"}
             </span>
             {workspaceLabel ? (
               <>
@@ -227,6 +250,22 @@ export function ChatPage({
                 onListChange={codexList.refresh}
               />
             </>
+          ) : activeEngine === "claude" ? (
+            <>
+              {composerError ? (
+                <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-red-300">
+                  {composerError}
+                </div>
+              ) : null}
+              <ClaudePane
+                sessionId={sessionId}
+                workspace={frozenWorkspace || workspaceDraft}
+                pickFiles={pickFiles}
+                onOpenSession={(id) => onOpenSession(id, "claude")}
+                onNewConversation={onNewConversation}
+                onListChange={claudeList.refresh}
+              />
+            </>
           ) : (
             <>
               {timeline.error || composerError ? (
@@ -269,6 +308,7 @@ export function ChatPage({
             <NewConversation
               brandSrc={brandSrc}
               codexIconSrc={codexIconSrc}
+              claudeIconSrc={claudeIconSrc}
               engine={draftEngine}
               onEngine={(next) => {
                 setDraftEngine(next);
@@ -294,6 +334,15 @@ export function ChatPage({
                   onNewConversation={onNewConversation}
                   onListChange={codexList.refresh}
                 />
+              ) : draftEngine === "claude" ? (
+                <ClaudePane
+                  composeOnly
+                  workspace={workspaceDraft}
+                  pickFiles={pickFiles}
+                  onOpenSession={(id) => onOpenSession(id, "claude")}
+                  onNewConversation={onNewConversation}
+                  onListChange={claudeList.refresh}
+                />
               ) : (
                 <PromptBar
                   className="mx-0 max-w-none px-0 pb-0"
@@ -311,11 +360,16 @@ export function ChatPage({
   );
 }
 
-// mergeSessions 把 Agent 与 Codex 会话按更新时间合成侧栏列表，同引擎同 ID 只留更新的一条。
-function mergeSessions(agent: Session[], codex: CodexSession[]): SidebarSession[] {
+// mergeSessions 把 Local / Codex / Claude 会话按更新时间合成侧栏列表，同引擎同 ID 只留更新的一条。
+function mergeSessions(
+  agent: Session[],
+  codex: CodexSession[],
+  claude: ClaudeSession[],
+): SidebarSession[] {
   const mapped: SidebarSession[] = [
     ...agent.map((session) => ({ ...session, engine: "agent" as const })),
-    ...codex.map(asSidebarSession),
+    ...codex.map(asCodexSidebarSession),
+    ...claude.map(asClaudeSidebarSession),
   ];
   const seen = new Map<string, SidebarSession>();
   for (const session of mapped) {
@@ -328,8 +382,8 @@ function mergeSessions(agent: Session[], codex: CodexSession[]): SidebarSession[
   return [...seen.values()].sort((left, right) => (left.updated_at < right.updated_at ? 1 : -1));
 }
 
-// asSidebarSession 把 Codex 会话收成侧栏条目，目录用 cwd，标题优先 title。
-function asSidebarSession(session: CodexSession): SidebarSession {
+// asCodexSidebarSession 把 Codex 会话收成侧栏条目，目录用 cwd，标题优先 title。
+function asCodexSidebarSession(session: CodexSession): SidebarSession {
   return {
     id: session.id,
     tenant_id: "",
@@ -343,6 +397,24 @@ function asSidebarSession(session: CodexSession): SidebarSession {
     created_at: stampToIso(session.created_at),
     updated_at: stampToIso(session.updated_at),
     engine: "codex",
+  };
+}
+
+// asClaudeSidebarSession 把 Claude 会话收成侧栏条目；时间用本机实录的 Unix 秒。
+function asClaudeSidebarSession(session: ClaudeSession): SidebarSession {
+  return {
+    id: session.id,
+    tenant_id: "",
+    user_id: "",
+    agent_id: "claude",
+    workspace_id: "",
+    status: session.archived ? "archived" : "active",
+    last_event_seq: 1,
+    compaction_seq: 0,
+    summary: session.title || session.claude_session_id,
+    created_at: stampToIso(session.created_at),
+    updated_at: stampToIso(session.updated_at),
+    engine: "claude",
   };
 }
 
