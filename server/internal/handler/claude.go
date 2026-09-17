@@ -148,7 +148,7 @@ type ClaudeProgress struct {
 }
 
 type ClaudeTranscriptResponse struct {
-	Items []ClaudeProgress `json:"items"`
+	Items []ClaudeProgress  `json:"items"`
 	Usage *ClaudeTokenUsage `json:"usage,omitempty"`
 }
 
