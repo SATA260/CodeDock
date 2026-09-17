@@ -175,25 +175,81 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 }
 
+// writeSessionJSONL 把一条 Claude 实录写进当前测试的 projects 目录。
+func writeSessionJSONL(t *testing.T, id, body string) string {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", sanitizeProject(os.Getenv("GIT_REPO")))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, id+".jsonl")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestForkAndBind(t *testing.T) {
 	testEnv(t)
 	sess, err := Create("local")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := BindClaudeSession(sess.ID, "11111111-1111-1111-1111-111111111111"); err != nil {
+	parentID := "11111111-1111-1111-1111-111111111111"
+	writeSessionJSONL(t, parentID, `{"type":"user","sessionId":"`+parentID+`","message":{"content":"hello from parent"}}`+"\n")
+	if err := BindClaudeSession(sess.ID, parentID); err != nil {
 		t.Fatal(err)
 	}
 	if err := BindClaudeSession(sess.ID, "22222222-2222-2222-2222-222222222222"); err == nil {
 		t.Fatal("second bind")
 	}
 	child, err := Fork(sess.ID)
-	if err != nil || child.ID == "" || child.ID == sess.ID {
+	if err != nil || child.ID == "" || child.ID == sess.ID || child.ID == parentID {
 		t.Fatalf("%+v %v", child, err)
+	}
+	if !sessionFileExists(child.ID) {
+		t.Fatal("forked session missing on disk")
+	}
+	items, err := ReadTranscript(child.ID)
+	if err != nil || len(items) == 0 || items[0].Text != "hello from parent" {
+		t.Fatalf("child transcript %+v %v", items, err)
+	}
+	body, err := os.ReadFile(findSessionFile(child.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), child.ID) || strings.Contains(string(body), `"sessionId":"`+parentID+`"`) {
+		t.Fatalf("session id not rewritten: %s", body)
+	}
+	if child.Title != "hello from parent (1)" {
+		t.Fatalf("fork title %q", child.Title)
 	}
 	list, err := ListSessions()
 	if err != nil || len(list) == 0 {
 		t.Fatalf("%v %v", list, err)
+	}
+}
+
+func TestForkTitleSequence(t *testing.T) {
+	testEnv(t)
+	parentID := "11111111-1111-1111-1111-111111111111"
+	writeSessionJSONL(t, parentID, `{"type":"system","subtype":"title","title":"ping"}`+"\n"+`{"type":"user","message":{"content":"ping"}}`+"\n")
+	first, err := Fork(parentID)
+	if err != nil || first.Title != "ping (1)" {
+		t.Fatalf("first %+v %v", first, err)
+	}
+	second, err := Fork(parentID)
+	if err != nil || second.Title != "ping (2)" {
+		t.Fatalf("second %+v %v", second, err)
+	}
+	third, err := Fork(first.ID)
+	if err != nil || third.Title != "ping (3)" {
+		t.Fatalf("third %+v %v", third, err)
+	}
+	resetRuntime()
+	got, err := Get(second.ID)
+	if err != nil || got.Title != "ping (2)" {
+		t.Fatalf("persist %+v %v", got, err)
 	}
 }
 
@@ -360,6 +416,10 @@ func TestInvoke(t *testing.T) {
 	if _, err := Invoke(sess.ID, "review", ""); err != nil {
 		t.Fatal(err)
 	}
+	writeSessionJSONL(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", `{"type":"user","message":{"content":"slash fork"}}`+"\n")
+	if _, err := Invoke(sess.ID, "fork", ""); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Invoke(sess.ID, "branch", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +446,7 @@ func TestHydrateFixture(t *testing.T) {
 	if err != nil || sess.Title == "" {
 		t.Fatalf("%+v %v", sess, err)
 	}
-	items, err := Hydrate(id)
+	items, usage, err := HydrateDetail(id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,6 +458,66 @@ func TestHydrateFixture(t *testing.T) {
 		if !kinds[kind] {
 			t.Fatalf("missing %s in %+v", kind, items)
 		}
+	}
+	if usage.Used != 170 || usage.Window != 200000 {
+		t.Fatalf("usage %+v", usage)
+	}
+}
+
+// TestUsageFromLine 按官方公式取 used，[1m] 模型窗口为 1M，零用量行跳过。
+func TestUsageFromLine(t *testing.T) {
+	got, ok := usageFromLine([]byte(`{"type":"assistant","message":{"model":"claude-sonnet-4-6[1m]","usage":{"input_tokens":10,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":9}}}`))
+	if !ok || got.Used != 15 || got.Window != 1_000_000 {
+		t.Fatalf("1m %+v %v", got, ok)
+	}
+	if _, ok := usageFromLine([]byte(`{"type":"assistant","message":{"usage":{"input_tokens":0,"cache_read_input_tokens":0}}}`)); ok {
+		t.Fatal("zero usage")
+	}
+	if _, ok := usageFromLine([]byte(`{"type":"user","message":{"usage":{"input_tokens":9}}}`)); ok {
+		t.Fatal("user usage")
+	}
+}
+
+// TestReadSessionUsesJSONLTimestamps 确认列表时间来自实录行，而不是打开当下。
+func TestReadSessionUsesJSONLTimestamps(t *testing.T) {
+	testEnv(t)
+	cwd := os.Getenv("GIT_REPO")
+	cfg := os.Getenv("CLAUDE_CONFIG_DIR")
+	id := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	dir := filepath.Join(cfg, "projects", sanitizeProject(cwd))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Join([]string{
+		`{"type":"user","timestamp":"2026-01-02T03:04:05.000Z","message":{"content":"old ping"}}`,
+		`{"type":"assistant","timestamp":"2026-03-04T05:06:07.000Z","message":{"content":[{"type":"text","text":"pong"}]}}`,
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := ReadSession(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.CreatedAt != time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC).Unix() {
+		t.Fatalf("created_at %d", sess.CreatedAt)
+	}
+	if sess.UpdatedAt != time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC).Unix() {
+		t.Fatalf("updated_at %d", sess.UpdatedAt)
+	}
+	listed, err := ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range listed {
+		if item.ID == id && item.UpdatedAt == sess.UpdatedAt && item.CreatedAt == sess.CreatedAt {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("list missing timestamps: %+v", listed)
 	}
 }
 

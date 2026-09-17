@@ -123,7 +123,17 @@ func (f *FakeHandler) Handle(env pkg.Envelope) []pkg.Envelope {
 		f.markLoaded(th.ID)
 		body, _ := json.Marshal(map[string]any{"thread": th, "model": "gpt-5.6", "cwd": "/tmp", "approvalPolicy": "on-request", "sandbox": "workspace-write"})
 		return []pkg.Envelope{{ID: env.ID, Result: body}}
-	case pkg.MethodThreadArchive, pkg.MethodThreadUnarchive, pkg.MethodThreadNameSet, pkg.MethodThreadCompact, pkg.MethodReviewStart, pkg.MethodTurnInterrupt:
+	case pkg.MethodThreadNameSet:
+		id := jsonField(env.Params, "threadId")
+		name := jsonField(env.Params, "name")
+		f.mu.Lock()
+		if th, ok := f.Threads[id]; ok && name != "" {
+			th.Name = name
+			f.Threads[id] = th
+		}
+		f.mu.Unlock()
+		return []pkg.Envelope{{ID: env.ID, Result: json.RawMessage(`{}`)}}
+	case pkg.MethodThreadArchive, pkg.MethodThreadUnarchive, pkg.MethodThreadCompact, pkg.MethodReviewStart, pkg.MethodTurnInterrupt:
 		if env.Method == pkg.MethodTurnInterrupt {
 			tid := jsonField(env.Params, "threadId")
 			turnID := jsonField(env.Params, "turnId")

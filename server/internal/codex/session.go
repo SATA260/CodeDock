@@ -180,12 +180,13 @@ func (rt *Runtime) Archive(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// Fork 按官方历史分叉。
+// Fork 按官方历史分叉，标题加 (1)(2)(3)，原对话不动。
 func (rt *Runtime) Fork(ctx context.Context, sessionID string) (pkg.Session, error) {
 	client, err := rt.requireReady(ctx)
 	if err != nil {
 		return pkg.Session{}, err
 	}
+	base := rt.threadTitle(ctx, client, sessionID)
 	res, err := client.ThreadFork(ctx, pkg.ThreadForkParams{ThreadID: sessionID})
 	if err != nil {
 		return pkg.Session{}, mapRPC(err)
@@ -198,7 +199,43 @@ func (rt *Runtime) Fork(ctx context.Context, sessionID string) (pkg.Session, err
 	dst.mu.Lock()
 	dst.settings = settings
 	dst.mu.Unlock()
+	title := nextForkTitle(base, rt.sessionTitles(ctx))
+	if err := mapRPC(client.ThreadSetName(ctx, res.Thread.ID, title)); err != nil {
+		return pkg.Session{}, err
+	}
+	res.Thread.Name = title
 	return pkg.MapThread(res.Thread, false, ""), nil
+}
+
+// threadTitle 读官方 thread 标题，没有名字则用预览。
+func (rt *Runtime) threadTitle(ctx context.Context, client *pkg.Client, sessionID string) string {
+	res, err := client.ThreadRead(ctx, pkg.ThreadReadParams{ThreadID: sessionID})
+	if err != nil {
+		return ""
+	}
+	if name := strings.TrimSpace(res.Thread.Name); name != "" {
+		return name
+	}
+	return strings.TrimSpace(res.Thread.Preview)
+}
+
+// sessionTitles 收集本机已有对话标题，用来给 fork 编号。
+func (rt *Runtime) sessionTitles(ctx context.Context) []string {
+	page, err := rt.ListSessions(ctx, false, "")
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(page.Sessions))
+	for _, sess := range page.Sessions {
+		if sess.Title != "" {
+			out = append(out, sess.Title)
+			continue
+		}
+		if sess.Preview != "" {
+			out = append(out, sess.Preview)
+		}
+	}
+	return out
 }
 
 // Effective 返回 Codex 默认与用户覆盖合并后的配置。

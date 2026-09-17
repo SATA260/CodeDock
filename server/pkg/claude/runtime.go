@@ -5,6 +5,7 @@ import (
 	"io"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -15,6 +16,8 @@ type memSession struct {
 	Title           string
 	Archived        bool
 	ActiveTurnID    string
+	CreatedAt       int64 // 本机实录或创建时刻，Unix 秒。
+	UpdatedAt       int64 // 本机实录最近一条或上次写入，Unix 秒。
 	Overrides       Settings
 	Overridden      []string
 	Draft           Input
@@ -91,9 +94,12 @@ func internLocked(id string) *memSession {
 			return sess
 		}
 	}
+	now := time.Now().Unix()
 	sess := &memSession{
-		ID:    id,
-		Draft: Input{Mentions: []string{}, Images: []string{}},
+		ID:        id,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Draft:     Input{Mentions: []string{}, Images: []string{}},
 	}
 	rt.sessions[id] = sess
 	return sess
@@ -106,6 +112,8 @@ func (s *memSession) snapshot() Session {
 		Title:           s.Title,
 		ActiveTurnID:    s.ActiveTurnID,
 		Archived:        s.Archived,
+		CreatedAt:       s.CreatedAt,
+		UpdatedAt:       s.UpdatedAt,
 	}
 }
 

@@ -186,6 +186,18 @@ func TestAuthAndParseMore(t *testing.T) {
 	if wrapErr(errInvalid, "") != errInvalid {
 		t.Fatal("wrap empty")
 	}
+	if forkTitleStem("ping (2)") != "ping" || forkTitleStem("ping") != "ping" {
+		t.Fatal("stem")
+	}
+	if nextForkTitle("ping", []string{"ping"}) != "ping (1)" {
+		t.Fatal("first")
+	}
+	if nextForkTitle("ping (1)", []string{"ping", "ping (1)", "ping (2)"}) != "ping (3)" {
+		t.Fatal("next")
+	}
+	if nextForkTitle("", nil) != "fork (1)" {
+		t.Fatal("empty")
+	}
 	if parseResultSessionID("") != "" {
 		t.Fatal("empty result")
 	}
@@ -386,15 +398,13 @@ func TestForkWithoutBind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := Fork(sess.ID)
-	if err != nil || child.ID == "" {
-		t.Fatal(err)
+	if _, err := Fork(sess.ID); err == nil {
+		t.Fatal("fork without transcript")
 	}
-	id, err := ForkSession("")
-	if err != nil || id == "" {
-		t.Fatal(err)
+	if _, err := ForkSession(""); err == nil {
+		t.Fatal("empty fork")
 	}
-	id, err = StartSession("", Settings{})
+	id, err := StartSession("", Settings{})
 	if err != nil || id == "" {
 		t.Fatal(err)
 	}

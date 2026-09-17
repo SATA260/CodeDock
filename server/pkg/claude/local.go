@@ -8,7 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
+
+	"github.com/google/uuid"
 )
 
 func configDir() string {
@@ -75,7 +78,7 @@ func catalogModels() []ModelInfo {
 }
 
 func catalogModes() []ModeInfo {
-	ids := []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
+	ids := []string{"default", "acceptEdits", "plan", "bypassPermissions", "auto", "dontAsk"}
 	out := make([]ModeInfo, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, ModeInfo{ID: id, Kind: "permission"})
@@ -99,14 +102,129 @@ func sessionFileExists(sessionID string) bool {
 	return findSessionFile(sessionID) != ""
 }
 
-func parseTitleAndProgress(path string) (string, []Progress, error) {
+// copyForkedSession 按官方 --fork-session 落盘：同目录复制实录，换新 session ID。
+func copyForkedSession(src string) (string, error) {
+	from := strings.TrimSuffix(filepath.Base(src), ".jsonl")
+	id := uuid.NewString()
+	dst := filepath.Join(filepath.Dir(src), id+".jsonl")
+	body, err := os.ReadFile(src)
+	if err != nil {
+		return "", wrapErr(errUnavailable, "%s", err.Error())
+	}
+	if err := os.WriteFile(dst, rewriteSessionIDs(body, from, id), 0o644); err != nil {
+		return "", wrapErr(errUnavailable, "%s", err.Error())
+	}
+	return id, nil
+}
+
+// rewriteSessionIDs 只改实录行顶层 sessionId / session_id，不改正文里的编号。
+func rewriteSessionIDs(body []byte, from, to string) []byte {
+	if from == "" || from == to {
+		return body
+	}
+	lines := strings.Split(string(body), "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			out = append(out, line)
+			continue
+		}
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(trimmed), &obj); err != nil {
+			out = append(out, line)
+			continue
+		}
+		changed := false
+		for _, key := range []string{"sessionId", "session_id"} {
+			if value, ok := obj[key].(string); ok && value == from {
+				obj[key] = to
+				changed = true
+			}
+		}
+		if !changed {
+			out = append(out, line)
+			continue
+		}
+		rewritten, err := json.Marshal(obj)
+		if err != nil {
+			out = append(out, line)
+			continue
+		}
+		out = append(out, string(rewritten))
+	}
+	return []byte(strings.Join(out, "\n"))
+}
+
+// applySessionTitle 把官方 system/title 行写进实录，fork 后的序号才能留下。
+func applySessionTitle(path, title string) error {
+	title = strings.TrimSpace(title)
+	if path == "" || title == "" {
+		return nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return wrapErr(errUnavailable, "%s", err.Error())
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"type":    "system",
+		"subtype": "title",
+		"title":   title,
+	})
+	if err != nil {
+		return wrapErr(errUnavailable, "%s", err.Error())
+	}
+	lines := strings.Split(string(body), "\n")
+	out := make([]string, 0, len(lines)+1)
+	replaced := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			out = append(out, line)
+			continue
+		}
+		if isTitleLine([]byte(trimmed)) {
+			if !replaced {
+				out = append(out, string(encoded))
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, line)
+	}
+	if !replaced {
+		out = append([]string{string(encoded)}, out...)
+	}
+	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
+}
+
+// isTitleLine 认官方实录里的会话标题行。
+func isTitleLine(line []byte) bool {
+	var parsed ndjsonLine
+	if err := json.Unmarshal(line, &parsed); err != nil {
+		return false
+	}
+	return parsed.Type == "system" && parsed.Subtype == "title"
+}
+
+type parsedSessionFile struct {
+	Title     string
+	Items     []Progress
+	Usage     TokenUsage
+	CreatedAt int64
+	UpdatedAt int64
+}
+
+// parseSessionFile 读本机 JSONL：标题、给人看的实录，以及首末 timestamp。
+func parseSessionFile(path string) (parsedSessionFile, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return "", nil, err
+		return parsedSessionFile{}, err
 	}
 	defer file.Close()
-	title := ""
-	items := make([]Progress, 0)
+	created, updated := fileUnixTimes(path)
+	firstTS, lastTS := int64(0), int64(0)
+	out := parsedSessionFile{Items: make([]Progress, 0), CreatedAt: created, UpdatedAt: updated}
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
@@ -114,20 +232,70 @@ func parseTitleAndProgress(path string) (string, []Progress, error) {
 		if len(line) == 0 {
 			continue
 		}
-		if t := titleFromLine(line); t != "" && title == "" {
-			title = t
+		if ts := timestampFromLine(line); ts > 0 {
+			if firstTS == 0 {
+				firstTS = ts
+			}
+			lastTS = ts
+		}
+		if t := titleFromLine(line); t != "" && out.Title == "" {
+			out.Title = t
 		}
 		if item, ok := progressFromLine(line); ok {
-			items = append(items, item)
-			if title == "" && item.Kind == ProgressKindUser && item.Text != "" {
-				title = clipTitle(item.Text)
+			out.Items = append(out.Items, item)
+			if out.Title == "" && item.Kind == ProgressKindUser && item.Text != "" {
+				out.Title = clipTitle(item.Text)
 			}
+		}
+		if usage, ok := usageFromLine(line); ok {
+			out.Usage = usage
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return title, items, err
+		return out, err
 	}
-	return title, items, nil
+	if firstTS > 0 {
+		out.CreatedAt = firstTS
+	}
+	if lastTS > 0 {
+		out.UpdatedAt = lastTS
+	}
+	return out, nil
+}
+
+// parseTitleAndProgress 兼容旧调用，只取标题和实录。
+func parseTitleAndProgress(path string) (string, []Progress, error) {
+	parsed, err := parseSessionFile(path)
+	return parsed.Title, parsed.Items, err
+}
+
+// fileUnixTimes 用文件 mtime 当创建/更新回落，单位 Unix 秒。
+func fileUnixTimes(path string) (created, updated int64) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, 0
+	}
+	updated = info.ModTime().Unix()
+	return updated, updated
+}
+
+// timestampFromLine 读 Claude 实录行上的 ISO timestamp。
+func timestampFromLine(line []byte) int64 {
+	var parsed ndjsonLine
+	if err := json.Unmarshal(line, &parsed); err != nil {
+		return 0
+	}
+	raw := strings.TrimSpace(parsed.Timestamp)
+	if raw == "" {
+		return 0
+	}
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return t.Unix()
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.Unix()
+	}
+	return 0
 }
 
 func bytesTrim(b []byte) []byte {
@@ -172,9 +340,9 @@ func readSettingsFile() Settings {
 		settings.Effort = parsed.EffortLevel
 	}
 	if parsed.PermissionMode != "" {
-		settings.PermissionMode = parsed.PermissionMode
+		settings.PermissionMode = canonicalPermissionMode(parsed.PermissionMode)
 	} else if parsed.DefaultMode != "" {
-		settings.PermissionMode = parsed.DefaultMode
+		settings.PermissionMode = canonicalPermissionMode(parsed.DefaultMode)
 	}
 	return settings
 }
@@ -257,12 +425,15 @@ func ReadSession(claudeSessionID string) (Session, error) {
 	}
 	title := ""
 	fileID := ""
+	createdAt, updatedAt := int64(0), int64(0)
 	if path != "" {
-		parsed, _, err := parseTitleAndProgress(path)
+		parsed, err := parseSessionFile(path)
 		if err != nil {
 			return Session{}, err
 		}
-		title = parsed
+		title = parsed.Title
+		createdAt = parsed.CreatedAt
+		updatedAt = parsed.UpdatedAt
 		fileID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	}
 	rt.mu.Lock()
@@ -273,6 +444,12 @@ func ReadSession(claudeSessionID string) (Session, error) {
 	}
 	if sess.ClaudeSessionID == "" && fileID != "" {
 		sess.ClaudeSessionID = fileID
+	}
+	if createdAt > 0 {
+		sess.CreatedAt = createdAt
+	}
+	if updatedAt > 0 {
+		sess.UpdatedAt = updatedAt
 	}
 	out := sess.snapshot()
 	if out.Title == "" {
@@ -319,6 +496,12 @@ func ReadSessions() ([]Session, error) {
 
 // ReadTranscript 从本机 Claude 读给人看的实录。
 func ReadTranscript(claudeSessionID string) ([]Progress, error) {
+	items, _, err := ReadTranscriptAndUsage(claudeSessionID)
+	return items, err
+}
+
+// ReadTranscriptAndUsage 回放实录，并带上官方最后一次用量。
+func ReadTranscriptAndUsage(claudeSessionID string) ([]Progress, TokenUsage, error) {
 	id := claudeSessionID
 	rt.mu.Lock()
 	if sess, ok := rt.sessions[claudeSessionID]; ok && sess.ClaudeSessionID != "" {
@@ -327,13 +510,14 @@ func ReadTranscript(claudeSessionID string) ([]Progress, error) {
 	rt.mu.Unlock()
 	path := findSessionFile(id)
 	if path == "" {
-		return []Progress{}, nil
+		return []Progress{}, TokenUsage{}, nil
 	}
-	_, items, err := parseTitleAndProgress(path)
+	parsed, err := parseSessionFile(path)
+	items := parsed.Items
 	if items == nil {
 		items = []Progress{}
 	}
-	return items, err
+	return items, parsed.Usage, err
 }
 
 // ReadSettings 从本机 Claude 读生效配置。

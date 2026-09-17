@@ -4,10 +4,12 @@ import type { Session } from "@codedock/core/chat";
 import { Button, cn } from "@codedock/ui";
 import { Archive, PlusIcon } from "lucide-react";
 
-import { relativeTime, sessionTitle, shortId } from "./lib/format.ts";
+import type { SessionEngine } from "./chat-page.tsx";
+import { relativeTime, sessionTitle, sessionTitleParts, shortId } from "./lib/format.ts";
 
-export type SidebarSession = Session & { engine?: "agent" | "codex" };
+export type SidebarSession = Session & { engine?: SessionEngine };
 
+// SessionSidebar 混排 Local / Codex / Claude，引擎只靠图标区分。
 export function SessionSidebar({
   sessions,
   currentId,
@@ -22,6 +24,7 @@ export function SessionSidebar({
   canRecoverCurrent = false,
   brandSrc,
   codexIconSrc,
+  claudeIconSrc,
 }: {
   sessions: SidebarSession[];
   currentId?: string;
@@ -30,12 +33,13 @@ export function SessionSidebar({
   hasMore?: boolean;
   onLoadMore?: () => void;
   onCreate: () => void;
-  onSelect: (id: string, engine?: "agent" | "codex") => void;
+  onSelect: (id: string, engine?: SessionEngine) => void;
   onRecover?: (runId: string) => Promise<void>;
   onArchive?: (session: SidebarSession) => Promise<void>;
   canRecoverCurrent?: boolean;
   brandSrc?: string;
   codexIconSrc?: string;
+  claudeIconSrc?: string;
 }) {
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-background">
@@ -80,17 +84,16 @@ export function SessionSidebar({
                         engine={engine}
                         brandSrc={brandSrc}
                         codexIconSrc={codexIconSrc}
+                        claudeIconSrc={claudeIconSrc}
                       />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">
-                          {sessionTitle(session.id, session.summary)}
-                        </span>
+                        <SidebarSessionTitle id={session.id} summary={session.summary} />
                         <span className="mt-0.5 block truncate text-xs text-muted-foreground/70">
                           {relativeTime(session.updated_at) || shortId(session.id)}
                         </span>
                       </span>
                     </button>
-                    {engine !== "codex" &&
+                    {engine === "agent" &&
                     session.needs_recover &&
                     session.active_run_id &&
                     onRecover &&
@@ -140,14 +143,28 @@ export function SessionSidebar({
   );
 }
 
+// SidebarSessionTitle 正文可裁，末尾 (n) 不参与省略。
+function SidebarSessionTitle({ id, summary }: { id: string; summary?: string }) {
+  const { stem, suffix } = sessionTitleParts(id, summary);
+  return (
+    <span className="flex min-w-0 text-sm font-medium">
+      <span className="min-w-0 truncate">{stem}</span>
+      {suffix ? <span className="shrink-0">{suffix}</span> : null}
+    </span>
+  );
+}
+
+// SessionEngineMark 只用品牌图区分引擎，不再贴文字徽章。
 function SessionEngineMark({
   engine,
   brandSrc,
   codexIconSrc,
+  claudeIconSrc,
 }: {
-  engine: "agent" | "codex";
+  engine: SessionEngine;
   brandSrc?: string;
   codexIconSrc?: string;
+  claudeIconSrc?: string;
 }) {
   if (engine === "codex") {
     if (!codexIconSrc) {
@@ -158,6 +175,18 @@ function SessionEngineMark({
         src={codexIconSrc}
         alt="Codex"
         className="size-8 shrink-0 rounded-[8px] shadow-[0_0_0_1px_rgba(255,255,255,0.28),0_0_12px_rgba(88,122,255,0.55)]"
+      />
+    );
+  }
+  if (engine === "claude") {
+    if (!claudeIconSrc) {
+      return null;
+    }
+    return (
+      <img
+        src={claudeIconSrc}
+        alt="Claude"
+        className="size-8 shrink-0 rounded-[8px] shadow-[0_0_0_1px_rgba(255,255,255,0.22),0_0_12px_rgba(217,119,87,0.55)]"
       />
     );
   }

@@ -22,16 +22,22 @@ func AppendProgress(sessionID, turnID string, item Progress) error {
 
 // Hydrate 按本机 Claude 已落下的记录回放。
 func Hydrate(sessionID string) ([]Progress, error) {
+	items, _, err := HydrateDetail(sessionID)
+	return items, err
+}
+
+// HydrateDetail 回放实录并带上官方最后一次上下文用量。
+func HydrateDetail(sessionID string) ([]Progress, TokenUsage, error) {
 	if sessionID == "" {
-		return []Progress{}, wrapErr(errInvalid, "session_id is required")
+		return []Progress{}, TokenUsage{}, wrapErr(errInvalid, "session_id is required")
 	}
 	sess, err := Get(sessionID)
 	if err != nil {
-		return []Progress{}, err
+		return []Progress{}, TokenUsage{}, err
 	}
 	id := sess.ClaudeSessionID
 	if id == "" {
 		id = sess.ID
 	}
-	return ReadTranscript(id)
+	return ReadTranscriptAndUsage(id)
 }

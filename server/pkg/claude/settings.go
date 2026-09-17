@@ -47,8 +47,11 @@ func Apply(sessionID string, patch Settings) (Settings, error) {
 	if patch.Model != "" && !knownModel(models, patch.Model) {
 		return Settings{}, wrapErr(errInvalid, "unknown model %s", patch.Model)
 	}
-	if patch.PermissionMode != "" && !knownMode(modes, patch.PermissionMode) {
-		return Settings{}, wrapErr(errInvalid, "unknown permission mode %s", patch.PermissionMode)
+	if patch.PermissionMode != "" {
+		patch.PermissionMode = canonicalPermissionMode(patch.PermissionMode)
+		if !knownMode(modes, patch.PermissionMode) {
+			return Settings{}, wrapErr(errInvalid, "unknown permission mode %s", patch.PermissionMode)
+		}
 	}
 	if patch.Model != "" && patch.Effort != "" && !knownEffort(models, patch.Model, patch.Effort) {
 		return Settings{}, wrapErr(errInvalid, "unknown effort %s", patch.Effort)
@@ -87,7 +90,16 @@ func knownModel(models []ModelInfo, id string) bool {
 	return false
 }
 
+// canonicalPermissionMode 把官方别名收成 --permission-mode 用的 id。
+func canonicalPermissionMode(id string) string {
+	if id == "manual" {
+		return "default"
+	}
+	return id
+}
+
 func knownMode(modes []ModeInfo, id string) bool {
+	id = canonicalPermissionMode(id)
 	for _, mode := range modes {
 		if mode.ID == id {
 			return true

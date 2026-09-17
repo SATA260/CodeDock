@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 
@@ -150,7 +151,7 @@ func TestClaudeHTTPContracts(t *testing.T) {
 	assertJSONKeys(t, handler.ClaudeListModesResponse{}, "modes")
 	assertJSONKeys(t, handler.ClaudeCommand{}, "name", "action", "hint")
 	assertJSONKeys(t, handler.ClaudeListCommandsResponse{}, "commands")
-	assertJSONKeys(t, handler.ClaudeSession{}, "id", "claude_session_id", "title", "active_turn_id", "archived")
+	assertJSONKeys(t, handler.ClaudeSession{}, "id", "claude_session_id", "title", "active_turn_id", "archived", "created_at", "updated_at")
 	assertJSONKeys(t, handler.ClaudeSessionResponse{}, "session")
 	assertJSONKeys(t, handler.ClaudeListSessionsResponse{}, "sessions")
 	assertJSONKeys(t, handler.ClaudeSettingsResponse{}, "model", "effort", "permission_mode", "cwd", "overridden")
@@ -235,5 +236,45 @@ func TestClaudeSkeletonHTTP(t *testing.T) {
 	decodeClaude(t, doClaude(t, router, http.MethodPost, "/claude/asks/r1/reject-unknown", `{"session_id":"s1","turn_id":"t1"}`), &ok)
 
 	decodeClaude(t, doClaude(t, router, http.MethodPost, "/claude/sessions/s1/archive", ""), &ok)
+
+	var live handler.ClaudeSessionResponse
+	decodeClaude(t, doClaude(t, router, http.MethodGet, "/claude/sessions/s1", ""), &live)
+	resumeID := live.Session.ClaudeSessionID
+	if resumeID == "" {
+		resumeID = live.Session.ID
+	}
+	if resumeID == "" {
+		resumeID = "s1"
+	}
+	writeClaudeJSONL(t, resumeID, `{"type":"user","sessionId":"`+resumeID+`","message":{"content":"hi"}}`+"\n")
 	decodeClaude(t, doClaude(t, router, http.MethodPost, "/claude/sessions/s1/fork", ""), &created)
+	if created.Session.ID == "" || created.Session.ID == "s1" || created.Session.ID == resumeID {
+		t.Fatalf("fork %+v", created)
+	}
+}
+
+// writeClaudeJSONL 把一条 Claude 实录写进当前测试的 projects 目录。
+func writeClaudeJSONL(t *testing.T, id, body string) {
+	t.Helper()
+	cfg := os.Getenv("CLAUDE_CONFIG_DIR")
+	cwd := os.Getenv("GIT_REPO")
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		abs = cwd
+	}
+	var name strings.Builder
+	for _, r := range abs {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			name.WriteRune(r)
+		} else {
+			name.WriteByte('-')
+		}
+	}
+	dir := filepath.Join(cfg, "projects", name.String())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import type { CodexViewState, TimelineItem } from "@codedock/core/codex";
+import type { ClaudeTimelineItem } from "@codedock/core/claude";
 import {
   cn,
   Conversation,
@@ -20,48 +20,49 @@ import {
 import { GitFork } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
-export function CodexTimeline({
-  state,
+// ClaudeTimeline 用 Conversation 的 ResizeObserver 跟随最新一条，不轮询量高。
+export function ClaudeTimeline({
+  items,
   loading = false,
   scrollKey,
   canFork = false,
   onFork,
 }: {
-  state: CodexViewState;
+  items: ClaudeTimelineItem[];
   loading?: boolean;
   scrollKey?: string;
   canFork?: boolean;
   onFork?: () => Promise<void>;
 }) {
-  const items = state.items.filter((item) => item.kind !== "turn" || Boolean(item.text));
-  const last = items[items.length - 1];
+  const visible = items.filter((item) => item.kind !== "notice" || Boolean(item.text));
+  const last = visible[visible.length - 1];
   const followKey = last?.id;
-  const streaming = items.some((item) => item.streaming);
-  if (items.length === 0) {
+  const streaming = visible.some((item) => item.streaming);
+  if (visible.length === 0) {
     if (loading) {
       return (
-        <Conversation key={scrollKey ?? "codex-draft"}>
+        <Conversation key={scrollKey ?? "claude-draft"}>
           <ConversationContent scrollKey={scrollKey} />
         </Conversation>
       );
     }
     return (
-      <Conversation key={scrollKey ?? "codex-draft"}>
+      <Conversation key={scrollKey ?? "claude-draft"}>
         <ConversationEmptyState
-          title="开始一段 Codex 对话"
-          description="在输入栏下方选择模型、强度、模式和权限，点选即生效。左侧 + 挂文件，消息下可 fork。"
+          title="开始一段 Claude 对话"
+          description="在输入栏下方选择模型、强度和权限档，点选即生效。左侧 + 挂文件，消息下可 fork。"
         />
       </Conversation>
     );
   }
   return (
-    <Conversation key={scrollKey ?? "codex-draft"}>
+    <Conversation key={scrollKey ?? "claude-draft"}>
       <ConversationContent scrollKey={scrollKey} followKey={followKey} streaming={streaming}>
-        {items.map((item, index) => (
+        {visible.map((item, index) => (
           <TimelineRow
             key={`${item.id}-${index}`}
             item={item}
-            latest={index === items.length - 1}
+            latest={index === visible.length - 1}
             canFork={canFork}
             onFork={onFork}
           />
@@ -71,13 +72,14 @@ export function CodexTimeline({
   );
 }
 
+// TimelineRow 按实录种类落到与 Local / Codex 相同的瀑布组件。
 function TimelineRow({
   item,
   latest = false,
   canFork,
   onFork,
 }: {
-  item: TimelineItem;
+  item: ClaudeTimelineItem;
   latest?: boolean;
   canFork: boolean;
   onFork?: () => Promise<void>;
@@ -123,10 +125,10 @@ function TimelineRow({
       return (
         <div {...latestProps}>
           <Tool defaultOpen>
-            <ToolHeader type={`tool-${item.command || "command"}`} state={item.status === "completed" ? "completed" : "running"} />
+            <ToolHeader type={`tool-${item.command || "command"}`} state={item.streaming ? "running" : "completed"} />
             <ToolContent>
-              <Fold watch={item.text}>
-                <ToolOutput output={item.text} />
+              <Fold watch={item.text || item.command}>
+                <ToolOutput output={item.text || item.command} />
               </Fold>
             </ToolContent>
           </Tool>
@@ -147,22 +149,30 @@ function TimelineRow({
       return (
         <div {...latestProps}>
           <Fold watch={item.text}>
-            <div className="text-sm text-muted-foreground whitespace-pre-wrap">{item.text}</div>
+            <div className="whitespace-pre-wrap text-sm text-muted-foreground">{item.text}</div>
           </Fold>
         </div>
       );
     case "notice":
-    case "turn":
       return (
         <div className="text-xs text-muted-foreground" {...latestProps}>
           {item.text}
         </div>
       );
     default:
-      return null;
+      return (
+        <div {...latestProps}>
+          <Message from="assistant">
+            <MessageContent>
+              <MessageResponse>{item.text || item.kind}</MessageResponse>
+            </MessageContent>
+          </Message>
+        </div>
+      );
   }
 }
 
+// ForkAction 在一条消息下按官方 --fork-session 开出独立副本。
 function ForkAction({
   align,
   disabled,
@@ -190,6 +200,7 @@ function ForkAction({
   );
 }
 
+// Fold 用 ResizeObserver 判断是否溢出，不按定时器量高。
 function Fold({
   watch,
   disabled = false,

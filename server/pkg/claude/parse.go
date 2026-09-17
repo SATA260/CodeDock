@@ -15,6 +15,7 @@ type ndjsonLine struct {
 	Message   json.RawMessage `json:"message"`
 	Event     json.RawMessage `json:"event"`
 	Title     string          `json:"title"`
+	Timestamp string          `json:"timestamp"` // Claude 实录行上的 ISO 时间。
 }
 
 type contentBlock struct {
@@ -28,7 +29,16 @@ type contentBlock struct {
 
 type messageBody struct {
 	Role    string          `json:"role"`
+	Model   string          `json:"model"`
 	Content json.RawMessage `json:"content"`
+	Usage   tokenUsageBody  `json:"usage"`
+}
+
+type tokenUsageBody struct {
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 }
 
 type controlRequest struct {
@@ -50,6 +60,31 @@ func titleFromLine(line []byte) string {
 		return parsed.Title
 	}
 	return ""
+}
+
+// usageFromLine 读官方 assistant.message.usage，used 不含 output。
+func usageFromLine(line []byte) (TokenUsage, bool) {
+	var parsed ndjsonLine
+	if err := json.Unmarshal(line, &parsed); err != nil || parsed.Type != "assistant" {
+		return TokenUsage{}, false
+	}
+	var body messageBody
+	if err := json.Unmarshal(parsed.Message, &body); err != nil {
+		return TokenUsage{}, false
+	}
+	used := body.Usage.InputTokens + body.Usage.CacheCreationInputTokens + body.Usage.CacheReadInputTokens
+	if used <= 0 {
+		return TokenUsage{}, false
+	}
+	return TokenUsage{Used: used, Window: contextWindowSize(body.Model)}, true
+}
+
+// contextWindowSize 对齐官方 vp/JL：默认 200k，模型名带 [1m] 则 1M。
+func contextWindowSize(model string) int64 {
+	if strings.Contains(strings.ToLower(model), "[1m]") {
+		return 1_000_000
+	}
+	return 200_000
 }
 
 func progressFromLine(line []byte) (Progress, bool) {

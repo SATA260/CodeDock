@@ -248,7 +248,7 @@ export function useCodexSession(sessionId: string | undefined) {
     try {
       return await client.forkSession(sessionId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "分叉失败");
+      setError(err instanceof Error ? err.message : "fork 失败");
       return undefined;
     }
   }, [client, sessionId]);

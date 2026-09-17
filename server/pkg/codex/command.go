@@ -6,7 +6,7 @@ type CommandAction string
 const (
 	ActionApplySettings CommandAction = "apply_settings" // 交给官方配置改值。
 	ActionTurn          CommandAction = "turn"           // 交给回合，如发送、打断。
-	ActionSession       CommandAction = "session"        // 交给会话，如分叉、归档、改标题。
+	ActionSession       CommandAction = "session"        // 交给会话，如 fork、归档、改标题。
 	ActionAttach        CommandAction = "attach"         // 交给附件，如挂文件、贴图。
 	ActionHint          CommandAction = "hint"           // 本模块不落地，只提示去终端改 Codex 配置。
 )

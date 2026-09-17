@@ -111,6 +111,8 @@ type ClaudeSession struct {
 	Title           string `json:"title"`
 	ActiveTurnID    string `json:"active_turn_id"`
 	Archived        bool   `json:"archived"`
+	CreatedAt       int64  `json:"created_at"` // 本机实录第一条时间，Unix 秒。
+	UpdatedAt       int64  `json:"updated_at"` // 本机实录最近一条时间，Unix 秒。
 }
 
 type ClaudeSessionResponse struct {
@@ -147,6 +149,12 @@ type ClaudeProgress struct {
 
 type ClaudeTranscriptResponse struct {
 	Items []ClaudeProgress `json:"items"`
+	Usage *ClaudeTokenUsage `json:"usage,omitempty"`
+}
+
+type ClaudeTokenUsage struct {
+	Used   int64 `json:"used"`
+	Window int64 `json:"window"`
 }
 
 type ClaudeOKResponse struct {
@@ -272,7 +280,7 @@ func (a *API) ClaudeArchiveSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, claudeOK())
 }
 
-// ClaudeForkSession 按已落盘历史分叉出新对话和新的 Claude session。
+// ClaudeForkSession 按官方 --fork-session 复制已落盘实录，换新 Claude session。
 func (a *API) ClaudeForkSession(w http.ResponseWriter, r *http.Request) {
 	sess, err := claude.Fork(claudeSessionID(r))
 	if err != nil {
@@ -386,12 +394,15 @@ func (a *API) ClaudeStartTurn(w http.ResponseWriter, r *http.Request) {
 
 // ClaudeHydrate 按本机 Claude 已落下的记录回放。
 func (a *API) ClaudeHydrate(w http.ResponseWriter, r *http.Request) {
-	items, err := claude.Hydrate(claudeSessionID(r))
+	items, usage, err := claude.HydrateDetail(claudeSessionID(r))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, ClaudeTranscriptResponse{Items: mapClaudeProgress(items)})
+	writeJSON(w, http.StatusOK, ClaudeTranscriptResponse{
+		Items: mapClaudeProgress(items),
+		Usage: mapClaudeUsage(usage),
+	})
 }
 
 // ClaudeCancelTurn 用户手动打断当前一轮，并向 Claude Code 传播取消。
@@ -469,6 +480,8 @@ func mapClaudeSession(sess claude.Session) ClaudeSession {
 		Title:           sess.Title,
 		ActiveTurnID:    sess.ActiveTurnID,
 		Archived:        sess.Archived,
+		CreatedAt:       sess.CreatedAt,
+		UpdatedAt:       sess.UpdatedAt,
 	}
 }
 
@@ -532,4 +545,12 @@ func mapClaudeProgress(items []claude.Progress) []ClaudeProgress {
 		})
 	}
 	return out
+}
+
+// mapClaudeUsage 只在官方实录里有用量时带上 used / window。
+func mapClaudeUsage(usage claude.TokenUsage) *ClaudeTokenUsage {
+	if usage.Used <= 0 || usage.Window <= 0 {
+		return nil
+	}
+	return &ClaudeTokenUsage{Used: usage.Used, Window: usage.Window}
 }

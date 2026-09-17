@@ -245,6 +245,33 @@ func loopRT(t *testing.T, fake *FakeHandler) *Runtime {
 	return rt
 }
 
+func TestForkTitleSequence(t *testing.T) {
+	rt := loopRT(t, nil)
+	ctx := context.Background()
+	session, err := rt.CreateSession(ctx, pkg.Settings{Cwd: "/tmp", Model: "gpt-5.6"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Rename(ctx, session.ID, "ping"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := rt.Fork(ctx, session.ID)
+	if err != nil || first.Title != "ping (1)" {
+		t.Fatalf("first %+v %v", first, err)
+	}
+	second, err := rt.Fork(ctx, session.ID)
+	if err != nil || second.Title != "ping (2)" {
+		t.Fatalf("second %+v %v", second, err)
+	}
+	third, err := rt.Fork(ctx, first.ID)
+	if err != nil || third.Title != "ping (3)" {
+		t.Fatalf("third %+v %v", third, err)
+	}
+	if nextForkTitle("ping", []string{"ping"}) != "ping (1)" || nextForkTitle("", nil) != "fork (1)" {
+		t.Fatal("nextForkTitle")
+	}
+}
+
 func TestRuntimeInvokeExpireRingAndFailTurn(t *testing.T) {
 	fake := NewFakeHandler()
 	rt := loopRT(t, fake)

@@ -45,7 +45,11 @@ func main() {
 		sessionID = uuid.NewString()
 	}
 	prompt := lastPositional(args)
-	writeJSONL(sessionID, prompt)
+	if has(args, "--fork-session") && resume != "" {
+		copyJSONL(resume, sessionID)
+	} else {
+		writeJSONL(sessionID, prompt)
+	}
 
 	if os.Getenv("FAKE_CLAUDE_LOG") != "" {
 		_ = os.WriteFile(os.Getenv("FAKE_CLAUDE_LOG"), []byte(strings.Join(args, " ")), 0o644)
@@ -153,6 +157,23 @@ func wait(got chan struct{}) {
 func emit(v any) {
 	body, _ := json.Marshal(v)
 	fmt.Println(string(body))
+}
+
+// copyJSONL 按 --fork-session 复制已落盘实录到新 session 文件。
+func copyJSONL(from, to string) {
+	cfg := os.Getenv("CLAUDE_CONFIG_DIR")
+	if cfg == "" || from == "" || to == "" {
+		return
+	}
+	wd, _ := os.Getwd()
+	dir := filepath.Join(cfg, "projects", sanitize(wd))
+	src, err := os.ReadFile(filepath.Join(dir, from+".jsonl"))
+	if err != nil {
+		writeJSONL(to, "")
+		return
+	}
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, to+".jsonl"), src, 0o644)
 }
 
 func writeJSONL(sessionID, prompt string) {

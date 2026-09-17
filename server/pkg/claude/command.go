@@ -9,6 +9,7 @@ func ListCommands() []CommandSpec {
 		{Name: "plan", Action: CommandApplySettings},
 		{Name: "compact", Action: CommandTurn},
 		{Name: "review", Action: CommandTurn},
+		{Name: "fork", Action: CommandSession},
 		{Name: "branch", Action: CommandSession},
 		{Name: "mcp", Action: CommandHint, Hint: hint},
 		{Name: "skills", Action: CommandHint, Hint: hint},
@@ -46,7 +47,7 @@ func Invoke(sessionID, name, args string) (CommandResult, error) {
 			return CommandResult{}, err
 		}
 		return CommandResult{}, Review(sess.ClaudeSessionID)
-	case "branch":
+	case "fork", "branch":
 		_, err := Fork(sessionID)
 		return CommandResult{}, err
 	case "mcp", "skills", "plugins", "hooks":

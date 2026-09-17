@@ -21,7 +21,7 @@ type ModelInfo struct {
 
 // ModeInfo 是一条 Claude Code 官方权限档。
 type ModeInfo struct {
-	ID   string `json:"id"`   // default、acceptEdits、plan、auto、dontAsk、bypassPermissions。
+	ID   string `json:"id"`   // default、acceptEdits、plan、bypassPermissions、auto、dontAsk；manual 视为 default。
 	Kind string `json:"kind"` // permission。
 }
 
@@ -32,6 +32,8 @@ type Session struct {
 	Title           string `json:"title"`
 	ActiveTurnID    string `json:"active_turn_id"` // 同时只能有一个进行中的回合。
 	Archived        bool   `json:"archived"`
+	CreatedAt       int64  `json:"created_at"` // 本机 JSONL 第一条 timestamp，没有则用文件 mtime；Unix 秒。
+	UpdatedAt       int64  `json:"updated_at"` // 本机 JSONL 最后一条 timestamp，没有则用文件 mtime；Unix 秒。
 }
 
 // Settings 是这个对话里生效的 Claude 配置；只有改过的项交给 Claude Code。
@@ -56,7 +58,7 @@ const (
 
 // CommandSpec 是一条与 Claude 斜杠、官方扩展按钮同名的命令。
 type CommandSpec struct {
-	Name   string        `json:"name"` // 与 Claude 斜杠同名，如 model、plan、branch、mcp。
+	Name   string        `json:"name"` // 与 Claude 斜杠同名，如 model、plan、fork、mcp。
 	Action CommandAction `json:"action"`
 	Hint   string        `json:"hint"` // hint 时给人看的话。
 }
@@ -120,6 +122,12 @@ type Progress struct {
 	Command string       `json:"command"`
 	Paths   []string     `json:"paths"`
 	Diff    string       `json:"diff"`
+}
+
+// TokenUsage 是一条对话当前占了多少上下文，对齐官方 statusline 的 context_window。
+type TokenUsage struct {
+	Used   int64 `json:"used"`   // input + cache_creation + cache_read。
+	Window int64 `json:"window"` // 当前模型窗口；默认 200000，带 [1m] 为 1000000。
 }
 
 // DecisionScope 是人对已知反问的生效范围。

@@ -69,22 +69,16 @@ func ResumeSession(claudeSessionID string) error {
 	return nil
 }
 
-// ForkSession 按 Claude 已落盘历史分叉出新 session。
+// ForkSession 按官方 --resume <id> --fork-session：复制已落盘实录，换新 session ID，不发模型。
 func ForkSession(claudeSessionID string) (string, error) {
-	cwd := defaultCwd()
-	extra := []string{"--fork-session"}
-	if claudeSessionID != "" {
-		extra = append(extra, "--resume", claudeSessionID)
+	if claudeSessionID == "" {
+		return "", wrapErr(errInvalid, "claude session id is required")
 	}
-	out, err := runPrint(cwd, " ", extra...)
-	if err != nil {
-		return "", err
+	src := findSessionFile(claudeSessionID)
+	if src == "" {
+		return "", wrapErr(errNotFound, "no conversation found with session ID: %s", claudeSessionID)
 	}
-	id := parseResultSessionID(out)
-	if id == "" {
-		id = uuid.NewString()
-	}
-	return id, nil
+	return copyForkedSession(src)
 }
 
 // StartTurn 让 Claude Code 开始一轮。

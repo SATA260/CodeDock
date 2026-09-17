@@ -35,6 +35,7 @@ export {
 } from "./chat/index.ts";
 export { GitClient, GitClientError, type GitClientOptions } from "./git/index.ts";
 export { CodexClient, CodexClientError, type CodexClientOptions } from "./codex/index.ts";
+export { ClaudeClient, ClaudeClientError, type ClaudeClientOptions } from "./claude/index.ts";
 export type {
   ApprovalAsk,
   AskAnswer,
@@ -48,6 +49,20 @@ export type {
   Settings as CodexSettings,
   Turn as CodexTurn,
 } from "./codex/index.ts";
+export type {
+  ClaudeCommand,
+  ClaudeDecision,
+  ClaudeInput,
+  ClaudeMode,
+  ClaudeModel,
+  ClaudeProgress,
+  ClaudeSession,
+  ClaudeSettings,
+  ClaudeSettingsPatch,
+  ClaudeStartTurnRequest,
+  ClaudeStatus,
+  ClaudeTimelineItem,
+} from "./claude/index.ts";
 export type {
   Branch,
   BranchView,
