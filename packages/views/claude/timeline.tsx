@@ -50,7 +50,7 @@ export function ClaudeTimeline({
       <Conversation key={scrollKey ?? "claude-draft"}>
         <ConversationEmptyState
           title="开始一段 Claude 对话"
-          description="在输入栏下方选择模型、强度和权限档，点选即生效。左侧 + 挂文件，消息下可 fork。"
+          description="在输入栏下方选择模型、强度和权限档，点选即生效。左侧 + 挂文件，回复下可 fork。"
         />
       </Conversation>
     );
@@ -96,7 +96,6 @@ function TimelineRow({
               </Fold>
             </MessageContent>
           </Message>
-          <ForkAction align="end" disabled={!canFork} onFork={onFork} />
         </div>
       );
     case "text":
@@ -109,7 +108,7 @@ function TimelineRow({
               </Fold>
             </MessageContent>
           </Message>
-          <ForkAction align="start" disabled={!canFork} onFork={onFork} />
+          <ForkAction disabled={!canFork} onFork={onFork} />
         </div>
       );
     case "reasoning":
@@ -172,13 +171,11 @@ function TimelineRow({
   }
 }
 
-// ForkAction 在一条消息下按官方 --fork-session 开出独立副本。
+// ForkAction 只挂在 AI 回复下，按官方 --fork-session 开出独立副本。
 function ForkAction({
-  align,
   disabled,
   onFork,
 }: {
-  align: "start" | "end";
   disabled: boolean;
   onFork?: () => Promise<void>;
 }) {
@@ -186,7 +183,7 @@ function ForkAction({
     return null;
   }
   return (
-    <div className={align === "end" ? "mt-1 flex justify-end" : "mt-1 flex justify-start"}>
+    <div className="mt-1 flex justify-start">
       <button
         type="button"
         disabled={disabled}
