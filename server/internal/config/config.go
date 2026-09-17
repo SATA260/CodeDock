@@ -23,6 +23,7 @@ type Config struct {
 	ToolConcurrency  int           // 进程内同时执行的工具调用上限；0 表示不限制
 	PluginDir        string        // 插件目录；空则不拉进程
 	PluginRPCTimeout time.Duration // 单次插件 RPC 超时
+	CodexBin         string        // 本机 Codex CLI；未安装时主服务仍可启动
 }
 
 // Load 从环境变量读取配置，未设置时使用默认值。
@@ -41,6 +42,7 @@ func Load() Config {
 		ToolConcurrency:  envInt("TOOL_CONCURRENCY", 8),
 		PluginDir:        env("PLUGIN_DIR", ""),
 		PluginRPCTimeout: envDuration("PLUGIN_RPC_TIMEOUT", 10*time.Second),
+		CodexBin:         env("CODEX_BIN", "codex"),
 	}
 }
 
@@ -54,6 +56,7 @@ func DataDir() string {
 	return filepath.Join(repoRoot(), "data")
 }
 
+// repoRoot 从 cwd 向上找仓根（有 pnpm-workspace.yaml 或 AGENTS.md+server/go.mod）。
 func repoRoot() string {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -73,6 +76,7 @@ func repoRoot() string {
 	return cwd
 }
 
+// isRepoRoot 判断 dir 是否是本仓根。
 func isRepoRoot(dir string) bool {
 	if _, err := os.Stat(filepath.Join(dir, "pnpm-workspace.yaml")); err == nil {
 		return true
@@ -109,6 +113,7 @@ func env(key, fallback string) string {
 	return value
 }
 
+// envInt 读整数环境变量，未设或解析失败时用 fallback。
 func envInt(key string, fallback int) int {
 	value := os.Getenv(key)
 	if value == "" {
@@ -121,6 +126,7 @@ func envInt(key string, fallback int) int {
 	return n
 }
 
+// envDuration 读 duration 环境变量，未设或解析失败时用 fallback。
 func envDuration(key string, fallback time.Duration) time.Duration {
 	value := os.Getenv(key)
 	if value == "" {

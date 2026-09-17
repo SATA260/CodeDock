@@ -34,6 +34,20 @@ export {
   type WatchEventsOptions,
 } from "./chat/index.ts";
 export { GitClient, GitClientError, type GitClientOptions } from "./git/index.ts";
+export { CodexClient, CodexClientError, type CodexClientOptions } from "./codex/index.ts";
+export type {
+  ApprovalAsk,
+  AskAnswer,
+  CodexEvent,
+  CodexViewState,
+  CommandSpec,
+  EngineStatus,
+  ModeInfo,
+  ModelInfo,
+  Session as CodexSession,
+  Settings as CodexSettings,
+  Turn as CodexTurn,
+} from "./codex/index.ts";
 export type {
   Branch,
   BranchView,

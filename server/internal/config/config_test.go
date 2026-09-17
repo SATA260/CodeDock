@@ -21,6 +21,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("GIT_REPO", "")
 	t.Setenv("PLUGIN_DIR", "")
 	t.Setenv("PLUGIN_RPC_TIMEOUT", "")
+	t.Setenv("CODEX_BIN", "")
 
 	cfg := Load()
 	if cfg.HTTPAddr != ":8080" {
@@ -57,6 +58,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.PluginRPCTimeout != 10*time.Second {
 		t.Fatalf("PluginRPCTimeout = %s, want 10s", cfg.PluginRPCTimeout)
 	}
+	if cfg.CodexBin != "codex" {
+		t.Fatalf("CodexBin = %q, want codex", cfg.CodexBin)
+	}
 }
 
 // TestLoadFromEnv 校验环境变量覆盖默认配置。
@@ -72,6 +76,7 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("GIT_REPO", "/tmp/repo")
 	t.Setenv("PLUGIN_DIR", "/tmp/plugins")
 	t.Setenv("PLUGIN_RPC_TIMEOUT", "2s")
+	t.Setenv("CODEX_BIN", "/usr/local/bin/codex")
 
 	cfg := Load()
 	if cfg.HTTPAddr != ":9090" || cfg.LogLevel != "info" || cfg.DBEngine != "postgres" || cfg.DBDSN != "postgres://localhost" {
@@ -85,6 +90,9 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.PluginDir != "/tmp/plugins" || cfg.PluginRPCTimeout != 2*time.Second {
 		t.Fatalf("plugin cfg = %+v", cfg)
+	}
+	if cfg.CodexBin != "/usr/local/bin/codex" {
+		t.Fatalf("CodexBin = %q, want /usr/local/bin/codex", cfg.CodexBin)
 	}
 }
 

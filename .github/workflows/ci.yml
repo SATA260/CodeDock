@@ -39,6 +39,16 @@ jobs:
           go test ./...
           (cd ../plugin/redact && go test .)
 
+      - name: Codex coverage
+        run: |
+          go test -covermode=atomic -coverprofile=/tmp/codex.out \
+            -coverpkg=codedock/pkg/codex,codedock/internal/codex,codedock/internal/handler/codex \
+            ./pkg/codex ./internal/codex ./internal/handler/codex
+          total=$(go tool cover -func=/tmp/codex.out | awk '/^total:/ {print $3}' | tr -d '%')
+          echo "codex coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { if (t+0 < 85) { print "codex coverage below 85%"; exit 1 } }'
+
+
       - name: Build
         run: go build -o /tmp/codedock ./cmd/server
 

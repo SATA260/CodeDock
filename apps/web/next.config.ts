@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  async redirects() {
+    return [
+      { source: "/codex", destination: "/", permanent: false },
+      { source: "/codex/:path*", destination: "/", permanent: false },
+    ];
+  },
   transpilePackages: [
     "@codedock/core",
     "@codedock/ui",

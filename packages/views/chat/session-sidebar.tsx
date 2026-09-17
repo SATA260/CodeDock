@@ -2,49 +2,41 @@
 
 import type { Session } from "@codedock/core/chat";
 import { Button, cn } from "@codedock/ui";
-import { PlusIcon, Trash2Icon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Archive, PlusIcon } from "lucide-react";
 
 import { relativeTime, sessionTitle, shortId } from "./lib/format.ts";
+
+export type SidebarSession = Session & { engine?: "agent" | "codex" };
 
 export function SessionSidebar({
   sessions,
   currentId,
   busy,
   error,
+  hasMore = false,
+  onLoadMore,
   onCreate,
   onSelect,
   onRecover,
-  onDelete,
+  onArchive,
   canRecoverCurrent = false,
   brandSrc,
+  codexIconSrc,
 }: {
-  sessions: Session[];
+  sessions: SidebarSession[];
   currentId?: string;
   busy: boolean;
   error: string | null;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
   onCreate: () => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, engine?: "agent" | "codex") => void;
   onRecover?: (runId: string) => Promise<void>;
-  onDelete?: (session: Session) => Promise<void>;
+  onArchive?: (session: SidebarSession) => Promise<void>;
   canRecoverCurrent?: boolean;
   brandSrc?: string;
+  codexIconSrc?: string;
 }) {
-  const [pending, setPending] = useState<Session | null>(null);
-
-  useEffect(() => {
-    if (!pending) {
-      return;
-    }
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
-        setPending(null);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [busy, pending]);
-
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-background">
       <div className="flex items-center justify-between gap-2 px-3 py-2">
@@ -66,12 +58,14 @@ export function SessionSidebar({
         ) : (
           <ul className="space-y-0.5">
             {sessions.map((session) => {
-              const active = session.id === currentId;
+              const engine = session.engine ?? "agent";
+              const rowKey = `${engine}:${session.id}`;
+              const active = rowKey === currentId;
               return (
-                <li key={session.id}>
+                <li key={rowKey}>
                   <div
                     className={cn(
-                      "group flex w-full items-start gap-1 rounded-md px-2 py-1.5 leading-5 transition-colors",
+                      "group flex w-full items-center gap-1 rounded-md px-2 py-1.5 leading-5 transition-colors",
                       active
                         ? "bg-muted text-foreground"
                         : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
@@ -79,20 +73,28 @@ export function SessionSidebar({
                   >
                     <button
                       type="button"
-                      onClick={() => onSelect(session.id)}
-                      className="min-w-0 flex-1 text-left"
+                      onClick={() => onSelect(session.id, engine)}
+                      className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
                     >
-                      <div className="truncate text-sm font-medium">
-                        {sessionTitle(session.id, session.summary)}
-                      </div>
-                      <div className="mt-0.5 truncate text-xs text-muted-foreground/70">
-                        {relativeTime(session.updated_at) || shortId(session.id)}
-                      </div>
+                      <SessionEngineMark
+                        engine={engine}
+                        brandSrc={brandSrc}
+                        codexIconSrc={codexIconSrc}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
+                          {sessionTitle(session.id, session.summary)}
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs text-muted-foreground/70">
+                          {relativeTime(session.updated_at) || shortId(session.id)}
+                        </span>
+                      </span>
                     </button>
-                    {session.needs_recover &&
+                    {engine !== "codex" &&
+                    session.needs_recover &&
                     session.active_run_id &&
                     onRecover &&
-                    (session.id !== currentId || canRecoverCurrent) ? (
+                    (rowKey !== currentId || canRecoverCurrent) ? (
                       <Button
                         size="sm"
                         variant="secondary"
@@ -104,22 +106,22 @@ export function SessionSidebar({
                         恢复
                       </Button>
                     ) : null}
-                    {onDelete ? (
+                    {onArchive ? (
                       <button
                         type="button"
-                        aria-label={`删除 ${sessionTitle(session.id, session.summary)}`}
+                        aria-label={`归档 ${sessionTitle(session.id, session.summary)}`}
                         disabled={busy}
                         className={cn(
                           "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/55 transition-colors",
-                          "hover:bg-destructive/15 hover:text-destructive",
+                          "hover:bg-muted hover:text-foreground",
                           "opacity-80 group-hover:opacity-100 focus-visible:opacity-100",
                         )}
                         onClick={(event) => {
                           event.stopPropagation();
-                          setPending(session);
+                          void onArchive(session);
                         }}
                       >
-                        <Trash2Icon className="size-3.5" />
+                        <Archive className="size-3.5" />
                       </button>
                     ) : null}
                   </div>
@@ -128,55 +130,43 @@ export function SessionSidebar({
             })}
           </ul>
         )}
+        {hasMore && onLoadMore ? (
+          <Button className="mt-2 w-full" size="sm" variant="ghost" onClick={onLoadMore}>
+            加载更多
+          </Button>
+        ) : null}
       </nav>
-      {pending && onDelete ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-          onClick={() => {
-            if (!busy) {
-              setPending(null);
-            }
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="delete-session-title"
-            className="w-full max-w-sm rounded-lg border border-border bg-background p-4 shadow-xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h2 id="delete-session-title" className="text-sm font-medium text-foreground">
-              删除对话
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              确定删除「{sessionTitle(pending.id, pending.summary)}」吗？删除后将从列表中移除。
-              {pending.active_run_id ? " 当前任务会先中止。" : ""}
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => setPending(null)}
-              >
-                取消
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={busy}
-                onClick={() => {
-                  void onDelete(pending)
-                    .then(() => setPending(null))
-                    .catch(() => undefined);
-                }}
-              >
-                {busy ? "删除中…" : "删除"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </aside>
+  );
+}
+
+function SessionEngineMark({
+  engine,
+  brandSrc,
+  codexIconSrc,
+}: {
+  engine: "agent" | "codex";
+  brandSrc?: string;
+  codexIconSrc?: string;
+}) {
+  if (engine === "codex") {
+    if (!codexIconSrc) {
+      return null;
+    }
+    return (
+      <img
+        src={codexIconSrc}
+        alt="Codex"
+        className="size-8 shrink-0 rounded-[8px] shadow-[0_0_0_1px_rgba(255,255,255,0.28),0_0_12px_rgba(88,122,255,0.55)]"
+      />
+    );
+  }
+  if (!brandSrc) {
+    return null;
+  }
+  return (
+    <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-zinc-800 shadow-[0_0_0_1px_rgba(255,255,255,0.22),0_0_10px_rgba(244,244,245,0.2)]">
+      <img src={brandSrc} alt="Local" className="size-6" />
+    </span>
   );
 }
