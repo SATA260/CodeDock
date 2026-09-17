@@ -37,19 +37,19 @@ type UserQuestion struct {
 
 // ApprovalAsk 是一条 Codex 已知的反问。
 type ApprovalAsk struct {
-	ID                string        `json:"id"`
-	Kind              AskKind       `json:"kind"`
-	ThreadID          string        `json:"thread_id,omitempty"`
-	TurnID            string        `json:"turn_id,omitempty"`
-	Method            string        `json:"method,omitempty"`
-	Command           string        `json:"command,omitempty"`
-	Paths             []string      `json:"paths,omitempty"`
-	Diff              string        `json:"diff,omitempty"`
-	Prompt            string        `json:"prompt,omitempty"` // 选择题或表单给人看的题面。
-	Options           []string      `json:"options,omitempty"`
+	ID                string         `json:"id"`
+	Kind              AskKind        `json:"kind"`
+	ThreadID          string         `json:"thread_id,omitempty"`
+	TurnID            string         `json:"turn_id,omitempty"`
+	Method            string         `json:"method,omitempty"`
+	Command           string         `json:"command,omitempty"`
+	Paths             []string       `json:"paths,omitempty"`
+	Diff              string         `json:"diff,omitempty"`
+	Prompt            string         `json:"prompt,omitempty"` // 选择题或表单给人看的题面。
+	Options           []string       `json:"options,omitempty"`
 	Questions         []UserQuestion `json:"questions,omitempty"`
-	Fields            []string      `json:"fields,omitempty"` // 题目 id 或 MCP 表单字段名。
-	ExternalRequestID string        `json:"external_request_id"`
+	Fields            []string       `json:"fields,omitempty"` // 题目 id 或 MCP 表单字段名。
+	ExternalRequestID string         `json:"external_request_id"`
 }
 
 // AskAnswer 是人对这条反问的作答。

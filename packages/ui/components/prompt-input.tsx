@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent, HTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import type { FormEvent, HTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes } from "react";
 
 import { cn } from "../lib/cn.ts";
 import { useImeGuard } from "../lib/ime.ts";
@@ -42,15 +42,17 @@ export function PromptInput({
 }
 
 export function PromptInputTextarea({
+  ref,
   className,
   onKeyDown,
   onCompositionStart,
   onCompositionEnd,
   ...props
-}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> }) {
   const ime = useImeGuard();
   return (
     <textarea
+      ref={ref}
       name="message"
       rows={3}
       className={cn(
