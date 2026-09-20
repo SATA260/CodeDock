@@ -8,9 +8,9 @@ WHERE session_id = ?;
 
 -- name: InsertApproval :one
 INSERT INTO approvals (
-    id, session_id, run_id, tool_call_id, tool_calls, scope, status, expires_at
+    id, session_id, run_id, tool_call_id, tool_calls, scope, status, expires_at, kind
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
 

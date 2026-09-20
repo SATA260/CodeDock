@@ -23,7 +23,17 @@ func (executor *Executor) Write(ctx context.Context, cwd string, input WriteInpu
 		if err := contextOperationError(ctx); err != nil {
 			return ToolResult{}, err
 		}
+		existed := true
+		oldContent := ""
+		if raw, err := executor.FS.ReadFile(absolutePath); err == nil {
+			oldContent = string(raw)
+		} else {
+			existed = false
+		}
 		if err := executor.FS.WriteFile(absolutePath, []byte(input.Content), 0o644); err != nil {
+			return ToolResult{}, err
+		}
+		if err := applyEditGuard(executor.FS, executor.Lint, absolutePath, oldContent, input.Content, existed); err != nil {
 			return ToolResult{}, err
 		}
 		if err := contextOperationError(ctx); err != nil {

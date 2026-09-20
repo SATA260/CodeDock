@@ -13,6 +13,8 @@ type Ports struct {
 	FS            FileSystem  // 可替换文件系统；测试用内存 FS
 	RunCommand    CommandFunc // 可替换命令执行；空则走本机
 	LookPath      func(file string) (string, error)
+	Lint          EditInspector // 写后语法检查；空则用默认实现
+	Explore       ExploreFunc   // 只读探索子代理；空则探索工具报失败
 }
 
 func (p Ports) executor() *Executor {
@@ -25,6 +27,9 @@ func (p Ports) executor() *Executor {
 	}
 	if p.LookPath != nil {
 		exec.LookPath = p.LookPath
+	}
+	if p.Lint != nil {
+		exec.Lint = p.Lint
 	}
 	return exec
 }
@@ -52,4 +57,5 @@ func registerPortTools(reg tool.Registry, ports Ports) {
 	for _, item := range planTools(ports) {
 		_ = reg.Register(item)
 	}
+	_ = reg.Register(exploreTool{ports: ports})
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"codedock/pkg/agent/tool"
@@ -41,9 +43,24 @@ func (t codingTool) ResolveEffect(_ context.Context, input tool.Input) tool.Effe
 	return t.effect
 }
 
+// LockAsk 已存在的测试文件在 manual / auto 下必须人批；yolo 仍放行，正确性靠收尾验证。
+func (t codingTool) LockAsk(_ context.Context, input tool.Input) bool {
+	if t.name != ToolWrite && t.name != ToolEdit {
+		return false
+	}
+	path, err := codingPath(t.name, input.Call.Arguments)
+	if err != nil {
+		return false
+	}
+	return IsExistingTestFile(workspaceOf(input, t.ports), path)
+}
+
 func (t codingTool) Execute(ctx context.Context, input tool.Input) (tool.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.Result{CallID: input.Call.ID, Name: t.name, Success: false, Error: err.Error()}, err
+	}
+	if err := denyForeignPlanFile(t.ports, t.name, input); err != nil {
+		return tool.Result{CallID: input.Call.ID, Name: t.name, Success: false, Error: err.Error()}, nil
 	}
 	exec := t.ports.executor()
 	result, err := exec.Execute(ctx, t.name, workspaceOf(input, t.ports), input.Call.Arguments)
@@ -58,6 +75,51 @@ func (t codingTool) Execute(ctx context.Context, input tool.Input) (tool.Result,
 		return tool.Result{CallID: input.Call.ID, Name: t.name, Success: false, Error: err.Error()}, nil
 	}
 	return tool.Result{CallID: input.Call.ID, Name: t.name, Output: raw, Success: true}, nil
+}
+
+// denyForeignPlanFile 挡住用 read/write/edit 去碰未绑定的其他计划。
+func denyForeignPlanFile(ports Ports, name string, input tool.Input) error {
+	if name != ToolRead && name != ToolWrite && name != ToolEdit {
+		return nil
+	}
+	planName := codingPlanFileName(name, input.Call.Arguments)
+	if planName == "" {
+		return nil
+	}
+	if name == ToolWrite || name == ToolEdit {
+		path, err := codingPath(name, input.Call.Arguments)
+		if err == nil {
+			abs, resolveErr := ports.executor().resolveToCWD(path, workspaceOf(input, ports))
+			if resolveErr == nil {
+				if _, statErr := os.Stat(abs); statErr != nil && os.IsNotExist(statErr) {
+					return nil
+				}
+			}
+		}
+	}
+	return denyForeignPlan(input, planName)
+}
+
+// codingPlanFileName 从编码工具路径抽出 .cursor 下的计划文件名。
+func codingPlanFileName(name string, raw json.RawMessage) string {
+	path, err := codingPath(name, raw)
+	if err != nil || strings.TrimSpace(path) == "" {
+		return ""
+	}
+	slash := filepath.ToSlash(filepath.Clean(path))
+	if !strings.HasSuffix(strings.ToLower(slash), ".md") {
+		return ""
+	}
+	const mark = ".cursor/"
+	idx := strings.LastIndex(strings.ToLower(slash), mark)
+	if idx < 0 {
+		return ""
+	}
+	rest := slash[idx+len(mark):]
+	if rest == "" || strings.Contains(rest, "/") {
+		return ""
+	}
+	return rest
 }
 
 func inspectCodingPath(ports Ports, name string, raw json.RawMessage) error {

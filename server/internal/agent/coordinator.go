@@ -261,6 +261,10 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 	}
 
 	state.StepIndex = r.inferStepIndex(ctx, run.SessionID, run.ID)
+	r.applyHarness(ctx, runID, &state)
+	if strings.TrimSpace(state.ActivePlan) == "" {
+		state.ActivePlan = r.inheritActivePlan(ctx, run.SessionID, run.ID)
+	}
 	r.applyApprovalDecisions(ctx, run.SessionID, run.ID, &state)
 
 	msgRows, err := q.ListSessionMessages(ctx, run.SessionID)
@@ -271,6 +275,8 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 	for _, item := range msgRows {
 		messages = append(messages, mapMessage(item))
 	}
+	scope := pkgagent.ResolvePlanScope(state.ActivePlan, messages)
+	state.ActivePlan = scope.ActivePlan
 
 	var compact *pkgagent.CompactionCheckpoint
 	if cp, err := q.GetLatestCheckpoint(ctx, run.SessionID); err == nil {
@@ -315,6 +321,41 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 		MemoryIndexes: r.loadMemoryIndexes(ctx, sess.UserID, sess.WorkspaceID),
 	}
 	return state, hist, nil
+}
+
+// inheritActivePlan 从同一会话更早的 Run 带上已绑定的计划。
+func (r *Runtime) inheritActivePlan(ctx context.Context, sessionID, runID string) string {
+	if r == nil || sessionID == "" {
+		return ""
+	}
+	rows, err := r.q(ctx).ListSessionRuns(ctx, sessionID)
+	if err != nil {
+		return ""
+	}
+	best := ""
+	bestAt := ""
+	for _, row := range rows {
+		if row.ID == runID || strings.TrimSpace(row.Harness) == "" || row.Harness == "{}" {
+			continue
+		}
+		var harness pkgagent.RunHarness
+		if json.Unmarshal([]byte(row.Harness), &harness) != nil {
+			continue
+		}
+		name := strings.TrimSpace(harness.ActivePlan)
+		if name == "" {
+			continue
+		}
+		at := row.StartedAt.String
+		if at == "" {
+			at = row.FinishedAt.String
+		}
+		if best == "" || at >= bestAt {
+			best = name
+			bestAt = at
+		}
+	}
+	return best
 }
 
 // Append 实现 FactWriter，供 Engine 在步骤内写流式事实。
@@ -513,7 +554,7 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 		}
 
 		started := formatTimePtr(state.StartedAt)
-		if !started.Valid && (state.Status == pkgagent.RunRunningLLM || state.Status == pkgagent.RunExecutingTools || state.Status == pkgagent.RunWaitingApproval) {
+		if !started.Valid && (state.Status == pkgagent.RunRunningLLM || state.Status == pkgagent.RunExecutingTools || state.Status == pkgagent.RunWaitingApproval || state.Status == pkgagent.RunVerifying || state.Status == pkgagent.RunEvaluating) {
 			started = nullString(nowStr)
 		}
 		finished := formatTimePtr(state.FinishedAt)
@@ -533,6 +574,9 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 			FinishedAt:      finished,
 			ID:              runID,
 		}); err != nil {
+			return err
+		}
+		if err := r.saveHarness(ctx, runID, state); err != nil {
 			return err
 		}
 
@@ -666,6 +710,58 @@ func (r *Runtime) RequestCancel(ctx context.Context, runID string) error {
 	return nil
 }
 
+// EnsureCancelled 在 Worker 收束后把仍未终态的 Run 落成 cancelled，避免取消提交吃掉已取消的 context。
+func (r *Runtime) EnsureCancelled(ctx context.Context, runID string) error {
+	if r == nil || r.db == nil || runID == "" {
+		return cderr.Invalid("run id is required")
+	}
+	row, err := r.q(ctx).GetRun(ctx, runID)
+	if err != nil {
+		return wrapDB(err)
+	}
+	run := mapRun(row)
+	if pkgagent.IsTerminal(run.Status) {
+		return nil
+	}
+	nowStr := util.FormatTime(util.Now())
+	reason := pkgagent.StopCancelled
+	var published []pkgagent.AgentEvent
+	err = r.db.WithTx(ctx, func(ctx context.Context) error {
+		q := r.q(ctx)
+		if _, err := q.UpdateRun(ctx, sqlite.UpdateRunParams{
+			Status:          string(pkgagent.RunCancelled),
+			CurrentTurnID:   nullString(deref(run.CurrentTurnID)),
+			StopReason:      nullString(string(reason)),
+			CancelRequested: 1,
+			StartedAt:       formatTimePtr(run.StartedAt),
+			FinishedAt:      nullString(nowStr),
+			ID:              runID,
+		}); err != nil {
+			return err
+		}
+		ev, err := r.insertEventTx(ctx, run.SessionID, runID, deref(run.CurrentTurnID), pkgagent.Fact{
+			Type:    pkgagent.EventRunCancelled,
+			Payload: pkgagent.MarshalPayload(pkgagent.RunTerminalPayload{Status: pkgagent.RunCancelled, StopReason: &reason}),
+		})
+		if err != nil {
+			return err
+		}
+		published = append(published, ev)
+		return q.ClearActiveRun(ctx, sqlite.ClearActiveRunParams{
+			UpdatedAt:   nowStr,
+			ID:          run.SessionID,
+			ActiveRunID: nullString(runID),
+		})
+	})
+	if err != nil {
+		return err
+	}
+	for _, ev := range published {
+		r.publish(ev)
+	}
+	return nil
+}
+
 // RecoverRun 把指定 Run 的未完成 Job 重新入队。本进程已在跑则直接返回。
 // waiting_approval 且尚未裁决时不入队。
 // 逻辑：Busy/终态/未裁决审批跳过 → 优先用未完成 step_job（崩溃 running 则 attempt++）→ 未占会话则 Claim，抢不到只落库。
@@ -683,7 +779,7 @@ func (r *Runtime) RecoverRun(ctx context.Context, runID string) error {
 	if pkgagent.IsTerminal(state.Status) {
 		return nil
 	}
-	if state.Status == pkgagent.RunWaitingApproval && !checkpointHasDecision(state.Checkpoint) {
+	if state.Status == pkgagent.RunWaitingApproval && state.OverrideAction == "" && !checkpointHasDecision(state.Checkpoint) {
 		return nil
 	}
 
@@ -693,13 +789,25 @@ func (r *Runtime) RecoverRun(ctx context.Context, runID string) error {
 		Phase:     recoverPhase(state.Status, state),
 	}
 	if state.Status == pkgagent.RunWaitingApproval {
-		job.Phase = pkgagent.PhaseHumanApproved
+		if state.OverrideAction != "" {
+			job.Phase = pkgagent.PhaseHumanOverride
+			job.Payload = pkgagent.MarshalPayload(pkgagent.HumanOverridePayload{Action: state.OverrideAction, Kind: state.ApprovalKind})
+		} else {
+			job.Phase = pkgagent.PhaseHumanApproved
+		}
+	}
+	if state.Status == pkgagent.RunEvaluating && len(job.Payload) == 0 {
+		job.Phase = pkgagent.PhaseVerifyResult
+		job.Payload = pkgagent.MarshalPayload(pkgagent.VerifyResult{Status: pkgagent.VerifyStatusPassed})
 	}
 	if row, ok, err := r.latestOpenStepJob(ctx, runID); err != nil {
 		return err
 	} else if ok {
 		job = stepJobFromRow(row)
-		if state.Status == pkgagent.RunWaitingApproval {
+		if state.Status == pkgagent.RunWaitingApproval && state.OverrideAction != "" {
+			job.Phase = pkgagent.PhaseHumanOverride
+			job.Payload = pkgagent.MarshalPayload(pkgagent.HumanOverridePayload{Action: state.OverrideAction, Kind: state.ApprovalKind})
+		} else if state.Status == pkgagent.RunWaitingApproval {
 			job.Phase = pkgagent.PhaseHumanApproved
 		}
 		if row.Status == stepJobRunning {
@@ -903,11 +1011,19 @@ func (r *Runtime) insertPendingApproval(ctx context.Context, sessionID, runID st
 			Status:    pkgagent.ApprovalPending,
 		})
 	}
+	if len(calls) == 0 && state.ApprovalKind != "" && state.ApprovalKind != pkgagent.ApprovalKindTools {
+		calls = []pkgagent.ApprovalToolCall{{
+			ID:     string(state.ApprovalKind),
+			Name:   string(state.ApprovalKind),
+			Status: pkgagent.ApprovalPending,
+		}}
+	}
 	first := ""
 	if len(calls) > 0 {
 		first = calls[0].ID
 	}
 	expiry := util.Now().Add(time.Hour)
+	kind := string(pkgagent.NormalizeApprovalKind(state.ApprovalKind))
 	_, err := r.q(ctx).InsertApproval(ctx, sqlite.InsertApprovalParams{
 		ID:         approvalID,
 		SessionID:  sessionID,
@@ -917,6 +1033,7 @@ func (r *Runtime) insertPendingApproval(ctx context.Context, sessionID, runID st
 		Scope:      string(pkgagent.ApprovalOnce),
 		Status:     string(pkgagent.ApprovalPending),
 		ExpiresAt:  util.FormatTime(expiry),
+		Kind:       kind,
 	})
 	return err
 }
@@ -963,6 +1080,10 @@ func recoverPhase(status pkgagent.RunStatus, state pkgagent.AgentState) pkgagent
 			return pkgagent.PhaseToolsBatchResult
 		}
 		return pkgagent.PhaseLLMResult
+	case pkgagent.RunVerifying:
+		return pkgagent.PhaseLLMResult
+	case pkgagent.RunEvaluating:
+		return pkgagent.PhaseVerifyResult
 	default:
 		return pkgagent.PhaseUserInput
 	}
@@ -1011,6 +1132,8 @@ func neighbors(from pkgagent.RunStatus) []pkgagent.RunStatus {
 		pkgagent.RunRunningLLM,
 		pkgagent.RunExecutingTools,
 		pkgagent.RunWaitingApproval,
+		pkgagent.RunVerifying,
+		pkgagent.RunEvaluating,
 		pkgagent.RunCancelling,
 		pkgagent.RunCompleted,
 		pkgagent.RunFailed,

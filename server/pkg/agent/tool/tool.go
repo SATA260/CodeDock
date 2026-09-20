@@ -90,11 +90,14 @@ type Call struct {
 
 // Input 是传递给各种工具兼容层的统一执行输入。
 type Input struct {
-	SessionID     string // 所属会话
-	RunID         string // 所属 Run
-	TurnID        string // 所属 Turn
-	WorkspaceRoot string // 会话创建时冻结的工作目录；空则回落 Ports
-	Call          Call
+	SessionID      string   // 所属会话
+	RunID          string   // 所属 Run
+	TurnID         string   // 所属 Turn
+	WorkspaceRoot  string   // 会话创建时冻结的工作目录；空则回落 Ports
+	ActivePlan     string   // 本会话已绑定的计划文件名
+	MentionedPlans []string // 用户点名的计划文件名
+	AllowListAll   bool     // 用户明确要求列出已有计划
+	Call           Call
 }
 
 // Result 是各种工具兼容层返回的统一结构化输出。
@@ -123,6 +126,11 @@ type EffectResolver interface {
 	ResolveEffect(ctx context.Context, input Input) Effect
 }
 
+// AskLocker 标记本次调用必须保持 ask，Agent 表和 yolo 都不能抬。
+type AskLocker interface {
+	LockAsk(ctx context.Context, input Input) bool
+}
+
 // Registry 定义工具注册、获取与提示词汇总的能力。
 type Registry interface {
 	Register(tool Tool) error
@@ -145,7 +153,10 @@ type Invocation struct {
 	SessionID       string
 	RunID           string
 	TurnID          string
-	WorkspaceRoot   string // 会话冻结的工作目录，传给 Inspect / Execute
+	WorkspaceRoot   string   // 会话冻结的工作目录，传给 Inspect / Execute
+	ActivePlan      string   // 本会话已绑定的计划文件名
+	MentionedPlans  []string // 用户点名的计划文件名
+	AllowListAll    bool     // 用户明确要求列出已有计划
 	Calls           []Call
 	Mode            ExecutionMode
 	FailurePolicy   FailurePolicy
@@ -165,7 +176,9 @@ type Invocation struct {
 type DispatchResult struct {
 	Results         []Result
 	WaitingApproval bool
-	ApprovalIDs     []string
-	PendingCalls    []Call
-	ApprovalCalls   []Call
+	// NeedsExternalReview 为 true 表示待批里有离开工作区的调用，必须先走独立复审。
+	NeedsExternalReview bool
+	ApprovalIDs         []string
+	PendingCalls        []Call
+	ApprovalCalls       []Call
 }

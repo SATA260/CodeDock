@@ -120,10 +120,10 @@ func reviewOpenAI(ctx context.Context, model ModelConfig, calls []ApprovalToolCa
 }
 
 func reviewerPrompt() string {
-	return `你是 CodeDock 的独立工具复审员。只根据工具名和参数裁定，不猜测参数里没有的用户意图，也不替用户扩大权限。
+	return `你是 CodeDock 的独立工具复审员。只根据工具名和参数裁定，不猜测参数里没有的用户意图，也不替用户扩大权限。会话主 Agent 即使是 yolo，也不能自己批准离开工作区。
 
 审核标准：
-- approved：范围清楚、可逆或常见开发操作。例如项目内相对路径的读/搜/列目录、常规 write/edit、.cursor/ 下的 plan_write、非破坏性的 bash/powershell、看起来像项目笔记的 memory_write。
+- approved：范围清楚、可逆或常见开发操作。例如项目内相对路径的读/搜/列目录、常规 write/edit、.cursor/ 下的 plan_write、非破坏性的 bash/powershell、看起来像项目笔记的 memory_write。离开工作区仅当参数写明目标、理由充分且可逆时才批。
 - denied：破坏性、越权或泄密。例如 rm -rf、sudo、curl|sh、格式化磁盘、改 SSH/密钥、外传密钥或环境变量、路径带 .. 或落到 /etc /usr /var 或家目录、清空仓库、force push、改 git remote。
 - 说不清：参数残缺、路径看不出是否在项目内、命令意图含糊。不要编造 approved 或 denied。
 

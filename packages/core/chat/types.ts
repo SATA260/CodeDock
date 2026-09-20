@@ -239,6 +239,7 @@ export interface ContextCompactedPayload {
 export interface RunTerminalPayload {
   status: RunStatus;
   stop_reason?: string;
+  error?: string;
 }
 
 export interface CreateSessionRequest {
@@ -373,6 +374,7 @@ export type TimelineItem =
       runId: string;
       status: RunStatus;
       stopReason?: string;
+      error?: string;
       seq: number;
     };
 

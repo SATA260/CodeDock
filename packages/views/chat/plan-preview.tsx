@@ -1,6 +1,6 @@
 "use client";
 
-import type { PlanPreview, ToolItemState } from "@codedock/core/chat";
+import { planReadableContent, type PlanPreview, type ToolItemState } from "@codedock/core/chat";
 import {
   cn,
   Collapsible,
@@ -84,6 +84,7 @@ export function PlanDocBody({
   emptyHint: string;
   animating: boolean;
 }) {
+  content = planReadableContent(content);
   if (!content.trim()) {
     return (
       <p className="text-xs leading-5 text-muted-foreground">

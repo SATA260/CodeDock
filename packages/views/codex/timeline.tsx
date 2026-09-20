@@ -6,6 +6,7 @@ import {
   Conversation,
   ConversationContent,
   ConversationEmptyState,
+  LiveStatus,
   Message,
   MessageContent,
   MessageResponse,
@@ -104,7 +105,10 @@ function TimelineRow({
           <Message from="assistant">
             <MessageContent>
               <Fold watch={item.text} disabled={item.streaming}>
-                <MessageResponse isAnimating={item.streaming}>{item.text || (item.streaming ? "…" : "")}</MessageResponse>
+                <MessageResponse isAnimating={item.streaming}>
+                  {item.text || (item.streaming ? "" : "")}
+                </MessageResponse>
+                {!item.text && item.streaming ? <LiveStatus active>Writing</LiveStatus> : null}
               </Fold>
             </MessageContent>
           </Message>
@@ -116,7 +120,9 @@ function TimelineRow({
         <div {...latestProps}>
           <Reasoning isStreaming={item.streaming}>
             <ReasoningTrigger />
-            <ReasoningContent>{item.text || "思考中"}</ReasoningContent>
+            <ReasoningContent>
+              {item.text ? item.text : <LiveStatus active={item.streaming}>Thinking</LiveStatus>}
+            </ReasoningContent>
           </Reasoning>
         </div>
       );

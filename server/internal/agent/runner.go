@@ -55,6 +55,8 @@ func New(client db.Client, queries *sqlite.Queries, bus *events.Bus, tools tool.
 		claimedSteps: map[string]struct{}{},
 	}
 	runtime.engine = pkgagent.NewEngine(&pkgagent.Brain{}, runtime, tools)
+	runtime.engine.SetHarness(gitSnapshot{}, pkgagent.RunShellCommand)
+	ports.Explore = runtime.explore
 	agenttools.Register(tools, queries, runtime.EnqueueIndexCompact, ports)
 	runtime.worker = NewWorker(runtime)
 	return runtime

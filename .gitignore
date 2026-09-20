@@ -11,3 +11,7 @@ tmp/
 node_modules
 .pnpm-store
 .pnpm-debug.log*
+/test-results/
+/playwright-report/
+/apps/web/test-results/
+/apps/web/playwright-report/

@@ -565,6 +565,10 @@ func (fileSystem *slowFileSystem) EvalSymlinks(path string) (string, error) {
 	return filepath.EvalSymlinks(path)
 }
 
+func (fileSystem *slowFileSystem) Remove(name string) error {
+	return os.Remove(name)
+}
+
 func TestFileMutationsAreSerializedPerPath(t *testing.T) {
 	t.Parallel()
 	cwd := t.TempDir()

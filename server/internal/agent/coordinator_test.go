@@ -885,6 +885,7 @@ func TestWorkerFailAndCancelAndWait(t *testing.T) {
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{FailTimes: 3, Turns: []pkgagent.FakeTurn{{Text: "x"}}}),
 	})
+	failCfg.RetryPolicy.Model = pkgagent.DefaultRetryConfig()
 	failID, err := rt.CreateAgentState(ctx, sessionID, "fail", failCfg.Mode, failCfg)
 	if err != nil {
 		t.Fatal(err)

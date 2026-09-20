@@ -11,6 +11,7 @@ export {
   latestPlanDocIds,
   normalizePlanName,
   planPreviewFromTool,
+  planReadableContent,
   planToolDump,
   type PlanDocPreview,
   type PlanPreview,

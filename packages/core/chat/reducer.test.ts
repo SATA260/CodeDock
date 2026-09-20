@@ -182,6 +182,20 @@ test("hydrate interleaves turns instead of grouping users then assistants", () =
   ]);
 });
 
+test("run.failed keeps a public model error on the terminal row", () => {
+  const state = applyEvent(
+    emptyState(),
+    ev({
+      seq: 1,
+      type: "run.failed",
+      payload: { status: "failed", stop_reason: "model_error", error: "Service is too busy." },
+    }),
+  );
+  const row = state.items.find((item) => item.kind === "terminal");
+  assert.equal(row?.kind === "terminal" && row.error, "Service is too busy.");
+  assert.equal(row?.kind === "terminal" && row.stopReason, "model_error");
+});
+
 test("applyEvent skips duplicate seq on reconnect", () => {
   let state = emptyState();
   const created = ev({

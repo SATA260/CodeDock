@@ -23,7 +23,7 @@ RETURNING *;
 
 -- name: ListRecoverableRuns :many
 SELECT * FROM runs
-WHERE status IN ('queued', 'loading_context', 'running_llm', 'executing_tools')
+WHERE status IN ('queued', 'loading_context', 'running_llm', 'executing_tools', 'verifying', 'evaluating')
 ORDER BY id;
 
 -- name: ListWaitingApprovalRuns :many

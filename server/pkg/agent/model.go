@@ -89,6 +89,32 @@ func Stream(ctx context.Context, chat Chat) (ModelStream, error) {
 	}
 }
 
+// streamWithRetry 在流还没发出之前重试可恢复的网关错误。
+func streamWithRetry(ctx context.Context, chat Chat, cfg RetryConfig) (ModelStream, error) {
+	var last error
+	for attempt := 1; ; attempt++ {
+		chat.Attempt = attempt
+		stream, err := Stream(ctx, chat)
+		if err == nil {
+			return stream, nil
+		}
+		last = err
+		if !ShouldRetry(cfg, attempt, err) {
+			return nil, err
+		}
+		timer := time.NewTimer(Backoff(cfg, attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			if last != nil {
+				return nil, last
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 type staticStream struct {
 	events chan ModelStreamEvent
 	done   chan struct{}

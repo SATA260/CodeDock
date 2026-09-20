@@ -33,45 +33,92 @@ type fixture struct {
 	runtime *agent.Runtime
 	queries *sqlite.Queries
 	bus     *events.Bus
+	client  db.Client
+	dsn     string
+	closed  bool
 }
 
 // newFixture 打开内存 SQLite、装配 Runtime 并启动 Worker。
 func newFixture(t *testing.T, extras ...tool.Tool) *fixture {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
 	name := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+	return openFixture(t, fixtureOpen{
+		dsn:      fmt.Sprintf("file:%s?mode=memory&cache=shared", name),
+		defaults: fakeHelloDefaults(),
+	}, extras...)
+}
+
+// fixtureOpen 描述如何打开一套测试 API。
+type fixtureOpen struct {
+	dsn      string
+	defaults pkgagent.RunConfigSnapshot
+	cfg      config.Config
+	ports    agenttools.Ports
+}
+
+// openFixture 按 DSN 打开库、装配 Runtime 并启动 Worker。
+func openFixture(t *testing.T, opt fixtureOpen, extras ...tool.Tool) *fixture {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+
 	client, err := db.Open(ctx, db.Config{
 		Engine: db.EngineSQLite,
-		DSN:    fmt.Sprintf("file:%s?mode=memory&cache=shared", name),
+		DSN:    opt.dsn,
 	})
 	if err != nil {
+		cancel()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = client.Close() })
 	if err := db.Migrate(ctx, client.DB()); err != nil {
+		_ = client.Close()
+		cancel()
 		t.Fatal(err)
 	}
 
 	registry := tool.NewRegistry()
 	bus := events.New()
 	queries := db.SQLiteQueries(client)
-	runtime := agent.New(client, queries, bus, registry, nil, agenttools.Ports{})
+	runtime := agent.New(client, queries, bus, registry, nil, opt.ports)
 	for _, extra := range extras {
 		if err := registry.Register(extra); err != nil {
+			_ = client.Close()
+			cancel()
 			t.Fatal(err)
 		}
 	}
 	runtime.Start(ctx)
 
-	defaults := pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{
+	defaults := opt.defaults
+	if defaults.Model.Provider == "" {
+		defaults = fakeHelloDefaults()
+	}
+	api := handler.New(client, queries, runtime, bus, defaults, opt.cfg, nil)
+	f := &fixture{
+		api:     api,
+		router:  testRouter(api),
+		cancel:  cancel,
+		runtime: runtime,
+		queries: queries,
+		bus:     bus,
+		client:  client,
+		dsn:     opt.dsn,
+	}
+	t.Cleanup(func() {
+		f.cancel()
+		if !f.closed {
+			_ = f.client.Close()
+		}
+	})
+	return f
+}
+
+// fakeHelloDefaults 返回现有 fake 烟测用的默认 Run 配置。
+func fakeHelloDefaults() pkgagent.RunConfigSnapshot {
+	return pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{
 		Provider: "fake",
 		Model:    "fake",
 		Options:  mustJSON(pkgagent.FakeOptions{Turns: []pkgagent.FakeTurn{{Text: "hello"}}}),
 	})
-	api := handler.New(client, queries, runtime, bus, defaults, config.Config{}, nil)
-	return &fixture{api: api, router: testRouter(api), cancel: cancel, runtime: runtime, queries: queries, bus: bus}
 }
 
 // testRouter 注册测试用到的 HTTP 路由。
@@ -96,6 +143,7 @@ func testRouter(api *handler.API) http.Handler {
 	r.Post("/runs/{run_id}/continue", api.ContinueRun)
 	r.Post("/runs/{run_id}/retry", api.RetryRun)
 	r.Post("/runs/{run_id}/cancel", api.CancelRun)
+	r.Post("/runs/{run_id}/restore", api.RestoreRun)
 	r.Get("/approvals/{approval_id}", api.GetApproval)
 	r.Post("/approvals/{approval_id}/decision", api.DecideApproval)
 	r.Get("/memories", api.ListTextMemories)
@@ -164,7 +212,16 @@ func (f *fixture) start(t *testing.T, sessionID string, req handler.StartRunRequ
 // 若未指定状态，则等到任一终态。
 func (f *fixture) waitRun(t *testing.T, runID string, want ...pkgagent.RunStatus) pkgagent.Run {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	return f.waitRunFor(t, runID, 3*time.Second, want...)
+}
+
+// waitRunFor 按给定超时等待 Run 状态。
+func (f *fixture) waitRunFor(t *testing.T, runID string, timeout time.Duration, want ...pkgagent.RunStatus) pkgagent.Run {
+	t.Helper()
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		rec := f.do(t, http.MethodGet, "/runs/"+runID, nil)
 		if rec.Code != http.StatusOK {

@@ -20,6 +20,9 @@ const (
 	PhaseHumanAbort        Phase = "human_abort"        // 用户拒绝继续
 	PhaseCompressionResult Phase = "compression_result" // 上下文压缩完成
 	PhaseError             Phase = "error"              // 执行出错后重入
+	PhaseVerifyResult      Phase = "verify_result"      // 收尾验证跑完了
+	PhaseEvaluateResult    Phase = "evaluate_result"    // 独立复审出结论了
+	PhaseHumanOverride     Phase = "human_override"     // 人对验证/复审失败做了裁决
 )
 
 // InstructionType 是 Brain 能发出的指令类型。
@@ -32,24 +35,38 @@ const (
 	InstructionRequestHumanApprove InstructionType = "request_human_approve" // 请求人工审批
 	InstructionCompressContext     InstructionType = "compress_context"      // 压缩上下文
 	InstructionFinish              InstructionType = "finish"                // 结束 Run
+	InstructionVerify              InstructionType = "verify"                // 跑收尾验证
+	InstructionEvaluate            InstructionType = "evaluate"              // 跑独立复审
 )
 
 // AgentState 是单次 Agent 执行（即一个 Run）在某一时刻可序列化的完整状态，供单步执行只读使用。
 type AgentState struct {
-	SessionID       string            // 所属会话
-	RunID           string            // 本次 Run
-	TurnID          *string           // 当前 Turn（如有）
-	WorkspaceRoot   string            // 会话创建时冻结的工作目录；权限只覆盖该目录
-	Status          RunStatus         // 当前粗状态
-	StepIndex       int               // 已提交的步骤序号；下一步必须递增
-	Config          RunConfigSnapshot // 启动配置快照，只读
-	CancelRequested bool              // 用户是否请求取消
-	StopReason      *StopReason       // 结束原因（终态时）
-	ForceFinish     bool              // 是否强制收尾
-	Checkpoint      ToolCheckpoint    // 工具执行恢复点
-	PendingApproval *string           // 未完成的审批 ID
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
+	SessionID               string            // 所属会话
+	RunID                   string            // 本次 Run
+	TurnID                  *string           // 当前 Turn（如有）
+	WorkspaceRoot           string            // 会话创建时冻结的工作目录；权限只覆盖该目录
+	Status                  RunStatus         // 当前粗状态
+	StepIndex               int               // 已提交的步骤序号；下一步必须递增
+	Config                  RunConfigSnapshot // 启动配置快照，只读
+	CancelRequested         bool              // 用户是否请求取消
+	StopReason              *StopReason       // 结束原因（终态时）
+	ForceFinish             bool              // 是否强制收尾
+	Checkpoint              ToolCheckpoint    // 工具执行恢复点
+	PendingApproval         *string           // 未完成的审批 ID
+	HadSideEffects          bool              // 本次是否成功改过文件或跑过命令
+	SnapshotID              string            // 动手前 Git 快照 OID；空表示未拍或不是仓库
+	SnapshotHead            string            // 拍快照时的 HEAD，回滚时先回到这里再铺快照
+	UntrackedFiles          []string          // 拍快照时已存在的未跟踪文件
+	VerifyRound             int               // 已完成的验证轮次
+	LastVerifyFingerprint   string            // 上一轮验证失败指纹
+	LastVerifySummary       string            // 最近一次验证输出，供复审对照
+	EvaluateRound           int               // 已完成的复审轮次
+	LastEvaluateFingerprint string            // 上一轮复审 diff 指纹
+	ApprovalKind            ApprovalKind      // 当前等待的审批种类
+	OverrideAction          OverrideAction    // 人对验证/复审单的裁决
+	ActivePlan              string            // 本会话绑定的计划文件名；空表示尚未绑定
+	StartedAt               *time.Time
+	FinishedAt              *time.Time
 }
 
 // ToolCheckpoint 记录同一批 tool_call 中哪些已完成、已批准、已拒绝、待执行，以及已产生的结果。

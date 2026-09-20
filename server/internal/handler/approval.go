@@ -23,8 +23,9 @@ type DecideApprovalRequest struct {
 	Decisions  []ToolDecision          `json:"decisions"`
 	Status     pkgagent.ApprovalStatus `json:"status"`
 	Scope      pkgagent.ApprovalScope  `json:"scope"`
-	ActorID    string                  `json:"actor_id"`
-	Reason     string                  `json:"reason"`
+	ActorID    string                   `json:"actor_id"`
+	Reason     string                   `json:"reason"`
+	Override   pkgagent.OverrideAction `json:"override,omitempty"`
 }
 
 type ApprovalResponse struct {
@@ -116,6 +117,7 @@ func (a *API) decide(ctx context.Context, req DecideApprovalRequest) (pkgagent.A
 		Scope:      req.Scope,
 		ActorID:    req.ActorID,
 		Reason:     req.Reason,
+		Override:   req.Override,
 	})
 	if err != nil {
 		return pkgagent.Approval{}, err

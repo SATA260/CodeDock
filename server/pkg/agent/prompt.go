@@ -126,13 +126,14 @@ func formatGuidelines(tools []tool.Definition, extra []string) string {
 	return b.String()
 }
 
-// Build 将上下文组装为模型调用。底座 system 与工具表不随 mode 变；模式规则追加为 developer。
+// Build 将上下文组装为模型调用。发给网关的工具表按本轮 Names 裁过；模式规则追加为 developer。
 func Build(_ context.Context, req Prompt) (Chat, error) {
 	system := req.Context.SystemPrompt
 	if system == "" {
 		system = DefaultSystemPrompt
 	}
-	system = composeSystemPrompt(system, req.Context.Tools, nil, req.Context.WorkspaceRoot)
+	tools := boundToolDefs(req.Context.Tools, req.Run.Config.Profile.Tools.Names)
+	system = composeSystemPrompt(system, tools, nil, req.Context.WorkspaceRoot)
 	var prefix []Message
 	for _, index := range req.Context.MemoryIndexes {
 		if index == "" {
@@ -153,7 +154,15 @@ func Build(_ context.Context, req Prompt) (Chat, error) {
 		})
 	}
 	messages := CompleteToolResults(append(prefix, req.Context.Messages...))
-	if dev := strings.TrimSpace(req.Run.Config.Profile.DeveloperPrompt()); dev != "" {
+	dev := strings.TrimSpace(req.Run.Config.Profile.DeveloperPrompt())
+	if note := PlanScopeNote(req.Context.ActivePlan); note != "" {
+		if dev != "" {
+			dev = dev + "\n\n" + note
+		} else {
+			dev = note
+		}
+	}
+	if dev != "" {
 		messages = append(messages, Message{Role: RoleDeveloper, Content: EncodeText(dev)})
 	}
 	return Chat{
@@ -163,9 +172,17 @@ func Build(_ context.Context, req Prompt) (Chat, error) {
 		Model:           req.Run.Config.Model,
 		SystemPrompt:    system,
 		Messages:        messages,
-		Tools:           req.Context.Tools,
+		Tools:           tools,
 		MaxInputTokens:  req.Run.Config.Limits.MaxInputTokens,
 		MaxOutputTokens: req.Run.Config.Limits.MaxOutputTokens,
 		Attempt:         1,
 	}, nil
+}
+
+// boundToolDefs 按本轮可执行名裁工具；名单为空时保持原表，方便测试只塞几件工具。
+func boundToolDefs(all []tool.Definition, names []string) []tool.Definition {
+	if len(names) == 0 {
+		return all
+	}
+	return tool.VisibleDefinitions(all, names)
 }

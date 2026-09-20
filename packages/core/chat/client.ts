@@ -7,6 +7,7 @@ import type {
   PageInfo,
   Run,
   Session,
+  RestoreMode,
   StartRunRequest,
   StartRunResponse,
 } from "./types.ts";
@@ -138,6 +139,14 @@ export class AgentClient {
     await this.request<{ ok: boolean }>(`/runs/${runId}/cancel`, { method: "POST" });
   }
 
+  /** 按快照粒度还原本次任务的工作区。 */
+  async restoreRun(runId: string, mode: RestoreMode = "restore_files"): Promise<void> {
+    await this.request<{ ok: boolean }>(`/runs/${runId}/restore`, {
+      method: "POST",
+      json: { mode },
+    });
+  }
+
   async listApprovals(sessionId: string, signal?: AbortSignal): Promise<Approval[]> {
     const query = new URLSearchParams({
       page: "1",
@@ -159,10 +168,11 @@ export class AgentClient {
     const body = await this.request<{ approval: Approval }>(`/approvals/${approvalId}/decision`, {
       method: "POST",
       json: {
-        decisions: req.decisions,
+        decisions: req.decisions ?? [],
         scope: req.scope ?? "once",
         actor_id: req.actor_id ?? "",
         reason: req.reason ?? "",
+        override: req.override,
       },
     });
     return body.approval;

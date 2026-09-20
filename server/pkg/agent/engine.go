@@ -21,6 +21,8 @@ type Engine struct {
 	llmGate    tool.Gate
 	toolGate   tool.Gate
 	dispatcher seam.Dispatcher
+	snapshots  SnapshotPort
+	runner     CommandRunner
 }
 
 // NewEngine 创建执行引擎。brain 为空时自动构造一个空 Brain。
@@ -48,6 +50,15 @@ func (e *Engine) SetDispatcher(d seam.Dispatcher) {
 	e.dispatcher = d
 }
 
+// SetHarness 注入快照与命令执行；空值时验证走默认 shell，快照则跳过。
+func (e *Engine) SetHarness(snapshots SnapshotPort, runner CommandRunner) {
+	if e == nil {
+		return
+	}
+	e.snapshots = snapshots
+	e.runner = runner
+}
+
 // Step 执行一步：先让 Brain 决策，再按指令类型分发到对应执行器。
 func (e *Engine) Step(ctx context.Context, in StepInput) (StepResult, error) {
 	if e == nil {
@@ -63,13 +74,31 @@ func (e *Engine) Step(ctx context.Context, in StepInput) (StepResult, error) {
 	if err != nil {
 		return StepResult{}, err
 	}
+	in.State = rememberHarnessFingerprints(in.Job.Phase, in.Job.Payload, in.State)
+	if in.Job.Phase == PhaseHumanOverride {
+		var override HumanOverridePayload
+		_ = json.Unmarshal(in.Job.Payload, &override)
+		if override.Action == OverrideAbort {
+			e.applyAbortRestore(in.State)
+		}
+	}
 	out := StepResult{State: in.State}
 	for _, inst := range instructions {
 		switch inst.Type {
 		case InstructionCallLLM, InstructionLoadContext:
 			out, err = e.callLLM(ctx, in, inst)
-		case InstructionCallToolsBatch, InstructionRequestHumanApprove:
+		case InstructionCallToolsBatch:
 			out, err = e.callToolsBatch(ctx, in, inst)
+		case InstructionRequestHumanApprove:
+			if kind, ok := approvalKindOf(inst.Payload); ok && kind != ApprovalKindTools {
+				out, err = e.requestOverride(ctx, in, inst)
+			} else {
+				out, err = e.callToolsBatch(ctx, in, inst)
+			}
+		case InstructionVerify:
+			out, err = e.runVerify(ctx, in)
+		case InstructionEvaluate:
+			out, err = e.runEvaluate(ctx, in)
 		case InstructionFinish:
 			out, err = e.finish(ctx, in, inst)
 		case InstructionCompressContext:
@@ -86,7 +115,7 @@ func (e *Engine) Step(ctx context.Context, in StepInput) (StepResult, error) {
 }
 
 // callLLM 占槽后压缩上下文、调模型，把流式增量写成 Fact，再产出 assistant 消息与下一步。
-// 逻辑：校验取消 → 超回合则收束 → CompactIfNeeded + Stream → 收齐文本/工具调用 → 有 Tool 则下一步 llm_result。
+// 逻辑：校验取消 → 超回合则有副作用先验证否则收束 → CompactIfNeeded + Stream → 收齐文本/工具调用 → 有 Tool 则下一步 llm_result。
 func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (StepResult, error) {
 	if err := ctx.Err(); err != nil {
 		return e.finish(ctx, in, finishInstructions(RunCancelled, StopCancelled)[0])
@@ -106,7 +135,12 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	}
 	if limit := state.Config.Limits.MaxTurns; limit > 0 && hist.Turn.Number > limit {
 		state.ForceFinish = true
-		return e.finish(ctx, StepInput{State: state, Job: in.Job, History: hist}, finishInstructions(RunCompleted, StopMaxTurns)[0])
+		in.State = state
+		in.History = hist
+		if state.HadSideEffects {
+			return e.runVerify(ctx, in)
+		}
+		return e.finish(ctx, in, finishInstructions(RunCompleted, StopMaxTurns)[0])
 	}
 
 	snapshot, err := Load(ctx, hist)
@@ -116,6 +150,9 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	if snapshot.WorkspaceRoot == "" {
 		snapshot.WorkspaceRoot = state.WorkspaceRoot
 	}
+	scope := ResolvePlanScope(state.ActivePlan, hist.Messages)
+	state.ActivePlan = scope.ActivePlan
+	snapshot.ActivePlan = scope.ActivePlan
 	if e.llmGate != nil {
 		if err := e.llmGate.Acquire(ctx); err != nil {
 			return e.finish(ctx, StepInput{State: state, Job: in.Job}, finishInstructions(RunCancelled, StopCancelled)[0])
@@ -221,7 +258,7 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	}, nil
 }
 
-// callToolsBatch 按配置派发本批工具；需审批则暂停，否则写入 tool 消息并进入 tools_batch_result。
+// callToolsBatch 按配置派发本批工具。auto 整批、以及任何离开工作区的调用先走独立复审；仍待批则暂停，否则写入 tool 消息并进入 tools_batch_result。
 // auto 先复审再发工具事件：通过则当场执行，升级人才发 approval_required。
 func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruction) (StepResult, error) {
 	if err := ctx.Err(); err != nil {
@@ -257,12 +294,24 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 		maxParallel = 1
 	}
 
+	pendingNames := make([]toolNameArg, 0, len(calls))
+	for _, call := range calls {
+		pendingNames = append(pendingNames, toolNameArg{Name: call.Name})
+	}
+	var snapFacts []Fact
+	state, snapFacts = e.captureSnapshotIfNeeded(state, pendingNames)
+
 	liveHook := e.toolEventHook(state)
+	scope := ResolvePlanScope(state.ActivePlan, in.History.Messages)
+	state.ActivePlan = scope.ActivePlan
 	inv := tool.Invocation{
 		SessionID:       state.SessionID,
 		RunID:           state.RunID,
 		TurnID:          turnID,
 		WorkspaceRoot:   state.WorkspaceRoot,
+		ActivePlan:      scope.ActivePlan,
+		MentionedPlans:  scope.Mentioned,
+		AllowListAll:    scope.AllowListAll,
 		Calls:           calls,
 		Mode:            execMode,
 		FailurePolicy:   failPolicy,
@@ -292,10 +341,10 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 	if state.StepIndex <= 0 {
 		state.StepIndex = 1
 	}
-	if state.Config.Approval == ApprovalAuto {
+	if state.Config.Approval == ApprovalAuto || out.NeedsExternalReview {
 		if out.WaitingApproval {
 			out, state = e.reviewThenDispatch(ctx, state, inv, out, liveHook)
-		} else {
+		} else if state.Config.Approval == ApprovalAuto {
 			replayDispatchEvents(liveHook, calls, out)
 		}
 	}
@@ -324,17 +373,16 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 				Status:    ApprovalPending,
 			})
 		}
-		return StepResult{
-			State: state,
-			Facts: []Fact{{
-				Type:   EventApprovalRequired,
-				TurnID: state.TurnID,
-				Payload: MarshalPayload(ApprovalRequiredPayload{
-					ApprovalID: approvalID,
-					ToolCalls:  toolCalls,
-				}),
-			}},
-		}, nil
+		facts := append([]Fact{}, snapFacts...)
+		facts = append(facts, Fact{
+			Type:   EventApprovalRequired,
+			TurnID: state.TurnID,
+			Payload: MarshalPayload(ApprovalRequiredPayload{
+				ApprovalID: approvalID,
+				ToolCalls:  toolCalls,
+			}),
+		})
+		return StepResult{State: state, Facts: facts}, nil
 	}
 
 	completed := make([]string, 0, len(out.Results))
@@ -361,8 +409,21 @@ func (e *Engine) callToolsBatch(ctx context.Context, in StepInput, inst Instruct
 	state.Checkpoint.Completed = completed
 	state.Checkpoint.Pending = nil
 	state.PendingApproval = nil
+	state.ActivePlan = BindActivePlan(state.ActivePlan, out.Results)
+	if !state.HadSideEffects {
+		for _, result := range out.Results {
+			if !result.Success || !isMutatingTool(result.Name) {
+				continue
+			}
+			if result.Name == "write" || result.Name == "edit" || e.workspaceChanged(state) {
+				state.HadSideEffects = true
+				break
+			}
+		}
+	}
 	return StepResult{
 		State:    state,
+		Facts:    snapFacts,
 		Messages: messages,
 		Next: &StepJob{
 			RunID:     state.RunID,
@@ -407,7 +468,7 @@ func (e *Engine) finish(_ context.Context, in StepInput, inst Instruction) (Step
 	}, nil
 }
 
-// reviewThenDispatch 在 auto 下先复审再派发。复审失败或说不清则仍等待人批，不发工具事件。
+// reviewThenDispatch 用独立复审模型裁定待批调用。auto 整批走这里；离开工作区的调用任何模式都走这里。复审失败或说不清则仍等待人批，不发工具事件。
 func (e *Engine) reviewThenDispatch(ctx context.Context, state AgentState, inv tool.Invocation, out tool.DispatchResult, liveHook tool.DispatchHook) (tool.DispatchResult, AgentState) {
 	src := out.PendingCalls
 	if len(src) == 0 {
@@ -422,7 +483,7 @@ func (e *Engine) reviewThenDispatch(ctx context.Context, state AgentState, inv t
 			Status:    ApprovalPending,
 		})
 	}
-	result, err := Review(ctx, state.Config.Model, calls)
+	result, err := Review(ctx, FallbackModel(state.Config.EvaluatorModel, state.Config.Model), calls)
 	if err != nil || result.Escalate || len(result.Decisions) == 0 {
 		return out, state
 	}

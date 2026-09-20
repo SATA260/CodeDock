@@ -199,6 +199,7 @@ func mapApproval(row sqlite.Approval) pkgagent.Approval {
 		Scope:      pkgagent.ApprovalScope(row.Scope),
 		Status:     pkgagent.ApprovalStatus(row.Status),
 		ExpiresAt:  parseTime(row.ExpiresAt),
+		Kind:       pkgagent.NormalizeApprovalKind(pkgagent.ApprovalKind(row.Kind)),
 	}
 }
 

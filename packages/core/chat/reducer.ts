@@ -478,6 +478,7 @@ function applyRunTerminal(state: SessionState, event: AgentEvent): SessionState 
     runId: event.run_id,
     status,
     stopReason: payload.stop_reason,
+    error: payload.error,
     seq: event.seq,
   });
   if (canTakeActive(state, event.run_id)) {

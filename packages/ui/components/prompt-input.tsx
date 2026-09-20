@@ -4,7 +4,7 @@ import type { FormEvent, HTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes 
 
 import { cn } from "../lib/cn.ts";
 import { useImeGuard } from "../lib/ime.ts";
-import { Button } from "./ui/button.tsx";
+import { Button, type ButtonProps } from "./ui/button.tsx";
 
 export type PromptInputMessage = { text: string };
 
@@ -97,16 +97,18 @@ export function PromptInputTools({ children }: { children: ReactNode }) {
   return <div className="flex items-center gap-2">{children}</div>;
 }
 
+// PromptInputSubmit 提交输入框；可附带 data-testid。
 export function PromptInputSubmit({
   status,
   disabled,
+  ...props
 }: {
   status?: "ready" | "streaming";
   disabled?: boolean;
-}) {
+} & Omit<ButtonProps, "type" | "disabled">) {
   return (
-    <Button type="submit" disabled={disabled || status === "streaming"}>
-      {status === "streaming" ? "运行中" : "发送"}
+    <Button type="submit" disabled={disabled || status === "streaming"} {...props}>
+      {status === "streaming" ? "Running" : "Send"}
     </Button>
   );
 }

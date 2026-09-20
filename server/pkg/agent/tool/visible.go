@@ -1,6 +1,6 @@
 package tool
 
-// VisibleDefinitions 按可执行绑定名过滤工具定义。发给模型用注册表全量，不走这里。
+// VisibleDefinitions 按可执行绑定名过滤工具定义，供发给模型的工具表使用。
 func VisibleDefinitions(all []Definition, names []string) []Definition {
 	if len(names) == 0 {
 		return nil

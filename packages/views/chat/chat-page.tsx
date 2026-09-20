@@ -308,6 +308,7 @@ export function ChatPage({
                 <Button
                   size="sm"
                   variant="secondary"
+                  data-testid="run-recover"
                   onClick={async () => {
                     await timeline.recover();
                     await list.refresh();

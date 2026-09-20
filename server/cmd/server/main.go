@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -93,6 +94,8 @@ func main() {
 	runtime.Start(ctx)
 
 	defaults := pkgagent.DefaultRunConfig(pkgagent.WorkAgent, model)
+	defaults.EvaluatorModel = sideModel(cfg.EvaluatorProvider, cfg.EvaluatorModel, cfg.EvaluatorAPIKey, cfg.EvaluatorBaseURL, model)
+	defaults.SubagentModel = sideModel(cfg.SubagentProvider, cfg.SubagentModel, cfg.SubagentAPIKey, cfg.SubagentBaseURL, defaults.EvaluatorModel)
 	api := handler.New(client, queries, runtime, bus, defaults, cfg, logger.NewLogger("handler"))
 	codexRT := intcodex.New(intcodex.Options{Bin: cfg.CodexBin})
 	defer func() { _ = codexRT.Close() }()
@@ -127,12 +130,49 @@ func main() {
 
 // modelOptions 把 LLM API Key 与 BaseURL 编进 ModelConfig.Options。
 func modelOptions(cfg config.Config) json.RawMessage {
+	return encodeModelOptions(cfg.LLMAPIKey, cfg.LLMBaseURL)
+}
+
+// sideModel 组装复审或子代理模型；未配置时回落 fallback。
+func sideModel(provider, name, apiKey, baseURL string, fallback pkgagent.ModelConfig) pkgagent.ModelConfig {
+	out := fallback
+	if strings.TrimSpace(provider) != "" {
+		out.Provider = provider
+	}
+	if strings.TrimSpace(name) != "" {
+		out.Model = name
+	}
+	if strings.TrimSpace(apiKey) != "" || strings.TrimSpace(baseURL) != "" {
+		key := apiKey
+		if key == "" {
+			key = optionString(fallback.Options, "api_key")
+		}
+		url := baseURL
+		if url == "" {
+			url = optionString(fallback.Options, "base_url")
+		}
+		out.Options = encodeModelOptions(key, url)
+	}
+	return out
+}
+
+// encodeModelOptions 把 Key 与 BaseURL 编成模型 Options。
+func encodeModelOptions(apiKey, baseURL string) json.RawMessage {
 	body, err := json.Marshal(map[string]string{
-		"api_key":  cfg.LLMAPIKey,
-		"base_url": cfg.LLMBaseURL,
+		"api_key":  apiKey,
+		"base_url": baseURL,
 	})
 	if err != nil {
 		return json.RawMessage("{}")
 	}
 	return body
+}
+
+// optionString 从模型 Options 里读一个字符串字段。
+func optionString(raw json.RawMessage, key string) string {
+	var fields map[string]string
+	if json.Unmarshal(raw, &fields) != nil {
+		return ""
+	}
+	return fields[key]
 }

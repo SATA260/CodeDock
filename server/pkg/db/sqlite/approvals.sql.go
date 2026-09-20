@@ -22,7 +22,7 @@ func (q *Queries) CountSessionApprovals(ctx context.Context, sessionID string) (
 }
 
 const getApproval = `-- name: GetApproval :one
-SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls FROM approvals
+SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls, kind FROM approvals
 WHERE id = ?
 `
 
@@ -38,17 +38,18 @@ func (q *Queries) GetApproval(ctx context.Context, id string) (Approval, error) 
 		&i.Status,
 		&i.ExpiresAt,
 		&i.ToolCalls,
+		&i.Kind,
 	)
 	return i, err
 }
 
 const insertApproval = `-- name: InsertApproval :one
 INSERT INTO approvals (
-    id, session_id, run_id, tool_call_id, tool_calls, scope, status, expires_at
+    id, session_id, run_id, tool_call_id, tool_calls, scope, status, expires_at, kind
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls
+RETURNING id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls, kind
 `
 
 type InsertApprovalParams struct {
@@ -60,6 +61,7 @@ type InsertApprovalParams struct {
 	Scope      string
 	Status     string
 	ExpiresAt  string
+	Kind       string
 }
 
 func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) (Approval, error) {
@@ -72,6 +74,7 @@ func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) 
 		arg.Scope,
 		arg.Status,
 		arg.ExpiresAt,
+		arg.Kind,
 	)
 	var i Approval
 	err := row.Scan(
@@ -83,6 +86,7 @@ func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) 
 		&i.Status,
 		&i.ExpiresAt,
 		&i.ToolCalls,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -91,7 +95,7 @@ const updateApproval = `-- name: UpdateApproval :one
 UPDATE approvals
 SET scope = ?, status = ?, tool_calls = ?
 WHERE id = ?
-RETURNING id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls
+RETURNING id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls, kind
 `
 
 type UpdateApprovalParams struct {
@@ -118,6 +122,7 @@ func (q *Queries) UpdateApproval(ctx context.Context, arg UpdateApprovalParams) 
 		&i.Status,
 		&i.ExpiresAt,
 		&i.ToolCalls,
+		&i.Kind,
 	)
 	return i, err
 }

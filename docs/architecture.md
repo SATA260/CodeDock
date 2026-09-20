@@ -2,7 +2,7 @@
 
 本文档定义 CodeDock 当前的技术骨架。目录按能力拆分；Issue、Task、Review、Workspace 等业务目录不属于本项目的基础结构。
 
-Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。三个内置 Agent（ask / plan / agent）共用同一 Loop；审批走工具 → Agent 表 → 审批模式流水线。
+Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。三个内置 Agent（ask / plan / agent）共用同一 Loop；审批走工具 → Agent 表 → 审批模式流水线。模型不再直接结束有副作用的任务：`HadSideEffects` 为真时必须经过 `verifying` 与 `evaluating`，通过才 `completed`。
 
 ## 总体架构
 
@@ -23,7 +23,7 @@ server/cmd/server
     |
     v
 server/internal/handler
-    |-- CRUD / SSE / Start / Continue / Cancel / 审批 --> pkg/db/sqlite
+    |-- CRUD / SSE / Start / Continue / Cancel / Restore / 审批 --> pkg/db/sqlite
     |-- 领取 Run 后的 Loop --> internal/agent
     |-- 用户记忆查看 / 删除 --> pkg/db/sqlite
     |-- Git HTTP --> pkg/git（本机 CLI，无产品流程）
@@ -67,7 +67,7 @@ CodeDock/
 │   │   │   └── codex/           # 独立 /codex HTTP 薄桥接
 │   │   ├── agent/               # 运行时编排 + sqlc 持久化
 │   │   │   ├── memory/          # 热层目录+专题，冷层工作区 FTS 索引
-│   │   │   └── tools/           # 具体工具定义：ping、memory_*、编码八工具、plan_*
+│   │   │   └── tools/           # 具体工具定义：ping、memory_*、编码八工具、plan_*、explore
 │   │   ├── codex/               # 本机 app-server 生命周期与内存排队/问票/SSE
 │   │   ├── events/              # 进程内事件总线
 │   │   ├── pluginhost/          # go-plugin 宿主：拉进程、Dispatch、Host 白名单
@@ -208,7 +208,8 @@ apps/web
 - 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引；List 用 user_id / workspace_id，Get/Delete 用 name 默认目录）
 - SSE：先按 `afterSeq` / `Last-Event-ID` 回放已落库事件，再 `SubscribeAll` 并按 Session 过滤；客户端断开不取消 Run
 - 事件 JSON 回放：`GET /sessions/{id}/event-log`，供前端一次 hydrate，不替代 SSE 直播
-- Run 的 Start / Continue / Retry / Cancel 和审批裁决直接在 Handler 中处理，需要执行时再交给 Worker
+- Run 的 Start / Continue / Retry / Cancel / Restore 和审批裁决直接在 Handler 中处理，需要执行时再交给 Worker。`POST /runs/{id}/restore` 按快照粒度还原工作区。验证/复审熔断单带 `kind=verify|evaluate`，人可 `accept` / `retry` / `abort`
+- 编码场景验收（真实模型写盘、取消、进程重启后 Continue）见 [testing-coding.md](testing-coding.md)，不走 fake
 - 同一 Session 只有一个 active Run：已有 active 时 409。要打断当前轮，先 Cancel 再 Start
 - Git HTTP（`/git/*`）：校验 checkout、组响应，直接调用 `pkg/git`。带 `session_id` 时仓库根是该会话冻结的 `workspace_id`；未带则 `GIT_REPO`，再否则 cwd。`GET /git/status` 回 `SiteState` 整局（含 `is_repo`、跟踪、ahead/behind、integrating）
 - Claude Code HTTP（`/claude/*`）：直接调用 `pkg/claude`。会话 / 实录 / 配置从本机 Claude 读，不查库、不落库
@@ -242,11 +243,11 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 工具定义全部在本包。Runtime `New` 接收 `Ports`（Execute 要调用的外部实现），再 `Register`：
 
-- 本包写工具名、入参/出参、schema、默认 Effect 和编排。`ping`、记忆三件、编码八工具（`read`/`write`/`edit`/`ls`/`grep`/`find`/`bash`/`powershell`）、`plan_list`/`plan_read`/`plan_write`
-- Execute 与第 1 层路径/计划名校验只通过 `Ports`（可替换 FS/RunCommand）和会话已冻结的工作目录。本包不负责解析或冻结 `workspace_id`，只消费 Handler 写入的路径（或 `Ports.WorkspaceRoot` 进程回落）。目录内走工具默认 Effect；目录外必须审批，Agent 表和 yolo 都不能抬成 allow。批过后才能在目录外执行
+- 本包写工具名、入参/出参、schema、默认 Effect 和编排。`ping`、记忆三件、编码八工具（`read`/`write`/`edit`/`ls`/`grep`/`find`/`bash`/`powershell`）、`plan_list`/`plan_read`/`plan_write`/`plan_pass`、只读 `explore`。`edit`/`write` 写盘后做语法轻检，新硬伤当场回滚。已存在测试文件走 LockedAsk（manual / auto 必须人批；yolo 放行，正确性靠 verify / evaluate）。`plan_write` 只增不删验收项；打勾必须走 `plan_pass` 并提交证据。验收项字段必须是 `id` / `description` / `verify_cmd`，写在工具入参 `items` 或正文的 Markdown 勾选列表里；落盘给人看的是普通 Markdown，不写 JSON frontmatter。会话绑定一份当前计划（`RunHarness.ActivePlan`）：用户未点名时 `plan_list` 不扫目录里的其他计划，`plan_read` / 编码 `read` 不能读未绑定文件；复审只对照该计划验收项
+- Execute 与第 1 层路径/计划名校验只通过 `Ports`（可替换 FS/RunCommand）和会话已冻结的工作目录。本包不负责解析或冻结 `workspace_id`，只消费 Handler 写入的路径（或 `Ports.WorkspaceRoot` 进程回落）。目录内走工具默认 Effect；目录外任何模式（含 yolo）都不能直接执行，必须先走独立复审（`EvaluatorModel`，缺省回落主模型），通过才跑，说不清再开人单。Agent 表也不能抬成 allow
 - Git 用户操作仍走 HTTP + `pkg/git`，不在本包实现 Git Tool
 
-每个工具只定义入参/出参结构体；执行用 `encoding/json`，给模型的 schema 由 `jsonschema.For` 从类型推断。发给模型的是注册表全量工具；`Profile.Tools.Names` 是可执行绑定。模式规则由 `Build` 注入一条 developer 消息；发给网关时紧跟底座 system，不改底座正文。审批流水线：工具默认+参数校验 → 本 Agent `Names`（未绑定 deny，yolo / 已批准都不能抬）→ Agent `Effects` → `approval`（manual/auto/yolo）；每层只审上一层的 `ask`。一批待批工具对应一条审批，一次提交审完再流转。不 import 父包 `internal/agent`。测试用 Tool 可留在测试文件。
+每个工具只定义入参/出参结构体；执行用 `encoding/json`，给模型的 schema 由 `jsonschema.For` 从类型推断。发给模型的工具表按本轮 `Profile.Tools.Names` 裁过，不再把 ask / plan 用不到的写类工具一并送给网关。`Names` 仍是可执行绑定。模式规则由 `Build` 注入一条 developer 消息；发给网关时紧跟底座 system。审批流水线：工具默认+参数校验 → 本 Agent `Names`（未绑定 deny，yolo / 已批准都不能抬）→ Agent `Effects` → `approval`（manual/auto/yolo）；每层只审上一层的 `ask`。一批待批工具对应一条审批，一次提交审完再流转。不 import 父包 `internal/agent`。测试用 Tool 可留在测试文件。
 
 ### 插件
 
@@ -276,8 +277,12 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 - Tool 抽象、内存 `Registry`、无状态 `Dispatch`（不含具体工具定义）
 - Agent 配置抽象 `profile.Config` 与 `RunConfigSnapshot`
 - 模型调用 `Stream` / 压缩：在函数内按 `ModelConfig.Provider` 创建
-  - `fake`：读 `Model.Options` 脚本（多段 text / tool_calls、失败次数、可取消挂起），测试用
+  - `fake`：读 `Model.Options` 脚本（多段 text / tool_calls、失败次数、可取消挂起、verify/evaluate 脚本），测试用
   - `openai`：OpenAI 兼容 HTTP（`BaseURL` + API Key）
+- 正确性工作流：`Brain` 在 `llm_result` 且无待批工具时，若 `HadSideEffects` 则发 `verify`，测试通过后再发 `evaluate`。状态含 `verifying` / `evaluating`。事件含 `verify.started` / `verify.result` / `verify.skipped` / `evaluate.started` / `evaluate.result` / `snapshot.skipped`
+- `EvaluatorModel` 是独立复审模型；`SubagentModel` 是 explore 子代理模型。空则回落主模型
+- explore 小循环只绑 `read` / `grep` / `find` / `ls` / `memory_search`，有轮次、工具次数和超时预算
+- 会话级计划隔离：未点名不读 `.cursor` 下其他计划；`evaluate` 只用 `LoadPlanItems(workspace, ActivePlan)`
 
 ### `pkg/codex`
 
@@ -301,7 +306,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/core`
 
-跨端无头业务，无 UI。按业务域拆目录，文件直接放在 `packages/core/<domain>/`，不要 `src/`。现有 `chat/`：Session / Message / Run / 审批的 HTTP、SSE、Timeline reducer。Git 前端在 `git/`（`GitClient`，不扩 `AgentClient`）。Codex 前端在 `codex/`（`CodexClient`，不扩 `AgentClient`）。Claude 前端在 `claude/`（`ClaudeClient`，不扩 `AgentClient`）。`baseUrl` / `userId` 由调用方注入。不依赖 React。第一版 thinking 用 Run 状态（`queued` / `loading_context` / `running_llm`），不是模型 reasoning token。
+跨端无头业务，无 UI。按业务域拆目录，文件直接放在 `packages/core/<domain>/`，不要 `src/`。现有 `chat/`：Session / Message / Run / 审批的 HTTP、SSE、Timeline reducer。Git 前端在 `git/`（`GitClient`，不扩 `AgentClient`）。Codex 前端在 `codex/`（`CodexClient`，不扩 `AgentClient`）。Claude 前端在 `claude/`（`ClaudeClient`，不扩 `AgentClient`）。`baseUrl` / `userId` 由调用方注入。不依赖 React。thinking 用 Run 状态（`queued` / `loading_context` / `running_llm` / `verifying` / `evaluating`），不是模型 reasoning token。验证与复审另有独立时间线卡片。
 
 ### `packages/ui`
 
@@ -315,11 +320,11 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/views`
 
-组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage`、侧栏、瀑布、审批、prompt；新建会话可选 Local / Codex / Claude。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，不进 `AgentContext`。Codex 在 `codex/`：`CodexProvider` 只注入 `CodexClient`。Claude 在 `claude/`：`ClaudeProvider` 只注入 `ClaudeClient`。二者都由 `ChatPage` 组合，不单独做页。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
+组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage` 三栏（会话列表、对话、右侧窗口栏，左右栏可收起），瀑布、审批、prompt；新建会话可选 Local / Codex / Claude。对话里的 Plan 与文件改动收成条目，点开后在右侧窗口显示。右侧窗口栏可新建 / 关闭 Plan、文件、Git，后续窗口种类往这里加。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，不进 `AgentContext`；由 `ChatPage` 右侧窗口组合，不单独做业务页。Codex 在 `codex/`：`CodexProvider` 只注入 `CodexClient`。Claude 在 `claude/`：`ClaudeProvider` 只注入 `ClaudeClient`。二者都由 `ChatPage` 组合。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
 
 ### `apps/web`
 
-路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient` / `CodexClient` / `ClaudeClient`、包 `AgentProvider` / `CodexProvider` / `ClaudeProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。Git 页在 `(chat)` 组外的 `/git`，只装配 `GitClient`。Codex 走对话页的 `/` 与 `/s/c/:id`，Claude 走 `/` 与 `/s/claude/:id`。开发态顶栏（对话 / 仓库）只放 web，views 不知道路径。
+路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient` / `GitClient` / `CodexClient` / `ClaudeClient`、包 `AgentProvider` / `GitProvider` / `CodexProvider` / `ClaudeProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。对话页装配 `GitClient` 给右侧 Git 窗口。Codex 走对话页的 `/` 与 `/s/c/:id`，Claude 走 `/` 与 `/s/claude/:id`。
 
 ## 组装关系
 
@@ -341,7 +346,7 @@ Worker
 
 ## 配置
 
-`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。未设 `DB_DSN` 时 SQLite 写仓根 `data/codedock.db`，不写 `server/`。`PLUGIN_DIR` 指向插件根目录，未设则不拉插件进程；`PLUGIN_RPC_TIMEOUT` 默认 `10s`。`CODEX_BIN` 为本机 Codex CLI（默认 `codex`）。Handler 创建 Run 时写入 `RunConfigSnapshot`，后续 Turn 只读快照。
+`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。复审用 `EVALUATOR_PROVIDER` / `EVALUATOR_MODEL`（及可选 Key/BaseURL）；explore 用 `SUBAGENT_PROVIDER` / `SUBAGENT_MODEL`。空则回落主模型。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。未设 `DB_DSN` 时 SQLite 写仓根 `data/codedock.db`，不写 `server/`。`PLUGIN_DIR` 指向插件根目录，未设则不拉插件进程；`PLUGIN_RPC_TIMEOUT` 默认 `10s`。`CODEX_BIN` 为本机 Codex CLI（默认 `codex`）。Handler 创建 Run 时写入 `RunConfigSnapshot`（含 `EvaluatorModel` / `SubagentModel`），后续 Turn 只读快照。工作区 `.cursor/verify.yaml` 定义收尾验证命令。
 
 HTTP 出站领域对象使用 snake_case JSON。Router 只对本地回环 Origin 放行 CORS，便于本机 Web 直连 `:8080`。Web 用 `NEXT_PUBLIC_API_BASE`（默认 `http://localhost:8080`）和 `NEXT_PUBLIC_USER_ID`（默认 `local`）。
 

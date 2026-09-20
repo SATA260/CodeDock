@@ -34,6 +34,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { FileText, FileCode2 } from "lucide-react";
 
+import { terminalStatusCopy } from "./lib/terminal.ts";
+
 const thinkingCopy: Record<ThinkingPhase, string> = {
   queued: "Queued",
   loading_context: "Loading context",
@@ -113,7 +115,7 @@ export function ConversationTimeline({
   );
 
   return (
-    <Conversation key={scrollKey ?? "agent-draft"}>
+    <Conversation key={scrollKey ?? "agent-draft"} data-testid="timeline">
       <ConversationContent scrollKey={scrollKey} followKey={followKey} streaming={streaming}>
         {sections.map((section, sectionIndex) => (
           <section key={sectionKey(section)} className="flex w-full min-w-0 flex-col gap-5">
@@ -161,7 +163,9 @@ function TimelineRow({
     case "thinking":
       return (
         <div className="text-sm leading-5 text-muted-foreground" {...latestProps}>
-          <LiveStatus active={live}>{thinkingCopy[item.phase]}</LiveStatus>
+          <LiveStatus active={live} data-testid={live ? "live-status" : undefined}>
+            {thinkingCopy[item.phase]}
+          </LiveStatus>
         </div>
       );
     case "assistant":
@@ -187,7 +191,7 @@ function TimelineRow({
     case "verify":
       return (
         <div className="text-xs leading-4 text-muted-foreground" {...latestProps}>
-          <LiveStatus active={live && item.status === "started"}>
+          <LiveStatus active={live && item.status === "started"} data-testid={live && item.status === "started" ? "live-status" : undefined}>
             {item.status === "started"
               ? "Verifying"
               : item.status === "skipped"
@@ -201,7 +205,7 @@ function TimelineRow({
     case "evaluate":
       return (
         <div className="text-xs leading-4 text-muted-foreground" {...latestProps}>
-          <LiveStatus active={live && item.status === "started"}>
+          <LiveStatus active={live && item.status === "started"} data-testid={live && item.status === "started" ? "live-status" : undefined}>
             {item.status === "started"
               ? "Reviewing"
               : item.status === "pass"
@@ -221,12 +225,12 @@ function TimelineRow({
       );
     case "terminal":
       return (
-        <div className="text-xs leading-4 text-muted-foreground" {...latestProps}>
-          {item.status === "completed"
-            ? "Run completed"
-            : item.status === "cancelled"
-              ? "Cancelled"
-              : `Run ended: ${item.stopReason ?? item.status}`}
+        <div
+          className="text-xs leading-4 tracking-wide text-muted-foreground [word-spacing:0.35em]"
+          data-testid="run-terminal"
+          {...latestProps}
+        >
+          {terminalStatusCopy(item)}
         </div>
       );
     default:

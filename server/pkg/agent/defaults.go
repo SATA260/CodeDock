@@ -10,7 +10,7 @@ import (
 
 const (
 	DefaultSystemPrompt = `你是 CodeDock 里的编程助手。`
-	DefaultToolSet      = "agent-7"
+	DefaultToolSet      = "agent-8"
 )
 
 // FakeOptions 控制 fake 模型的确定性输出，供测试与离线闭环使用。
@@ -20,7 +20,9 @@ type FakeOptions struct {
 	Hang                bool        `json:"hang"`
 	CompactSummary      string      `json:"compact_summary"`
 	IndexCompactSummary string      `json:"index_compact_summary"`
-	Review              *FakeReview `json:"review,omitempty"`
+	Review              *FakeReview           `json:"review,omitempty"`
+	Verify              []FakeVerifyResult    `json:"verify,omitempty"`
+	Evaluate            []FakeEvaluateResult  `json:"evaluate,omitempty"`
 }
 
 // FakeReview 控制 fake 复审模型的输出。
@@ -28,6 +30,22 @@ type FakeReview struct {
 	Decisions []ApprovalDecision `json:"decisions,omitempty"`
 	Escalate  bool               `json:"escalate,omitempty"`
 	Fail      bool               `json:"fail,omitempty"`
+}
+
+// FakeVerifyResult 控制 fake 验证脚本的一轮输出。
+type FakeVerifyResult struct {
+	Status      VerifyStatus `json:"status"`
+	Output      string       `json:"output,omitempty"`
+	Fingerprint string       `json:"fingerprint,omitempty"`
+	FailedCommand string     `json:"failed_command,omitempty"`
+}
+
+// FakeEvaluateResult 控制 fake 复审脚本的一轮输出。
+type FakeEvaluateResult struct {
+	Verdict string            `json:"verdict"`
+	Issues  []EvaluationIssue `json:"issues,omitempty"`
+	Summary string            `json:"summary,omitempty"`
+	Fail    bool              `json:"fail,omitempty"`
 }
 
 // FakeTurn 是 fake 模型一轮输出。
@@ -78,12 +96,14 @@ func DefaultRunConfig(mode WorkMode, model ModelConfig) RunConfigSnapshot {
 			Tool:    retry,
 		},
 		Limits: RunLimits{
-			MaxWallTime:      5 * time.Minute,
-			MaxTurns:         8,
-			MaxToolCalls:     16,
-			MaxInputTokens:   128000,
-			MaxOutputTokens:  8192,
-			MaxParallelTools: 4,
+			MaxWallTime:       5 * time.Minute,
+			MaxTurns:          8,
+			MaxToolCalls:      16,
+			MaxInputTokens:    128000,
+			MaxOutputTokens:   8192,
+			MaxParallelTools:  4,
+			MaxVerifyRounds:   3,
+			MaxEvaluateRounds: 2,
 		},
 		ToolExecutionMode: tool.ExecutionSerial,
 		ToolFailurePolicy: tool.FailureBestEffort,

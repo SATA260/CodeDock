@@ -43,6 +43,8 @@ const (
 	RunRunningLLM      RunStatus = "running_llm"      // 正在流式调用模型
 	RunExecutingTools  RunStatus = "executing_tools"  // 正在执行模型下发的一批工具
 	RunWaitingApproval RunStatus = "waiting_approval" // 工具批次等待用户审批
+	RunVerifying       RunStatus = "verifying"        // 正在跑收尾验证
+	RunEvaluating      RunStatus = "evaluating"       // 正在做独立旁路复审
 	RunCancelling      RunStatus = "cancelling"       // 已请求取消，正在收尾
 	RunCompleted       RunStatus = "completed"        // 正常结束
 	RunFailed          RunStatus = "failed"           // 执行失败
@@ -53,14 +55,15 @@ const (
 type StopReason string
 
 const (
-	StopCompleted      StopReason = "completed"       // 正常完成
-	StopCancelled      StopReason = "cancelled"       // 用户取消或中断
-	StopTimeout        StopReason = "timeout"         // 超过最大 wall time
-	StopBudgetExceeded StopReason = "budget_exceeded" // 超过 token 预算
-	StopMaxTurns       StopReason = "max_turns"       // 超过最大轮数
-	StopToolError      StopReason = "tool_error"      // 工具执行失败导致结束
-	StopModelError     StopReason = "model_error"     // 模型调用失败导致结束
-	StopApprovalDenied StopReason = "approval_denied" // 审批被拒绝
+	StopCompleted      StopReason = "completed"        // 正常完成
+	StopCancelled      StopReason = "cancelled"        // 用户取消或中断
+	StopTimeout        StopReason = "timeout"          // 超过最大 wall time
+	StopBudgetExceeded StopReason = "budget_exceeded"  // 超过 token 预算
+	StopMaxTurns       StopReason = "max_turns"        // 超过最大轮数
+	StopToolError      StopReason = "tool_error"       // 工具执行失败导致结束
+	StopModelError     StopReason = "model_error"      // 模型调用失败导致结束
+	StopApprovalDenied StopReason = "approval_denied"  // 审批被拒绝
+	StopAcceptedByUser StopReason = "accepted_by_user" // 验证/复审熔断后用户强制收工
 )
 
 // TurnStatus 表示单次模型调用的生命周期状态。
@@ -127,6 +130,12 @@ const (
 	EventRunCompleted         EventType = "run.completed"          // Run 正常结束
 	EventRunFailed            EventType = "run.failed"             // Run 失败
 	EventRunCancelled         EventType = "run.cancelled"          // Run 取消
+	EventVerifyStarted        EventType = "verify.started"         // 收尾验证开始
+	EventVerifyResult         EventType = "verify.result"          // 收尾验证出结论
+	EventVerifySkipped        EventType = "verify.skipped"         // 无验证规则，按通过处理
+	EventEvaluateStarted      EventType = "evaluate.started"       // 独立复审开始
+	EventEvaluateResult       EventType = "evaluate.result"        // 独立复审出结论
+	EventSnapshotSkipped      EventType = "snapshot.skipped"       // 工作区不是 Git 仓库，无法拍快照
 )
 
 // ModelConfig 冻结 Run 使用的供应商无关模型配置。
@@ -154,12 +163,14 @@ type RetryPolicy struct {
 
 // RunLimits 是一次 Run 的不可变执行预算。
 type RunLimits struct {
-	MaxWallTime      time.Duration `json:"max_wall_time"`      // 最大执行时间
-	MaxTurns         int           `json:"max_turns"`          // 最大模型调用轮数
-	MaxToolCalls     int           `json:"max_tool_calls"`     // 最大工具调用次数
-	MaxInputTokens   int64         `json:"max_input_tokens"`   // 最大输入 token 数（含上下文）
-	MaxOutputTokens  int64         `json:"max_output_tokens"`  // 最大输出 token 数
-	MaxParallelTools int           `json:"max_parallel_tools"` // 工具并行上限
+	MaxWallTime       time.Duration `json:"max_wall_time"`       // 最大执行时间
+	MaxTurns          int           `json:"max_turns"`           // 最大模型调用轮数
+	MaxToolCalls      int           `json:"max_tool_calls"`      // 最大工具调用次数
+	MaxInputTokens    int64         `json:"max_input_tokens"`    // 最大输入 token 数（含上下文）
+	MaxOutputTokens   int64         `json:"max_output_tokens"`   // 最大输出 token 数
+	MaxParallelTools  int           `json:"max_parallel_tools"`  // 工具并行上限
+	MaxVerifyRounds   int           `json:"max_verify_rounds"`   // 验证失败最多打回几次；0 表示用默认 3
+	MaxEvaluateRounds int           `json:"max_evaluate_rounds"` // 复审驳回最多打回几次；0 表示用默认 2
 }
 
 // RunConfigSnapshot 是 Run 启动时保存的不可变配置。
@@ -174,6 +185,8 @@ type RunConfigSnapshot struct {
 	ToolExecutionMode tool.ExecutionMode `json:"tool_execution_mode"` // 工具串行/并行模式
 	ToolFailurePolicy tool.FailurePolicy `json:"tool_failure_policy"` // 工具失败策略
 	Profile           profile.Config     `json:"profile"`             // Agent 配置
+	EvaluatorModel    ModelConfig        `json:"evaluator_model"`     // 独立复审模型；空则回落主模型
+	SubagentModel     ModelConfig        `json:"subagent_model"`      // explore 子代理模型；空则回落 EvaluatorModel
 }
 
 // Session 是长期存在的对话容器。
@@ -263,6 +276,7 @@ type ContextSnapshot struct {
 	Tools           []tool.Definition  `json:"tools"`                    // 本轮可见工具定义
 	SystemPrompt    string             `json:"system_prompt"`            // 注入的系统提示（身份段；Compose 再拼工具与 Guidelines）
 	WorkspaceRoot   string             `json:"workspace_root,omitempty"` // 会话冻结的工作目录，写入 Current working directory
+	ActivePlan      string             `json:"active_plan,omitempty"`    // 本会话绑定的计划；注入 developer 范围说明
 	Hidden          []Message          `json:"hidden,omitempty"`         // 插件注入的隐藏消息，不入库
 	MemoryIndexes   []string           `json:"memory_indexes,omitempty"` // 冻结记忆目录
 	EstimatedTokens int64              `json:"estimated_tokens"`         // 估算 token 数
@@ -290,14 +304,16 @@ type ApprovalToolCall struct {
 
 // Approval 记录等待用户裁决的一批工具调用。
 type Approval struct {
-	ID         string             `json:"id"`           // 审批 ID
-	SessionID  string             `json:"session_id"`   // 所属会话
-	RunID      string             `json:"run_id"`       // 所属 Run
-	ToolCallID string             `json:"tool_call_id"` // 首个 tool_call_id
-	ToolCalls  []ApprovalToolCall `json:"tool_calls"`   // 全部工具调用及裁决
-	Scope      ApprovalScope      `json:"scope"`        // 生效范围
-	Status     ApprovalStatus     `json:"status"`       // 审批状态
-	ExpiresAt  time.Time          `json:"expires_at"`   // 过期时间
+	ID         string             `json:"id"`                 // 审批 ID
+	SessionID  string             `json:"session_id"`         // 所属会话
+	RunID      string             `json:"run_id"`             // 所属 Run
+	ToolCallID string             `json:"tool_call_id"`       // 首个 tool_call_id
+	ToolCalls  []ApprovalToolCall `json:"tool_calls"`         // 全部工具调用及裁决
+	Scope      ApprovalScope      `json:"scope"`              // 生效范围
+	Status     ApprovalStatus     `json:"status"`             // 审批状态
+	ExpiresAt  time.Time          `json:"expires_at"`         // 过期时间
+	Kind       ApprovalKind       `json:"kind,omitempty"`     // tools / verify / evaluate；空视为 tools
+	Override   OverrideAction     `json:"override,omitempty"` // 验证/复审单的人工动作
 }
 
 // AgentEvent 是 Agent 运行时产生的持久化有序事实。

@@ -39,6 +39,7 @@ export function SideDock({
 
   return (
     <aside
+      data-testid="dock"
       className="flex h-full shrink-0 flex-col bg-background"
       style={width ? { width, minWidth: width, maxWidth: width } : { width: "38%" }}
     >
@@ -200,7 +201,7 @@ function DockBody({ window }: { window: DockWindow }) {
 // PlanPane 在右侧展开整篇计划。
 function PlanPane({ window }: { window: PlanWindow }) {
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col" data-testid="dock-window-plan">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground">
         <FileText className="size-3.5" />
         <span className="truncate font-mono text-foreground">{window.name || "未命名计划"}</span>
@@ -221,7 +222,7 @@ function PlanPane({ window }: { window: PlanWindow }) {
 // FilePane 显示一次 write/edit 的文件详情。
 function FilePane({ window }: { window: FileWindow }) {
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col" data-testid="dock-window-file">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground">
         <FileCode2 className="size-3.5" />
         <span className="truncate font-mono text-foreground">{window.path || "未打开文件"}</span>

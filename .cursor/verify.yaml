@@ -1,0 +1,22 @@
+# 收尾验证：按改动范围定向跑测试。没有命中规则时视为通过。
+rules:
+  - scope_glob: "server/**"
+    timeout_sec: 180
+    commands:
+      - cd server && go test ./pkg/agent ./internal/agent ./internal/agent/tools ./internal/handler ./internal/archtest ./internal/config -skip TestCodingLoop
+  - scope_glob: "packages/**"
+    timeout_sec: 120
+    commands:
+      - pnpm --filter @codedock/core test
+  - scope_glob: "docs/**"
+    timeout_sec: 60
+    commands:
+      - cd server && go test ./internal/archtest -run TestArchitectureMentionsCoreNames
+  - scope_glob: "server/internal/handler/coding_*.go"
+    timeout_sec: 2700
+    commands:
+      - cd server && go test ./internal/handler -run TestCodingLoop -count=1 -timeout 45m
+  - scope_glob: "apps/web/e2e/**"
+    timeout_sec: 1800
+    commands:
+      - pnpm --filter web test:e2e

@@ -8,12 +8,21 @@ type Brain struct{}
 // Decide 由唤醒原因（phase）和当前状态推断出本步骤应执行的一条主指令。
 // 禁止在同一步里串联「模型 → 工具 → 模型」。
 func (b *Brain) Decide(phase Phase, payload json.RawMessage, state AgentState) ([]Instruction, error) {
-	_ = payload
 	if state.CancelRequested {
 		return finishInstructions(RunCancelled, StopCancelled), nil
 	}
-	if overMaxTurns(state) || state.ForceFinish {
-		return finishInstructions(RunCompleted, StopMaxTurns), nil
+	switch phase {
+	case PhaseVerifyResult:
+		return stopLLMIfTurnsExhausted(decideVerifyResult(payload, state), state, ApprovalKindVerify), nil
+	case PhaseEvaluateResult:
+		return stopLLMIfTurnsExhausted(decideEvaluateResult(payload, state), state, ApprovalKindEvaluate), nil
+	case PhaseHumanOverride:
+		return decideHumanOverride(payload), nil
+	case PhaseHumanAbort:
+		return finishInstructions(RunCancelled, StopApprovalDenied), nil
+	}
+	if state.ForceFinish {
+		return finishDueToMaxTurns(state), nil
 	}
 	switch phase {
 	case PhaseUserInput, PhaseInit, PhaseToolsBatchResult, PhaseCompressionResult:
@@ -22,14 +31,74 @@ func (b *Brain) Decide(phase Phase, payload json.RawMessage, state AgentState) (
 		if hasPendingTools(state) {
 			return []Instruction{{Type: InstructionCallToolsBatch}}, nil
 		}
+		if state.HadSideEffects {
+			return []Instruction{{Type: InstructionVerify}}, nil
+		}
 		return finishInstructions(RunCompleted, StopCompleted), nil
 	case PhaseHumanApproved:
 		return []Instruction{{Type: InstructionCallToolsBatch}}, nil
-	case PhaseHumanAbort:
-		return finishInstructions(RunCancelled, StopApprovalDenied), nil
 	default:
 		return finishInstructions(RunFailed, StopModelError), nil
 	}
+}
+
+// decideVerifyResult 按验证结论决定复审、打回或开人工单。
+func decideVerifyResult(payload json.RawMessage, state AgentState) []Instruction {
+	var result VerifyResult
+	_ = json.Unmarshal(payload, &result)
+	switch result.Status {
+	case VerifyStatusPassed:
+		return []Instruction{{Type: InstructionEvaluate}}
+	case VerifyStatusCannotRun:
+		return overrideInstructions(ApprovalKindVerify, "验证环境无法执行")
+	default:
+		round := state.VerifyRound
+		if IsLooping(result.Fingerprint, state.LastVerifyFingerprint, round, MaxVerifyRounds(state.Config.Limits)) {
+			return overrideInstructions(ApprovalKindVerify, "验证失败重复或超出次数")
+		}
+		return []Instruction{{Type: InstructionCallLLM}}
+	}
+}
+
+// decideEvaluateResult 按复审结论决定收工、打回或开人工单。
+func decideEvaluateResult(payload json.RawMessage, state AgentState) []Instruction {
+	var result EvaluationResult
+	_ = json.Unmarshal(payload, &result)
+	switch result.Verdict {
+	case VerdictPass:
+		return finishInstructions(RunCompleted, StopCompleted)
+	case VerdictEscalate:
+		return overrideInstructions(ApprovalKindEvaluate, result.Summary)
+	default:
+		if state.EvaluateRound >= MaxEvaluateRounds(state.Config.Limits) {
+			return overrideInstructions(ApprovalKindEvaluate, "复审打回超出次数")
+		}
+		return []Instruction{{Type: InstructionCallLLM}}
+	}
+}
+
+// decideHumanOverride 按用户按钮决定收工、重试或回滚取消。
+func decideHumanOverride(payload json.RawMessage) []Instruction {
+	var item HumanOverridePayload
+	_ = json.Unmarshal(payload, &item)
+	switch item.Action {
+	case OverrideAccept:
+		return finishInstructions(RunCompleted, StopAcceptedByUser)
+	case OverrideRetry:
+		return []Instruction{{Type: InstructionCallLLM}}
+	case OverrideAbort:
+		return finishInstructions(RunCancelled, StopCancelled)
+	default:
+		return finishInstructions(RunCancelled, StopCancelled)
+	}
+}
+
+// overrideInstructions 构造一条开验证/复审人工单的指令。
+func overrideInstructions(kind ApprovalKind, reason string) []Instruction {
+	return []Instruction{{
+		Type:    InstructionRequestHumanApprove,
+		Payload: MarshalPayload(ApprovalRequestPayload{Kind: kind, Reason: reason}),
+	}}
 }
 
 // hasPendingTools 判断当前 checkpoint 是否还有待执行的工具调用。
@@ -37,13 +106,23 @@ func hasPendingTools(state AgentState) bool {
 	return len(state.Checkpoint.Pending) > 0
 }
 
-// overMaxTurns 判断是否因 ForceFinish 或达到 MaxTurns 而必须收束。
-func overMaxTurns(state AgentState) bool {
-	limit := state.Config.Limits.MaxTurns
-	if limit <= 0 || state.ForceFinish {
-		return state.ForceFinish
+// stopLLMIfTurnsExhausted 回合用尽后不再自动唤模型；还要改代码则开对应人工单。
+func stopLLMIfTurnsExhausted(inst []Instruction, state AgentState, kind ApprovalKind) []Instruction {
+	if !state.ForceFinish || len(inst) == 0 || inst[0].Type != InstructionCallLLM {
+		return inst
 	}
-	return false
+	return overrideInstructions(kind, "回合已用尽，无法再自动修复")
+}
+
+// finishDueToMaxTurns 回合用尽：先做完待批工具和收尾验证，没有副作用才直接收束。
+func finishDueToMaxTurns(state AgentState) []Instruction {
+	if hasPendingTools(state) {
+		return []Instruction{{Type: InstructionCallToolsBatch}}
+	}
+	if state.HadSideEffects {
+		return []Instruction{{Type: InstructionVerify}}
+	}
+	return finishInstructions(RunCompleted, StopMaxTurns)
 }
 
 // finishInstructions 构造一条收束指令。

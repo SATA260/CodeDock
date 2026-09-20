@@ -48,6 +48,10 @@ func (osFileSystem) EvalSymlinks(path string) (string, error) {
 	return filepath.EvalSymlinks(path)
 }
 
+func (osFileSystem) Remove(name string) error {
+	return os.Remove(name)
+}
+
 func defaultRunCommand(
 	ctx context.Context,
 	name string,

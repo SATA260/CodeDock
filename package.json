@@ -7,10 +7,14 @@
     "dev:web": "pnpm --filter web dev",
     "build:web": "pnpm --filter web build",
     "test:client": "pnpm --filter @codedock/core test",
+    "test:coding": "cd server && go test ./internal/handler -run TestCodingLoop -count=1 -timeout 45m",
+    "test:e2e": "pnpm --filter web test:e2e",
     "lint:web": "pnpm --filter web lint"
   },
   "devDependencies": {
-    "concurrently": "^9.2.4"
+    "concurrently": "^9.2.4",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.1"
   },
   "packageManager": "pnpm@11.17.0",
   "engines": {

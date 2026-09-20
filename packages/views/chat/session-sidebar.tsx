@@ -107,6 +107,7 @@ export function SessionSidebar({
                         size="sm"
                         variant="secondary"
                         className="h-6 shrink-0 px-2 text-xs"
+                        data-testid="run-recover"
                         onClick={() => {
                           void onRecover(session.active_run_id as string);
                         }}
