@@ -173,6 +173,45 @@ func TestSessionLifecycle(t *testing.T) {
 	if _, err := Start(sess.ID, "x", Input{Text: "x"}, InputModeStart); err == nil {
 		t.Fatal("archived start")
 	}
+	listed, err := ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range listed {
+		if item.ID == sess.ID {
+			t.Fatal("archived session still listed")
+		}
+	}
+}
+
+func TestArchiveHidesDiskSessionAfterRestart(t *testing.T) {
+	testEnv(t)
+	id := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	writeSessionJSONL(t, id, `{"type":"user","sessionId":"`+id+`","message":{"content":"keep on disk"}}`+"\n")
+	if err := Archive(id); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(findSessionFile(id))
+	if err != nil || !strings.Contains(string(body), `"type":"tag"`) || !strings.Contains(string(body), `"tag":"archived"`) {
+		t.Fatalf("official tag missing: %s %v", body, err)
+	}
+	resetRuntime()
+	listed, err := ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range listed {
+		if item.ID == id || item.ClaudeSessionID == id {
+			t.Fatalf("archived disk session still listed: %+v", item)
+		}
+	}
+	got, err := Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Archived {
+		t.Fatalf("expected archived after restart: %+v", got)
+	}
 }
 
 // writeSessionJSONL 把一条 Claude 实录写进当前测试的 projects 目录。

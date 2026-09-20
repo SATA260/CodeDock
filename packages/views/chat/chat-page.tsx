@@ -189,14 +189,19 @@ export function ChatPage({
   const hideSession = async (session: SidebarSession) => {
     const hiddenId = session.id;
     const hiddenEngine = session.engine ?? "agent";
-    if (session.engine === "codex") {
-      await codexClient.archiveSession(session.id);
-      await codexList.refresh();
-    } else if (session.engine === "claude") {
-      await claudeClient.archiveSession(session.id);
-      await claudeList.refresh();
-    } else {
-      await list.removeSession(session);
+    try {
+      if (session.engine === "codex") {
+        await codexClient.archiveSession(session.id);
+        await codexList.refresh();
+      } else if (session.engine === "claude") {
+        await claudeClient.archiveSession(session.id);
+        await claudeList.refresh();
+      } else {
+        await list.removeSession(session);
+      }
+    } catch (err) {
+      setComposerError(err instanceof Error ? err.message : "归档失败");
+      throw err;
     }
     if (sessionId === hiddenId && (engine ?? "agent") === hiddenEngine) {
       onNewConversation();
@@ -488,7 +493,7 @@ function SidebarToggle({
   );
 }
 
-// mergeSessions 把 Local / Codex / Claude 会话按更新时间合成侧栏列表，同引擎同 ID 只留更新的一条。
+// mergeSessions 把 Local / Codex / Claude 会话按更新时间合成侧栏列表，去掉已归档，同引擎同 ID 只留更新的一条。
 function mergeSessions(
   agent: Session[],
   codex: CodexSession[],
@@ -507,7 +512,9 @@ function mergeSessions(
       seen.set(key, session);
     }
   }
-  return [...seen.values()].sort((left, right) => (left.updated_at < right.updated_at ? 1 : -1));
+  return [...seen.values()]
+    .filter((session) => session.status !== "archived")
+    .sort((left, right) => (left.updated_at < right.updated_at ? 1 : -1));
 }
 
 // asCodexSidebarSession 把 Codex 会话收成侧栏条目，目录用 cwd，标题优先 title。

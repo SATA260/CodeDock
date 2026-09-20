@@ -48,6 +48,20 @@ type controlRequest struct {
 	Input     json.RawMessage `json:"input"`
 }
 
+const archivedSessionTag = "archived"
+
+// tagFromLine 认官方实录里的 type=tag 行，最近一条有效。
+func tagFromLine(line []byte) (string, bool) {
+	var parsed struct {
+		Type string `json:"type"`
+		Tag  string `json:"tag"`
+	}
+	if err := json.Unmarshal(line, &parsed); err != nil || parsed.Type != "tag" {
+		return "", false
+	}
+	return parsed.Tag, true
+}
+
 func titleFromLine(line []byte) string {
 	var parsed ndjsonLine
 	if err := json.Unmarshal(line, &parsed); err != nil {
