@@ -1,9 +1,12 @@
 "use client";
 
 import {
+  compactToolDump,
+  fileChangeFromTool,
   latestPlanDocIds,
   planPreviewFromTool,
-  planToolDump,
+  type FileChangePreview,
+  type PlanPreview,
   type SessionState,
   type ThinkingPhase,
   type TimelineItem,
@@ -13,12 +16,10 @@ import {
   Conversation,
   ConversationContent,
   ConversationEmptyState,
+  LiveStatus,
   Message,
   MessageContent,
   MessageResponse,
-  Reasoning,
-  ReasoningContent,
-  ReasoningTrigger,
   Tool,
   ToolContent,
   ToolGroup,
@@ -31,32 +32,58 @@ import {
 } from "@codedock/ui";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { PlanPreviewCard } from "./plan-preview.tsx";
+import { FileText, FileCode2 } from "lucide-react";
 
 const thinkingCopy: Record<ThinkingPhase, string> = {
-  queued: "排队中",
-  loading_context: "正在装载上下文",
-  running_llm: "正在思考",
+  queued: "Queued",
+  loading_context: "Loading context",
+  running_llm: "Thinking",
+  executing_tools: "Running tools",
+  waiting_approval: "Waiting for approval",
+  verifying: "Verifying",
+  evaluating: "Reviewing",
+  cancelling: "Cancelling",
 };
 
 type ToolItem = Extract<TimelineItem, { kind: "tool" }>;
+
+// isLiveTimelineItem 判断这条是否仍是进行中的工作状态。
+function isLiveTimelineItem(item: TimelineItem): boolean {
+  switch (item.kind) {
+    case "thinking":
+      return true;
+    case "assistant":
+      return item.streaming;
+    case "verify":
+    case "evaluate":
+      return item.status === "started";
+    case "tool":
+      return item.state === "pending" || item.state === "running";
+    default:
+      return false;
+  }
+}
 
 export function ConversationTimeline({
   state,
   loading = false,
   scrollKey,
   emptyDescription,
+  onOpenPlan,
+  onOpenFile,
 }: {
   state: SessionState;
   loading?: boolean;
   scrollKey?: string;
   emptyDescription?: string;
+  onOpenPlan?: (preview: PlanPreview, extra?: { toolState?: ToolItem["state"]; error?: string }) => void;
+  onOpenFile?: (change: FileChangePreview) => void;
 }) {
   const items = state.items.filter(
     (item) =>
       !(item.kind === "approval" && item.status === "pending") &&
       !(item.kind === "user" && !item.text.trim()) &&
-      !(item.kind === "assistant" && !item.text.trim() && !item.streaming),
+      !(item.kind === "assistant" && !item.text.trim()),
   );
   if (items.length === 0) {
     if (loading) {
@@ -93,9 +120,22 @@ export function ConversationTimeline({
             {section.map((row, rowIndex) => {
               const latest = sectionIndex === sections.length - 1 && rowIndex === section.length - 1;
               return row.kind === "tools" ? (
-                <ToolCallsRow key={row.id} tools={row.tools} latest={latest} latestDocIds={latestDocs} />
+                <ToolCallsRow
+                  key={row.id}
+                  tools={row.tools}
+                  latest={latest}
+                  live={latest && row.tools.some(isLiveTimelineItem)}
+                  latestDocIds={latestDocs}
+                  onOpenPlan={onOpenPlan}
+                  onOpenFile={onOpenFile}
+                />
               ) : (
-                <TimelineRow key={row.item.id} item={row.item} latest={latest} />
+                <TimelineRow
+                  key={row.item.id}
+                  item={row.item}
+                  latest={latest}
+                  live={latest && isLiveTimelineItem(row.item)}
+                />
               );
             })}
           </section>
@@ -108,9 +148,11 @@ export function ConversationTimeline({
 function TimelineRow({
   item,
   latest = false,
+  live = false,
 }: {
   item: Exclude<TimelineItem, { kind: "tool" }>;
   latest?: boolean;
+  live?: boolean;
 }) {
   const latestProps = latest ? { "data-conversation-latest": "" } : {};
   switch (item.kind) {
@@ -118,33 +160,62 @@ function TimelineRow({
       return <UserRow item={item} latest={latest} />;
     case "thinking":
       return (
-        <div {...latestProps}>
-          <Reasoning isStreaming>
-            <ReasoningTrigger />
-            <ReasoningContent>{thinkingCopy[item.phase]}</ReasoningContent>
-          </Reasoning>
+        <div className="text-sm leading-5 text-muted-foreground" {...latestProps}>
+          <LiveStatus active={live}>{thinkingCopy[item.phase]}</LiveStatus>
         </div>
       );
     case "assistant":
       return (
         <Message from="assistant" {...latestProps}>
           <MessageContent>
-            <MessageResponse isAnimating={item.streaming}>
-              {item.text || (item.streaming ? "…" : "")}
-            </MessageResponse>
+            <MessageResponse isAnimating={item.streaming}>{item.text}</MessageResponse>
           </MessageContent>
         </Message>
       );
     case "approval":
       return (
         <div className="text-xs leading-4 text-muted-foreground" {...latestProps}>
-          {item.status === "denied" ? "已拒绝工具调用" : "已批准工具调用"}
+          {item.approvalKind === "verify" || item.approvalKind === "evaluate"
+            ? item.status === "denied"
+              ? "Rolled back and cancelled"
+              : "Override resolved"
+            : item.status === "denied"
+              ? "Tool calls denied"
+              : "Tool calls approved"}
+        </div>
+      );
+    case "verify":
+      return (
+        <div className="text-xs leading-4 text-muted-foreground" {...latestProps}>
+          <LiveStatus active={live && item.status === "started"}>
+            {item.status === "started"
+              ? "Verifying"
+              : item.status === "skipped"
+                ? "No verify rules configured; treated as passed"
+                : item.status === "passed"
+                  ? "Verification passed"
+                  : `Verification failed${item.output ? `: ${item.output.slice(0, 120)}` : ""}`}
+          </LiveStatus>
+        </div>
+      );
+    case "evaluate":
+      return (
+        <div className="text-xs leading-4 text-muted-foreground" {...latestProps}>
+          <LiveStatus active={live && item.status === "started"}>
+            {item.status === "started"
+              ? "Reviewing"
+              : item.status === "pass"
+                ? "Review passed"
+                : item.summary
+                  ? `Review rejected: ${item.summary}`
+                  : "Review requested more work"}
+          </LiveStatus>
         </div>
       );
     case "context":
       return (
         <div className="text-xs leading-4 text-muted-foreground" {...latestProps}>
-          上下文已压缩
+          Context compacted
           <span className="ml-2 font-mono text-muted-foreground/60">seq {item.baseEventSeq}</span>
         </div>
       );
@@ -152,10 +223,10 @@ function TimelineRow({
       return (
         <div className="text-xs leading-4 text-muted-foreground" {...latestProps}>
           {item.status === "completed"
-            ? "本轮完成"
+            ? "Run completed"
             : item.status === "cancelled"
-              ? "已取消"
-              : `运行结束：${item.stopReason ?? item.status}`}
+              ? "Cancelled"
+              : `Run ended: ${item.stopReason ?? item.status}`}
         </div>
       );
     default:
@@ -204,35 +275,45 @@ function rollupToolState(tools: ToolItem[]): ToolState {
 function ToolCallsRow({
   tools,
   latest = false,
+  live = false,
   latestDocIds,
+  onOpenPlan,
+  onOpenFile,
 }: {
   tools: ToolItem[];
   latest?: boolean;
+  live?: boolean;
   latestDocIds: Set<string>;
+  onOpenPlan?: (preview: PlanPreview, extra?: { toolState?: ToolItem["state"]; error?: string }) => void;
+  onOpenFile?: (change: FileChangePreview) => void;
 }) {
-  const previews = tools.flatMap((item) => {
+  const artifacts = tools.flatMap((item) => {
     const preview = planPreviewFromTool(item);
-    if (!preview) {
-      return [];
+    if (preview) {
+      return [{ item, preview, change: null }];
     }
-    if (!latestDocIds.has(item.id)) {
-      return [];
+    const change = fileChangeFromTool(item);
+    if (change) {
+      return [{ item, preview: null, change }];
     }
-    return [{ item, preview }];
+    return [];
   });
   return (
     <div
-      className={previews.length > 0 ? "flex flex-col gap-3" : undefined}
+      className={artifacts.length > 0 ? "flex flex-col gap-2" : undefined}
       {...(latest ? { "data-conversation-latest": "" } : {})}
     >
       <ToolGroup>
-        <ToolGroupHeader count={tools.length} state={rollupToolState(tools)} />
+        <ToolGroupHeader count={tools.length} state={rollupToolState(tools)} live={live} />
         <ToolGroupContent>
           {tools.map((item) => {
-            const dump = planToolDump(item);
+            if (item.name === "explore") {
+              return <ExploreCard key={item.id} item={item} live={live} />;
+            }
+            const dump = compactToolDump(item);
             return (
               <Tool key={item.id}>
-                <ToolHeader type={`tool-${item.name}`} state={item.state} />
+                <ToolHeader type={`tool-${item.name}`} state={item.state} live={live} />
                 <ToolContent>
                   <ToolInput input={dump.input} />
                   <ToolOutput output={dump.output} errorText={item.error} />
@@ -242,15 +323,70 @@ function ToolCallsRow({
           })}
         </ToolGroupContent>
       </ToolGroup>
-      {previews.map(({ item, preview }) => (
-        <PlanPreviewCard
-          key={`plan:${item.id}`}
-          preview={preview}
-          state={item.state}
-          error={item.error}
-        />
-      ))}
+      {artifacts.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5 px-3">
+          {artifacts.map(({ item, preview, change }) =>
+            preview ? (
+              <ArtifactChip
+                key={`plan:${item.id}`}
+                icon="plan"
+                label={latestDocIds.has(item.id) ? `Plan ${preview.name}` : preview.name}
+                onClick={
+                  onOpenPlan
+                    ? () => onOpenPlan(preview, { toolState: item.state, error: item.error })
+                    : undefined
+                }
+              />
+            ) : change ? (
+              <ArtifactChip
+                key={`file:${item.id}`}
+                icon="file"
+                label={change.path}
+                onClick={onOpenFile ? () => onOpenFile(change) : undefined}
+              />
+            ) : null,
+          )}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+// ArtifactChip 把计划和文件改动收成一行入口，点开后到右侧窗口。
+function ArtifactChip({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: "plan" | "file";
+  label: string;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={!onClick}
+      onClick={onClick}
+      className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-muted px-2 py-1 text-[11px] text-muted-foreground hover:border-foreground/20 hover:text-foreground disabled:opacity-60"
+    >
+      {icon === "plan" ? <FileText className="size-3 shrink-0" /> : <FileCode2 className="size-3 shrink-0" />}
+      <span className="truncate font-mono">{label}</span>
+    </button>
+  );
+}
+
+/** 折叠展示 explore 子代理结论，避免把长原文铺进主时间线。 */
+function ExploreCard({ item, live = false }: { item: ToolItem; live?: boolean }) {
+  const dump = compactToolDump(item);
+  return (
+    <Tool>
+      <ToolHeader type="tool-explore" state={item.state} live={live} />
+      <ToolContent>
+        <div className="px-2 py-1 text-[11px] leading-4 text-muted-foreground">Explore subagent</div>
+        <ToolInput input={dump.input} />
+        <ToolOutput output={dump.output} errorText={item.error} />
+      </ToolContent>
+    </Tool>
   );
 }
 
@@ -428,7 +564,7 @@ function UserRow({
         >
           <MessageContent>
             {item.queued ? (
-              <div className="mb-1.5 text-[11px] text-muted-foreground">排队，当前轮结束后发送</div>
+              <div className="mb-1.5 text-[11px] text-muted-foreground">Queued; will send after this run</div>
             ) : null}
             <div
               ref={clipRef}

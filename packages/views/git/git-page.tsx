@@ -14,11 +14,13 @@ import { WorkspacePanel } from "./workspace-panel.tsx";
 export type GitPageProps = {
   onBack?: () => void;
   headerActions?: ReactNode;
+  variant?: "page" | "dock";
 };
 
-export function GitPage({ onBack, headerActions }: GitPageProps) {
+export function GitPage({ onBack, headerActions, variant = "page" }: GitPageProps) {
   const site = useGitSite();
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
+  const dock = variant === "dock";
   const previewFile = useMemo(() => {
     if (!preview) {
       return null;
@@ -30,7 +32,7 @@ export function GitPage({ onBack, headerActions }: GitPageProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
-        <div className="shrink-0 text-sm font-semibold tracking-tight">仓库</div>
+        {dock ? null : <div className="shrink-0 text-sm font-semibold tracking-tight">仓库</div>}
         {site.state.is_repo ? (
           <>
             <BranchSwitcher
@@ -68,7 +70,7 @@ export function GitPage({ onBack, headerActions }: GitPageProps) {
           {site.error}
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1">
+      <div className={dock ? "flex min-h-0 flex-1 flex-col" : "flex min-h-0 flex-1"}>
         {site.loading ? (
           <p className="px-3 py-2 text-xs text-muted-foreground">正在读取仓库…</p>
         ) : !site.state.is_repo ? (
@@ -80,6 +82,7 @@ export function GitPage({ onBack, headerActions }: GitPageProps) {
         ) : (
           <>
             <WorkspacePanel
+              compact={dock}
               state={site.state}
               busy={site.busy}
               generating={site.generating}

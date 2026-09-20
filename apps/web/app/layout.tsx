@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import { Providers } from "./providers";
-import { TestNav } from "./test-nav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -20,16 +19,16 @@ export const metadata: Metadata = {
   description: "Local 对话工作台",
 };
 
+// RootLayout 包字体、主题和全局 Provider。
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="zh-CN"
       className={`${geistSans.variable} ${geistMono.variable} h-full dark antialiased`}
     >
-      <body className="flex h-full flex-col bg-background font-sans text-foreground antialiased">
+      <body className="h-full bg-background font-sans text-foreground antialiased">
         <Providers>
-          {process.env.NODE_ENV === "development" ? <TestNav /> : null}
-          <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+          <div className="h-full">{children}</div>
         </Providers>
       </body>
     </html>

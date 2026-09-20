@@ -34,7 +34,7 @@ Web（默认 `http://localhost:3000`）：
 pnpm dev:web
 ```
 
-浏览器打开 [http://localhost:3000](http://localhost:3000)。开发态顶栏可在对话和仓库之间切换。完整环境变量见 [`.env.example`](.env.example) 和 [`apps/web/.env.example`](apps/web/.env.example)，不要提交 `.env` 或密钥。
+浏览器打开 [http://localhost:3000](http://localhost:3000)。完整环境变量见 [`.env.example`](.env.example) 和 [`apps/web/.env.example`](apps/web/.env.example)，不要提交 `.env` 或密钥。
 
 ## 测试
 

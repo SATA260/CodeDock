@@ -33,7 +33,9 @@ export function WorkspacePanel({
   onGenerate,
   onSavePrompt,
   onPush,
+  compact = false,
 }: {
+  compact?: boolean;
   state: SiteState;
   busy: boolean;
   generating: boolean;
@@ -84,7 +86,13 @@ export function WorkspacePanel({
   };
 
   return (
-    <section className="flex h-full min-h-0 w-[340px] shrink-0 flex-col border-r border-border">
+    <section
+      className={
+        compact
+          ? "flex max-h-[48%] min-h-[11rem] w-full shrink-0 flex-col border-b border-border"
+          : "flex h-full min-h-0 w-[340px] shrink-0 flex-col border-r border-border"
+      }
+    >
       <form
         className="flex shrink-0 flex-col gap-2 border-b border-border px-3 py-2"
         onSubmit={(event) => {
@@ -101,7 +109,11 @@ export function WorkspacePanel({
         }}
       >
         <textarea
-          className="min-h-[168px] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          className={
+            compact
+              ? "min-h-[72px] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              : "min-h-[168px] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          }
           placeholder="已确认的说明，提交前可以再改"
           value={message}
           onChange={(event) => setMessage(event.target.value)}

@@ -25,6 +25,7 @@ export function SessionSidebar({
   brandSrc,
   codexIconSrc,
   claudeIconSrc,
+  width,
 }: {
   sessions: SidebarSession[];
   currentId?: string;
@@ -40,9 +41,13 @@ export function SessionSidebar({
   brandSrc?: string;
   codexIconSrc?: string;
   claudeIconSrc?: string;
+  width?: number;
 }) {
   return (
-    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-background">
+    <aside
+      className="flex h-full shrink-0 flex-col bg-background"
+      style={width ? { width, minWidth: width, maxWidth: width } : { width: "15rem" }}
+    >
       <div className="flex items-center justify-between gap-2 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           {brandSrc ? (

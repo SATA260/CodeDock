@@ -1,6 +1,12 @@
 export { AgentClient, AgentClientError, type AgentClientOptions } from "./client.ts";
 export { decodeText, firstLine, parseDelta } from "./content.ts";
 export {
+  compactToolDump,
+  fileChangeFromTool,
+  isFileChangeTool,
+  type FileChangePreview,
+} from "./files.ts";
+export {
   isPlanTool,
   latestPlanDocIds,
   normalizePlanName,
@@ -31,13 +37,16 @@ export type {
   WorkMode,
   Approval,
   ApprovalDecision,
+  ApprovalKind,
   ApprovalStatus,
   ApprovalToolCall,
   CreateSessionRequest,
   DecideApprovalRequest,
   EventType,
   Message,
+  OverrideAction,
   PageInfo,
+  RestoreMode,
   Run,
   RunStatus,
   Session,
