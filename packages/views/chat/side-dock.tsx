@@ -236,7 +236,7 @@ function FilePane({
 }) {
   const selected = files.find((file) => fileKey(file) === window.selectedKey) ?? null;
   return (
-    <div className="h-full min-h-0" data-testid="dock-window-file">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden" data-testid="dock-window-file">
       <FileDiffPane file={selected} />
     </div>
   );
