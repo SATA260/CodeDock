@@ -31,7 +31,7 @@ export function GitPage({ onBack, headerActions, variant = "page" }: GitPageProp
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
+      <header className={dock ? "flex h-7 shrink-0 items-center gap-1.5 border-b border-border px-2" : "flex h-9 shrink-0 items-center gap-2 border-b border-border px-3"}>
         {dock ? null : <div className="shrink-0 text-sm font-semibold tracking-tight">仓库</div>}
         {site.state.is_repo ? (
           <>
@@ -42,7 +42,7 @@ export function GitPage({ onBack, headerActions, variant = "page" }: GitPageProp
               onSelectRemote={site.checkoutRemote}
             />
             <CommitHistory commits={site.commits} busy={site.busy} />
-            <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+            <div className={dock ? "min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground" : "min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"}>
               {site.state.path || "—"}
               {site.state.head ? ` · ${shortHead(site.state.head)}` : ""}
               {site.state.upstream

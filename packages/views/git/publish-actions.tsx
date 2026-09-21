@@ -8,11 +8,13 @@ export function PublishActions({
   canCommit,
   canPush,
   busy,
+  compact = false,
   onPush,
 }: {
   canCommit: boolean;
   canPush: boolean;
   busy: boolean;
+  compact?: boolean;
   onPush: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -42,7 +44,12 @@ export function PublishActions({
 
   return (
     <div className="relative flex shrink-0" ref={root}>
-      <Button type="submit" size="sm" disabled={!canCommit} className="rounded-r-none">
+      <Button
+        type="submit"
+        size="sm"
+        disabled={!canCommit}
+        className={compact ? "h-6 rounded-r-none px-2 text-[11px]" : "rounded-r-none"}
+      >
         Commit
       </Button>
       <Button
@@ -52,7 +59,11 @@ export function PublishActions({
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label="更多"
-        className="rounded-l-none border-l border-l-primary-foreground/25 px-1.5"
+        className={
+          compact
+            ? "h-6 rounded-l-none border-l border-l-primary-foreground/25 px-1.5"
+            : "rounded-l-none border-l border-l-primary-foreground/25 px-1.5"
+        }
         onClick={() => setOpen((prev) => !prev)}
       >
         <ChevronDownIcon className="size-3.5" />

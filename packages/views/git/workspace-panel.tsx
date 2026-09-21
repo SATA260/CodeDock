@@ -89,12 +89,16 @@ export function WorkspacePanel({
     <section
       className={
         compact
-          ? "flex max-h-[48%] min-h-[11rem] w-full shrink-0 flex-col border-b border-border"
+          ? "flex max-h-[32%] min-h-[6.5rem] w-full shrink-0 flex-col border-b border-border"
           : "flex h-full min-h-0 w-[340px] shrink-0 flex-col border-r border-border"
       }
     >
       <form
-        className="flex shrink-0 flex-col gap-2 border-b border-border px-3 py-2"
+        className={
+          compact
+            ? "flex shrink-0 flex-col gap-1 border-b border-border px-2 py-1.5"
+            : "flex shrink-0 flex-col gap-2 border-b border-border px-3 py-2"
+        }
         onSubmit={(event) => {
           event.preventDefault();
           const text = message.trim();
@@ -111,18 +115,19 @@ export function WorkspacePanel({
         <textarea
           className={
             compact
-              ? "min-h-[72px] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              ? "min-h-9 w-full resize-none bg-transparent text-[11px] leading-snug outline-none placeholder:text-muted-foreground"
               : "min-h-[168px] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           }
           placeholder="已确认的说明，提交前可以再改"
           value={message}
           onChange={(event) => setMessage(event.target.value)}
         />
-        <div className="flex items-center gap-2">
+        <div className={compact ? "flex items-center gap-1" : "flex items-center gap-2"}>
           <Button
             type="button"
             size="sm"
             variant="outline"
+            className={compact ? "h-6 px-2 text-[11px]" : undefined}
             disabled={busy || generating || staged.length === 0}
             onClick={() => {
               void onGenerate()
@@ -142,6 +147,7 @@ export function WorkspacePanel({
           />
           <div className="ml-auto">
             <PublishActions
+              compact={compact}
               busy={busy}
               canCommit={!busy && message.trim() !== "" && staged.length > 0}
               canPush={
@@ -156,16 +162,24 @@ export function WorkspacePanel({
       </form>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <FileSection
+          compact={compact}
           title="已暂存"
           count={staged.length}
           action={
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void onReload()}>
-              <RefreshCw className={busy ? "size-3.5 animate-spin" : "size-3.5"} />
+            <Button
+              size="sm"
+              variant="ghost"
+              className={compact ? "h-6 px-1.5 text-[11px]" : undefined}
+              disabled={busy}
+              onClick={() => void onReload()}
+            >
+              <RefreshCw className={busy ? "size-3 animate-spin" : "size-3"} />
               刷新
             </Button>
           }
         >
           <FileTree
+            compact={compact}
             files={staged}
             busy={busy}
             activePath={preview?.scope === "staged" ? preview.path : null}
@@ -175,8 +189,9 @@ export function WorkspacePanel({
             onPreview={(path) => onPreview({ path, scope: "staged" })}
           />
         </FileSection>
-        <FileSection title="当前目录" count={worktree.length}>
+        <FileSection compact={compact} title="当前目录" count={worktree.length}>
           <FileTree
+            compact={compact}
             files={worktree}
             busy={busy}
             activePath={preview?.scope === "worktree" ? preview.path : null}
@@ -197,23 +212,26 @@ export function WorkspacePanel({
   );
 }
 
+// FileSection 文件列表的分组标题，侧栏里用更小字号。
 function FileSection({
   title,
   count,
   action,
+  compact = false,
   children,
 }: {
   title: string;
   count: number;
   action?: ReactNode;
+  compact?: boolean;
   children: ReactNode;
 }) {
   return (
     <div className="border-b border-border last:border-b-0">
-      <div className="flex items-center gap-2 px-3 py-1">
-        <div className="text-sm font-medium">
+      <div className={compact ? "flex items-center gap-1.5 px-2 py-0.5" : "flex items-center gap-2 px-3 py-1"}>
+        <div className={compact ? "text-[11px] font-medium" : "text-sm font-medium"}>
           {title}
-          <span className="ml-2 text-[11px] font-normal text-muted-foreground">{count}</span>
+          <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">{count}</span>
         </div>
         {action}
       </div>
