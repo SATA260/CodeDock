@@ -20,9 +20,8 @@ type FakeOptions struct {
 	Hang                bool        `json:"hang"`
 	CompactSummary      string      `json:"compact_summary"`
 	IndexCompactSummary string      `json:"index_compact_summary"`
-	Review              *FakeReview           `json:"review,omitempty"`
-	Verify              []FakeVerifyResult    `json:"verify,omitempty"`
-	Evaluate            []FakeEvaluateResult  `json:"evaluate,omitempty"`
+	Review *FakeReview        `json:"review,omitempty"`
+	Verify []FakeVerifyResult `json:"verify,omitempty"`
 }
 
 // FakeReview 控制 fake 复审模型的输出。
@@ -38,14 +37,6 @@ type FakeVerifyResult struct {
 	Output      string       `json:"output,omitempty"`
 	Fingerprint string       `json:"fingerprint,omitempty"`
 	FailedCommand string     `json:"failed_command,omitempty"`
-}
-
-// FakeEvaluateResult 控制 fake 复审脚本的一轮输出。
-type FakeEvaluateResult struct {
-	Verdict string            `json:"verdict"`
-	Issues  []EvaluationIssue `json:"issues,omitempty"`
-	Summary string            `json:"summary,omitempty"`
-	Fail    bool              `json:"fail,omitempty"`
 }
 
 // FakeTurn 是 fake 模型一轮输出。

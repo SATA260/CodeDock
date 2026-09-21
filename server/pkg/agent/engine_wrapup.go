@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const wrapUpDeveloperNote = "验证和复审已通过。用几段话说明改了什么、改了哪些路径、怎么验证。不要再调工具。"
+const wrapUpDeveloperNote = "验证已通过。用几段话说明改了什么、改了哪些路径、怎么验证。不要再调工具。"
 
 // shouldComposeWrapUp 判断收束时是否还缺一条面向用户的收尾说明。
 func shouldComposeWrapUp(state AgentState, payload FinishPayload) bool {
@@ -18,10 +18,10 @@ func shouldComposeWrapUp(state AgentState, payload FinishPayload) bool {
 	if state.WrapUpPending {
 		return false
 	}
-	return state.HadSideEffects || strings.TrimSpace(state.LastEvaluateSummary) != ""
+	return state.HadSideEffects
 }
 
-// composeWrapUpText 用改动文件、验证摘要和复审摘要拼一段收尾说明。
+// composeWrapUpText 用改动文件和验证摘要拼一段收尾说明。
 func composeWrapUpText(e *Engine, state AgentState, messages []Message) string {
 	var b strings.Builder
 	b.WriteString("已完成。")
@@ -35,10 +35,6 @@ func composeWrapUpText(e *Engine, state AgentState, messages []Message) string {
 	}
 	if summary := strings.TrimSpace(state.LastVerifySummary); summary != "" {
 		b.WriteString("\n验证：")
-		b.WriteString(clipWrapUpPart(summary, 200))
-	}
-	if summary := strings.TrimSpace(state.LastEvaluateSummary); summary != "" {
-		b.WriteString("\n复审：")
 		b.WriteString(clipWrapUpPart(summary, 200))
 	}
 	return b.String()
@@ -111,7 +107,7 @@ func wrapUpAssistantFacts(state AgentState, text string) (Message, []Fact) {
 	}
 }
 
-// clipWrapUpPart 把过长的验证/复审摘要截到可读长度。
+// clipWrapUpPart 把过长的验证摘要截到可读长度。
 func clipWrapUpPart(text string, max int) string {
 	if max <= 0 || len(text) <= max {
 		return text

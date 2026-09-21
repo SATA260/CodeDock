@@ -21,7 +21,7 @@ const (
 	PhaseCompressionResult Phase = "compression_result" // 上下文压缩完成
 	PhaseError             Phase = "error"              // 执行出错后重入
 	PhaseVerifyResult      Phase = "verify_result"      // 收尾验证跑完了
-	PhaseEvaluateResult    Phase = "evaluate_result"    // 独立复审出结论了
+	PhaseEvaluateResult    Phase = "evaluate_result"    // 旧复审结论；新路径不再进入
 	PhaseHumanOverride     Phase = "human_override"     // 人对验证/复审失败做了裁决
 )
 
@@ -36,7 +36,7 @@ const (
 	InstructionCompressContext     InstructionType = "compress_context"      // 压缩上下文
 	InstructionFinish              InstructionType = "finish"                // 结束 Run
 	InstructionVerify              InstructionType = "verify"                // 跑收尾验证
-	InstructionEvaluate            InstructionType = "evaluate"              // 跑独立复审
+	InstructionEvaluate            InstructionType = "evaluate"              // 旧复审指令；执行时直接收工
 )
 
 // AgentState 是单次 Agent 执行（即一个 Run）在某一时刻可序列化的完整状态，供单步执行只读使用。
@@ -63,7 +63,7 @@ type AgentState struct {
 	EvaluateRound           int               // 已完成的复审轮次
 	LastEvaluateFingerprint string            // 上一轮复审 diff 指纹
 	LastEvaluateSummary     string            // 最近一次复审摘要，供收工说明对照
-	WrapUpPending           bool              // 复审通过后正在写面向用户的收尾说明
+	WrapUpPending           bool              // 正在写面向用户的收尾说明
 	ApprovalKind            ApprovalKind      // 当前等待的审批种类
 	OverrideAction          OverrideAction    // 人对验证/复审单的裁决
 	ActivePlan              string            // 本会话绑定的计划文件名；空表示尚未绑定

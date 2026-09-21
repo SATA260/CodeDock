@@ -54,11 +54,17 @@ type CommandRunner func(ctx context.Context, dir, command string, timeout time.D
 
 // CheckWorkspace 按改动文件挑选规则并顺序执行验证命令。
 func CheckWorkspace(ctx context.Context, workspaceRoot string, diffFiles []string, round int, lastFingerprint string, runner CommandRunner) (VerifyResult, error) {
+	return CheckWorkspacePlan(ctx, workspaceRoot, "", diffFiles, round, lastFingerprint, runner)
+}
+
+// CheckWorkspacePlan 在 verify.yaml 之外再跑本会话绑定计划的 verify_cmd。
+func CheckWorkspacePlan(ctx context.Context, workspaceRoot, activePlan string, diffFiles []string, round int, lastFingerprint string, runner CommandRunner) (VerifyResult, error) {
 	started := time.Now()
 	rules, err := loadVerifyRules(workspaceRoot)
 	if err != nil {
 		return VerifyResult{}, err
 	}
+	rules = append(rules, planVerifyRules(workspaceRoot, activePlan)...)
 	if len(rules) == 0 {
 		return VerifyResult{Status: VerifyStatusPassed, Skipped: true, Round: round, DurationMs: time.Since(started).Milliseconds()}, nil
 	}
@@ -146,6 +152,23 @@ func RunShellCommand(ctx context.Context, dir, command string, timeout time.Dura
 		return exit.ExitCode(), string(out), nil
 	}
 	return -1, string(out), err
+}
+
+// planVerifyRules 把绑定计划里可执行的验收命令收成验证规则；manual 不算。
+func planVerifyRules(workspaceRoot, planName string) []VerifyRule {
+	items := LoadPlanItems(workspaceRoot, planName)
+	if len(items) == 0 {
+		return nil
+	}
+	rules := make([]VerifyRule, 0, len(items))
+	for _, item := range items {
+		cmd := strings.TrimSpace(item.VerifyCmd)
+		if cmd == "" || strings.EqualFold(cmd, "manual") {
+			continue
+		}
+		rules = append(rules, VerifyRule{Commands: []string{cmd}})
+	}
+	return rules
 }
 
 // loadVerifyRules 读取工作区 .cursor/verify.yaml；文件不存在视为无规则。

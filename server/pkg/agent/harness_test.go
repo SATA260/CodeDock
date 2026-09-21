@@ -12,20 +12,18 @@ import (
 	"codedock/pkg/agent/tool"
 )
 
-// TestBrainVerifyAndEvaluateGates 覆盖验证、复审和人工裁决的大脑分叉。
+// TestBrainVerifyAndEvaluateGates 覆盖验证和人工裁决的大脑分叉。
 func TestBrainVerifyAndEvaluateGates(t *testing.T) {
 	brain := &Brain{}
 	passed, _ := json.Marshal(VerifyResult{Status: VerifyStatusPassed})
 	failed, _ := json.Marshal(VerifyResult{Status: VerifyStatusFailed, Fingerprint: "fp-1"})
 	loop, _ := json.Marshal(VerifyResult{Status: VerifyStatusFailed, Fingerprint: "fp-1"})
-	evalPass, _ := json.Marshal(EvaluationResult{Verdict: VerdictPass})
-	evalWork, _ := json.Marshal(EvaluationResult{Verdict: VerdictNeedsWork, Summary: "弱化断言"})
 	accept, _ := json.Marshal(HumanOverridePayload{Action: OverrideAccept})
 	retry, _ := json.Marshal(HumanOverridePayload{Action: OverrideRetry})
 	abort, _ := json.Marshal(HumanOverridePayload{Action: OverrideAbort})
 
 	got, err := brain.Decide(PhaseVerifyResult, passed, AgentState{})
-	if err != nil || len(got) != 1 || got[0].Type != InstructionEvaluate {
+	if err != nil || len(got) != 1 || got[0].Type != InstructionFinish {
 		t.Fatalf("passed verify: %+v %v", got, err)
 	}
 	got, err = brain.Decide(PhaseVerifyResult, failed, AgentState{VerifyRound: 1})
@@ -40,34 +38,9 @@ func TestBrainVerifyAndEvaluateGates(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].Type != InstructionRequestHumanApprove {
 		t.Fatalf("loop verify: %+v %v", got, err)
 	}
-	got, err = brain.Decide(PhaseEvaluateResult, evalPass, AgentState{})
+	got, err = brain.Decide(PhaseEvaluateResult, nil, AgentState{})
 	if err != nil || len(got) != 1 || got[0].Type != InstructionFinish {
-		t.Fatalf("eval pass recovered: %+v %v", got, err)
-	}
-	got, err = brain.Decide(PhaseEvaluateResult, evalPass, AgentState{WrapUpPending: true})
-	if err != nil || len(got) != 1 || got[0].Type != InstructionCallLLM {
-		t.Fatalf("eval pass wrap-up: %+v %v", got, err)
-	}
-	evalSkip, _ := json.Marshal(EvaluationResult{Verdict: VerdictPass, Skipped: true})
-	got, err = brain.Decide(PhaseEvaluateResult, evalSkip, AgentState{WrapUpPending: true})
-	if err != nil || len(got) != 1 || got[0].Type != InstructionFinish {
-		t.Fatalf("eval skip: %+v %v", got, err)
-	}
-	got, err = brain.Decide(PhaseEvaluateResult, evalPass, AgentState{ForceFinish: true})
-	if err != nil || len(got) != 1 || got[0].Type != InstructionFinish {
-		t.Fatalf("eval pass at max turns: %+v %v", got, err)
-	}
-	got, err = brain.Decide(PhaseEvaluateResult, evalWork, AgentState{EvaluateRound: 1})
-	if err != nil || len(got) != 1 || got[0].Type != InstructionCallLLM {
-		t.Fatalf("eval work: %+v %v", got, err)
-	}
-	got, err = brain.Decide(PhaseEvaluateResult, evalWork, AgentState{ForceFinish: true, EvaluateRound: 1})
-	if err != nil || len(got) != 1 || got[0].Type != InstructionRequestHumanApprove {
-		t.Fatalf("eval work at max turns: %+v %v", got, err)
-	}
-	got, err = brain.Decide(PhaseEvaluateResult, evalWork, AgentState{EvaluateRound: 2})
-	if err != nil || len(got) != 1 || got[0].Type != InstructionRequestHumanApprove {
-		t.Fatalf("eval cap: %+v %v", got, err)
+		t.Fatalf("legacy evaluate: %+v %v", got, err)
 	}
 	got, err = brain.Decide(PhaseHumanOverride, accept, AgentState{})
 	if err != nil || finishReason(got) != StopAcceptedByUser {
@@ -93,16 +66,10 @@ func finishReason(got []Instruction) StopReason {
 	return payload.Reason
 }
 
-// TestIsLoopingAndSanitizeDiff 校验指纹熔断与 diff 瘦身。
-func TestIsLoopingAndSanitizeDiff(t *testing.T) {
+// TestIsLoopingAndCoverageNote 校验指纹熔断与覆盖率备注。
+func TestIsLoopingAndCoverageNote(t *testing.T) {
 	if !IsLooping("a", "a", 1, 3) || !IsLooping("b", "c", 3, 3) || IsLooping("b", "c", 1, 3) {
 		t.Fatal("looping rules")
-	}
-	raw := "diff --git a/go.sum b/go.sum\n--- a/go.sum\n+++ b/go.sum\n+abc\n" +
-		"diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n+func main() {}\n"
-	got, err := SanitizeDiff(raw, 1024)
-	if err != nil || strings.Contains(got, "go.sum") || !strings.Contains(got, "main.go") {
-		t.Fatalf("sanitize=%q err=%v", got, err)
 	}
 	if CoverageNote(40, 70) == "" || CoverageNote(90, 70) == "" {
 		t.Fatal("coverage note")
@@ -131,6 +98,22 @@ rules:
 func TestCheckWorkspaceSkipsMissingFile(t *testing.T) {
 	got, err := CheckWorkspace(context.Background(), t.TempDir(), nil, 1, "", nil)
 	if err != nil || !got.Skipped || got.Status != VerifyStatusPassed {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+}
+
+// TestCheckWorkspaceRunsActivePlanCmd 绑定计划的 verify_cmd 必须进入收尾验证。
+func TestCheckWorkspaceRunsActivePlanCmd(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\n{\"title\":\"fail\",\"items\":[{\"id\":\"F1\",\"description\":\"must fail\",\"verify_cmd\":\"false\"}]}\n---\n# fail\n"
+	if err := os.WriteFile(filepath.Join(dir, ".cursor", "task.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := CheckWorkspacePlan(context.Background(), dir, "task.md", nil, 1, "", nil)
+	if err != nil || got.Skipped || got.Status != VerifyStatusFailed || got.FailedCommand != "false" {
 		t.Fatalf("got=%+v err=%v", got, err)
 	}
 }
@@ -174,53 +157,6 @@ func TestPlanContractOnlyAddAndPass(t *testing.T) {
 	}
 }
 
-// TestEvaluateFakePassAndReuse 无脚本时放行，相同 diff 复用驳回；空材料直接通过。
-func TestEvaluateFakePassAndReuse(t *testing.T) {
-	got, err := EvaluateRun(context.Background(), ModelConfig{Provider: "fake", Model: "fake"}, "diff", nil, "", "")
-	if err != nil || got.Verdict != VerdictPass {
-		t.Fatalf("got=%+v err=%v", got, err)
-	}
-	reuse, err := EvaluateRun(context.Background(), ModelConfig{Provider: "fake"}, "same", nil, "", DiffFingerprint("same"))
-	if err != nil || reuse.Verdict != VerdictNeedsWork {
-		t.Fatalf("reuse=%+v err=%v", reuse, err)
-	}
-	empty, err := EvaluateRun(context.Background(), ModelConfig{Provider: "openai", Model: "x"}, "", nil, "", "")
-	if err != nil || empty.Verdict != VerdictPass || !strings.Contains(empty.Summary, "跳过复审") {
-		t.Fatalf("empty=%+v err=%v", empty, err)
-	}
-	withPlan, err := EvaluateRun(context.Background(), ModelConfig{Provider: "openai", Model: "x"}, "", []PlanItem{{ID: "a", Description: "写计时器"}}, "", "")
-	if err != nil || withPlan.Verdict != VerdictPass {
-		t.Fatalf("empty diff with plan must skip, got=%+v err=%v", withPlan, err)
-	}
-}
-
-// TestParseEvaluationContentAcceptsAliases 复审正文用别名或只有 issues 时也能读出来。
-func TestParseEvaluationContentAcceptsAliases(t *testing.T) {
-	got, ok := parseEvaluationContent(`{"verdict":"通过","summary":"可以"}`)
-	if !ok || got.Verdict != VerdictPass {
-		t.Fatalf("pass alias=%+v ok=%v", got, ok)
-	}
-	got, ok = parseEvaluationContent(`{"verdict":"needs-work","summary":"弱断言","issues":[]}`)
-	if !ok || got.Verdict != VerdictNeedsWork || len(got.Issues) != 1 {
-		t.Fatalf("needs_work without issues=%+v ok=%v", got, ok)
-	}
-	got, ok = parseEvaluationContent(`{"issues":[{"category":"logic_defect","reason":"错了"}]}`)
-	if !ok || got.Verdict != VerdictNeedsWork {
-		t.Fatalf("issues only=%+v ok=%v", got, ok)
-	}
-}
-
-// TestResolveEmptyEvaluationContent 空复审正文且无验收项时放行，有验收项仍说不清。
-func TestResolveEmptyEvaluationContent(t *testing.T) {
-	got, ok := resolveEvaluationContent("", nil)
-	if !ok || got.Verdict != VerdictPass {
-		t.Fatalf("empty without plan=%+v ok=%v", got, ok)
-	}
-	if _, ok = resolveEvaluationContent("", []PlanItem{{ID: "a", Description: "写文件"}}); ok {
-		t.Fatal("empty with plan must stay unclear")
-	}
-}
-
 // TestExploreRequiresQuery 探索入参为空时必须说清失败。
 func TestExploreRequiresQuery(t *testing.T) {
 	out, err := Explore(context.Background(), ExploreRequest{Registry: tool.NewRegistry()})
@@ -247,85 +183,12 @@ func (stubSnap) ChangedFiles(string, WorkspaceSnapshot) ([]string, error) { retu
 // Diff 测试里没有 diff。
 func (stubSnap) Diff(string, WorkspaceSnapshot) (string, error) { return "", nil }
 
-// TestLeaveEvaluatingOnPass 复审通过后不能还停在 evaluating。
-func TestLeaveEvaluatingOnPass(t *testing.T) {
-	state := AgentState{Status: RunEvaluating}
-	leaveEvaluating(&state, EvaluationResult{Verdict: VerdictPass})
-	if state.Status != RunRunningLLM || !state.WrapUpPending {
-		t.Fatalf("pass=%+v", state)
-	}
-	state = AgentState{Status: RunEvaluating}
-	leaveEvaluating(&state, EvaluationResult{Verdict: VerdictPass, Skipped: true})
-	if state.Status != RunRunningLLM || state.WrapUpPending {
-		t.Fatalf("skip=%+v", state)
-	}
-	state = AgentState{Status: RunEvaluating}
-	leaveEvaluating(&state, EvaluationResult{Verdict: VerdictNeedsWork})
-	if state.Status != RunRunningLLM || state.WrapUpPending {
-		t.Fatalf("needs_work=%+v", state)
-	}
-	state = AgentState{Status: RunEvaluating}
-	leaveEvaluating(&state, EvaluationResult{Verdict: VerdictEscalate})
-	if state.Status != RunEvaluating {
-		t.Fatalf("escalate=%+v", state)
-	}
-}
-
-// TestEngineSkipEvaluateFinishesWithoutWrapUp 无代码改动时复审跳过，不再卡在 evaluating、也不再调收尾模型。
-func TestEngineSkipEvaluateFinishesWithoutWrapUp(t *testing.T) {
+// TestEngineVerifyThenFinish 改过代码后必须先验证才能收工。
+func TestEngineVerifyThenFinish(t *testing.T) {
 	engine, facts, _ := testEngine(t)
 	engine.SetHarness(stubSnap{oid: "snap"}, nil)
 	cfg := DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{
 		Verify: []FakeVerifyResult{{Status: VerifyStatusPassed}},
-	})})
-	state := AgentState{RunID: "run-skip", SessionID: "s", Config: cfg, HadSideEffects: true, WorkspaceRoot: t.TempDir()}
-	got, err := engine.Step(context.Background(), StepInput{
-		State: state,
-		Job:   StepJob{RunID: "run-skip", StepIndex: 4, Phase: PhaseLLMResult},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err = engine.Step(context.Background(), StepInput{State: got.State, Job: *got.Next})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.State.Status != RunRunningLLM || got.State.WrapUpPending || got.State.LastEvaluateSummary == "" || got.Next == nil || got.Next.Phase != PhaseEvaluateResult {
-		t.Fatalf("skip evaluate=%+v", got)
-	}
-	got, err = engine.Step(context.Background(), StepInput{State: got.State, Job: *got.Next})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.State.Status != RunCompleted {
-		t.Fatalf("status=%s", got.State.Status)
-	}
-	if len(got.Messages) != 1 || !strings.Contains(DecodeText(got.Messages[0].Content), "没有可审的代码改动") {
-		t.Fatalf("wrap-up=%+v", got.Messages)
-	}
-	var persisted []EventType
-	for _, fact := range facts.facts {
-		persisted = append(persisted, fact.Type)
-	}
-	if !containsEvent(persisted, EventEvaluateResult) {
-		t.Fatalf("persisted=%v", persisted)
-	}
-	var finishTypes []EventType
-	for _, fact := range got.Facts {
-		finishTypes = append(finishTypes, fact.Type)
-	}
-	if !containsEvent(finishTypes, EventAssistantCompleted) {
-		t.Fatalf("finish facts=%v", finishTypes)
-	}
-}
-
-// TestEngineVerifyThenEvaluateFinish 改过代码后必须先验证再复审才能收工。
-func TestEngineVerifyThenEvaluateFinish(t *testing.T) {
-	engine, facts, _ := testEngine(t)
-	engine.SetHarness(stubSnap{oid: "snap"}, nil)
-	cfg := DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{
-		Verify:   []FakeVerifyResult{{Status: VerifyStatusPassed}},
-		Evaluate: []FakeEvaluateResult{{Verdict: "pass"}},
 	})})
 	state := AgentState{RunID: "run-v", SessionID: "s", Config: cfg, HadSideEffects: true, WorkspaceRoot: t.TempDir()}
 	got, err := engine.Step(context.Background(), StepInput{
@@ -342,36 +205,33 @@ func TestEngineVerifyThenEvaluateFinish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State.Status != RunRunningLLM || !got.State.WrapUpPending || got.Next == nil || got.Next.Phase != PhaseEvaluateResult {
-		t.Fatalf("evaluate step=%+v", got)
-	}
-	got, err = engine.Step(context.Background(), StepInput{
-		State:   got.State,
-		Job:     *got.Next,
-		History: fakeHistory("run-v", FakeOptions{Turns: []FakeTurn{{Text: ""}}}),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !got.State.WrapUpPending || len(got.Messages) != 1 || !strings.Contains(DecodeText(got.Messages[0].Content), "已完成") {
-		t.Fatalf("wrap-up=%+v", got)
-	}
-	if got.Next == nil || got.Next.Phase != PhaseLLMResult {
-		t.Fatalf("wrap-up next=%+v", got.Next)
-	}
-	got, err = engine.Step(context.Background(), StepInput{State: got.State, Job: *got.Next})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if got.State.Status != RunCompleted {
 		t.Fatalf("status=%s", got.State.Status)
+	}
+	if len(got.Messages) != 1 || !strings.Contains(DecodeText(got.Messages[0].Content), "已完成") {
+		t.Fatalf("wrap-up=%+v", got.Messages)
 	}
 	var types []EventType
 	for _, fact := range facts.facts {
 		types = append(types, fact.Type)
 	}
-	if !containsEvent(types, EventVerifyStarted) || !containsEvent(types, EventEvaluateResult) || !containsEvent(types, EventAssistantCompleted) {
+	if !containsEvent(types, EventVerifyStarted) {
 		t.Fatalf("facts=%v", types)
+	}
+	var finishTypes []EventType
+	for _, fact := range got.Facts {
+		finishTypes = append(finishTypes, fact.Type)
+	}
+	if !containsEvent(finishTypes, EventAssistantCompleted) {
+		t.Fatalf("finish facts=%v", finishTypes)
+	}
+}
+
+// TestHarnessFeedbackIsSystemNote 验证失败回灌不得伪装成孤立 tool 消息。
+func TestHarnessFeedbackIsSystemNote(t *testing.T) {
+	msg := harnessFeedbackMessage(AgentState{RunID: "r", SessionID: "s"}, "verify", "exit 1", VerifyResult{Status: VerifyStatusFailed})
+	if msg.Role != RoleUser || !strings.Contains(DecodeText(msg.Content), "exit 1") {
+		t.Fatalf("msg=%+v", msg)
 	}
 }
 
@@ -400,56 +260,23 @@ func TestEngineVerifyFingerprintLoop(t *testing.T) {
 	}
 }
 
-// TestEvaluateWorkspaceFeedsDiffAndPlan 复审必须带上快照 diff 与计划验收项。
-func TestEvaluateWorkspaceFeedsDiffAndPlan(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".cursor"), 0o755); err != nil {
+// TestEngineVerifyLLMErrorOpensTicket 验证打回后模型调用失败时改开人工单。
+func TestEngineVerifyLLMErrorOpensTicket(t *testing.T) {
+	engine, _, _ := testEngine(t)
+	failed, err := json.Marshal(VerifyResult{Status: VerifyStatusFailed, Output: "FAIL", Fingerprint: "x"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	plan := "---\n{\"title\":\"t\",\"items\":[{\"id\":\"a\",\"description\":\"改 server/pkg/agent\",\"verify_cmd\":\"go test ./server/pkg/agent\"}]}\n---\n# plan\n"
-	if err := os.WriteFile(filepath.Join(dir, ".cursor", "task.md"), []byte(plan), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	engine := &Engine{}
-	snap := &recordingSnap{diff: "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n+func main() {}\n"}
-	engine.SetHarness(snap, nil)
-	got, err := engine.evaluateWorkspace(context.Background(), AgentState{
-		WorkspaceRoot:     dir,
-		SnapshotID:        "snap",
-		ActivePlan:        "task.md",
-		LastVerifySummary: "status=passed",
-		Config:            RunConfigSnapshot{Model: ModelConfig{Provider: "fake", Model: "fake"}},
+	cfg := DefaultYoloConfig(ModelConfig{Provider: "openai", Model: "x", Options: mustRaw(map[string]string{"base_url": "http://127.0.0.1:1", "api_key": "k"})})
+	got, err := engine.Step(context.Background(), StepInput{
+		State: AgentState{RunID: "run-e", Config: cfg, HadSideEffects: true, VerifyRound: 1},
+		Job:   StepJob{RunID: "run-e", StepIndex: 2, Phase: PhaseVerifyResult, Payload: failed},
+		History: History{
+			Run: Run{ID: "run-e", Config: cfg},
+			Messages: []Message{{Role: RoleUser, Content: EncodeText("按 .cursor/task.md 创建 fail.txt。")}},
+		},
 	})
-	if err != nil || got.Verdict != VerdictPass {
-		t.Fatalf("got=%+v err=%v", got, err)
-	}
-	if snap.got.SnapshotOID != "snap" {
-		t.Fatalf("snap=%+v", snap.got)
-	}
-	items := LoadPlanItems(dir, "task.md")
-	if len(items) != 1 || items[0].ID != "a" {
-		t.Fatalf("items=%+v", items)
-	}
-}
-
-// TestEvaluateWorkspaceSkipsWhenNoBaseline 没有快照基线时即使有计划也不要去问复审模型。
-func TestEvaluateWorkspaceSkipsWhenNoBaseline(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".cursor"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	plan := "---\n{\"title\":\"t\",\"items\":[{\"id\":\"a\",\"description\":\"改 server/pkg/agent\",\"verify_cmd\":\"go test ./server/pkg/agent\"}]}\n---\n# plan\n"
-	if err := os.WriteFile(filepath.Join(dir, ".cursor", "task.md"), []byte(plan), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	engine := &Engine{}
-	engine.SetHarness(&recordingSnap{diff: "should-not-read"}, nil)
-	got, err := engine.evaluateWorkspace(context.Background(), AgentState{
-		WorkspaceRoot: dir,
-		ActivePlan:    "task.md",
-		Config:        RunConfigSnapshot{Model: ModelConfig{Provider: "openai", Model: "x"}},
-	})
-	if err != nil || got.Verdict != VerdictPass || !strings.Contains(got.Summary, "跳过复审") {
+	if err != nil || got.State.Status != RunWaitingApproval || got.State.ApprovalKind != ApprovalKindVerify {
 		t.Fatalf("got=%+v err=%v", got, err)
 	}
 }

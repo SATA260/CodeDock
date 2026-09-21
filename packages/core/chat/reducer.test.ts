@@ -620,7 +620,7 @@ test("decodeText and parseDelta accept backend payloads", () => {
   assert.equal(parseDelta({ id: "c1", name: "ping" }).kind, "tool");
 });
 
-test("verify and evaluate events become timeline cards", () => {
+test("verify events become timeline cards; skipped verify and evaluate do not", () => {
   let state = applyEvent(
     emptyState(),
     ev({ seq: 1, type: "run.state_changed", payload: { from: "running_llm", to: "verifying", reason: "" } }),
@@ -628,15 +628,19 @@ test("verify and evaluate events become timeline cards", () => {
   assert.equal(state.runStatus, "verifying");
   state = applyEvent(state, ev({ seq: 2, type: "verify.started", payload: { round: 1 } }));
   state = applyEvent(state, ev({ seq: 3, type: "verify.result", payload: { status: "passed", round: 1 } }));
-  state = applyEvent(state, ev({ seq: 4, type: "evaluate.started", payload: { round: 1 } }));
-  state = applyEvent(
-    state,
-    ev({ seq: 5, type: "evaluate.result", payload: { verdict: "pass", summary: "ok" } }),
-  );
   const verify = state.items.find((item) => item.kind === "verify");
-  const evaluate = state.items.find((item) => item.kind === "evaluate");
   assert.ok(verify && verify.kind === "verify" && verify.status === "passed");
-  assert.ok(evaluate && evaluate.kind === "evaluate" && evaluate.status === "pass" && evaluate.summary === "ok");
+
+  let skipped = applyEvent(emptyState(), ev({ seq: 1, type: "verify.started", payload: { round: 1 } }));
+  skipped = applyEvent(skipped, ev({ seq: 2, type: "verify.skipped", payload: { skipped: true, round: 1 } }));
+  assert.equal(skipped.items.some((item) => item.kind === "verify"), false);
+
+  let evaluate = applyEvent(emptyState(), ev({ seq: 1, type: "evaluate.started", payload: { round: 1 } }));
+  evaluate = applyEvent(
+    evaluate,
+    ev({ seq: 2, type: "evaluate.result", payload: { verdict: "pass", summary: "没有可审的代码改动，跳过复审。" } }),
+  );
+  assert.equal(evaluate.items.some((item) => item.kind === "evaluate"), false);
 });
 
 test("verify approval cards keep kind for override buttons", () => {

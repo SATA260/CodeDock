@@ -12,8 +12,7 @@ import (
 // TestComposeWrapUpTextUsesWritePaths 没有快照时从 write 调用收集路径。
 func TestComposeWrapUpTextUsesWritePaths(t *testing.T) {
 	state := AgentState{
-		LastVerifySummary:   "status=passed",
-		LastEvaluateSummary: "验收通过",
+		LastVerifySummary: "status=passed",
 	}
 	messages := []Message{{
 		Role: RoleAssistant,
@@ -23,7 +22,7 @@ func TestComposeWrapUpTextUsesWritePaths(t *testing.T) {
 		}},
 	}}
 	got := composeWrapUpText(nil, state, messages)
-	if !strings.Contains(got, "已完成") || !strings.Contains(got, "ok.txt") || !strings.Contains(got, "status=passed") || !strings.Contains(got, "验收通过") {
+	if !strings.Contains(got, "已完成") || !strings.Contains(got, "ok.txt") || !strings.Contains(got, "status=passed") {
 		t.Fatalf("compose=%q", got)
 	}
 }
@@ -41,10 +40,9 @@ func TestShouldComposeWrapUpSkipsCancelAndDone(t *testing.T) {
 	}
 }
 
-// TestEngineWrapUpKeepsModelText 复审通过后优先用模型收尾正文，并丢掉工具调用。
+// TestEngineWrapUpKeepsModelText wrap-up 回合优先用模型正文，并丢掉工具调用。
 func TestEngineWrapUpKeepsModelText(t *testing.T) {
 	engine, facts, _ := testEngine(t)
-	payload, _ := json.Marshal(EvaluationResult{Verdict: VerdictPass, Summary: "ok"})
 	got, err := engine.Step(context.Background(), StepInput{
 		State: AgentState{
 			RunID:     "run-w",
@@ -52,11 +50,10 @@ func TestEngineWrapUpKeepsModelText(t *testing.T) {
 			Config: DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{
 				Turns: []FakeTurn{{Text: "改了 memo.md，验证已通过。", ToolCalls: []FakeToolCall{{Name: "write"}}}},
 			})}),
-			HadSideEffects:      true,
-			WrapUpPending:       true,
-			LastEvaluateSummary: "ok",
+			HadSideEffects: true,
+			WrapUpPending:  true,
 		},
-		Job:     StepJob{RunID: "run-w", StepIndex: 6, Phase: PhaseEvaluateResult, Payload: payload},
+		Job:     StepJob{RunID: "run-w", StepIndex: 6, Phase: PhaseUserInput},
 		History: fakeHistory("run-w", FakeOptions{Turns: []FakeTurn{{Text: "改了 memo.md，验证已通过。", ToolCalls: []FakeToolCall{{Name: "write"}}}}}),
 	})
 	if err != nil {

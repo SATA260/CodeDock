@@ -15,7 +15,7 @@ func (b *Brain) Decide(phase Phase, payload json.RawMessage, state AgentState) (
 	case PhaseVerifyResult:
 		return stopLLMIfTurnsExhausted(decideVerifyResult(payload, state), state, ApprovalKindVerify), nil
 	case PhaseEvaluateResult:
-		return stopLLMIfTurnsExhausted(decideEvaluateResult(payload, state), state, ApprovalKindEvaluate), nil
+		return finishInstructions(RunCompleted, StopCompleted), nil
 	case PhaseHumanOverride:
 		return decideHumanOverride(payload), nil
 	case PhaseHumanAbort:
@@ -45,39 +45,19 @@ func (b *Brain) Decide(phase Phase, payload json.RawMessage, state AgentState) (
 	}
 }
 
-// decideVerifyResult 按验证结论决定复审、打回或开人工单。
+// decideVerifyResult 按验证结论决定收工、打回或开人工单。
 func decideVerifyResult(payload json.RawMessage, state AgentState) []Instruction {
 	var result VerifyResult
 	_ = json.Unmarshal(payload, &result)
 	switch result.Status {
 	case VerifyStatusPassed:
-		return []Instruction{{Type: InstructionEvaluate}}
+		return finishInstructions(RunCompleted, StopCompleted)
 	case VerifyStatusCannotRun:
 		return overrideInstructions(ApprovalKindVerify, "验证环境无法执行")
 	default:
 		round := state.VerifyRound
 		if IsLooping(result.Fingerprint, state.LastVerifyFingerprint, round, MaxVerifyRounds(state.Config.Limits)) {
 			return overrideInstructions(ApprovalKindVerify, "验证失败重复或超出次数")
-		}
-		return []Instruction{{Type: InstructionCallLLM}}
-	}
-}
-
-// decideEvaluateResult 按复审结论决定写收尾说明、打回或开人工单。
-func decideEvaluateResult(payload json.RawMessage, state AgentState) []Instruction {
-	var result EvaluationResult
-	_ = json.Unmarshal(payload, &result)
-	switch result.Verdict {
-	case VerdictPass:
-		if state.ForceFinish || result.Skipped || !state.WrapUpPending {
-			return finishInstructions(RunCompleted, StopCompleted)
-		}
-		return []Instruction{{Type: InstructionCallLLM}}
-	case VerdictEscalate:
-		return overrideInstructions(ApprovalKindEvaluate, result.Summary)
-	default:
-		if state.EvaluateRound >= MaxEvaluateRounds(state.Config.Limits) {
-			return overrideInstructions(ApprovalKindEvaluate, "复审打回超出次数")
 		}
 		return []Instruction{{Type: InstructionCallLLM}}
 	}

@@ -87,6 +87,9 @@ func (e *Engine) Step(ctx context.Context, in StepInput) (StepResult, error) {
 		switch inst.Type {
 		case InstructionCallLLM, InstructionLoadContext:
 			out, err = e.callLLM(ctx, in, inst)
+			if err != nil && in.Job.Phase == PhaseVerifyResult {
+				return e.requestOverride(ctx, in, overrideInstructions(ApprovalKindVerify, "验证失败后无法继续调用模型")[0])
+			}
 		case InstructionCallToolsBatch:
 			out, err = e.callToolsBatch(ctx, in, inst)
 		case InstructionRequestHumanApprove:
@@ -98,7 +101,7 @@ func (e *Engine) Step(ctx context.Context, in StepInput) (StepResult, error) {
 		case InstructionVerify:
 			out, err = e.runVerify(ctx, in)
 		case InstructionEvaluate:
-			out, err = e.runEvaluate(ctx, in)
+			out, err = e.finish(ctx, in, finishInstructions(RunCompleted, StopCompleted)[0])
 		case InstructionFinish:
 			out, err = e.finish(ctx, in, inst)
 		case InstructionCompressContext:
@@ -116,7 +119,7 @@ func (e *Engine) Step(ctx context.Context, in StepInput) (StepResult, error) {
 
 // callLLM 占槽后压缩上下文、调模型，把流式增量写成 Fact，再产出 assistant 消息与下一步。
 // 逻辑：校验取消 → 超回合则有副作用先验证否则收束 → CompactIfNeeded + Stream → 收齐文本/工具调用 → 有 Tool 则下一步 llm_result。
-// 复审通过后的 wrap-up 回合清空工具表；模型空正文时用改动/验证/复审事实拼装。
+// wrap-up 回合清空工具表；模型空正文时用改动和验证事实拼装。
 func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (StepResult, error) {
 	if err := ctx.Err(); err != nil {
 		return e.finish(ctx, in, finishInstructions(RunCancelled, StopCancelled)[0])
@@ -134,7 +137,7 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	if hist.Turn.Number <= 0 {
 		hist.Turn.Number = 1
 	}
-	wrapUp := in.Job.Phase == PhaseEvaluateResult || state.WrapUpPending
+	wrapUp := state.WrapUpPending
 	if wrapUp {
 		state.WrapUpPending = true
 		state.Status = RunRunningLLM

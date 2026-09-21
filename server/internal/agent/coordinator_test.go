@@ -272,6 +272,80 @@ func TestRequestCancelWaitingApproval(t *testing.T) {
 	}
 }
 
+// TestRequestCancelVerifyingImmediate 覆盖取消 verifying 立即终态。
+func TestRequestCancelVerifyingImmediate(t *testing.T) {
+	rt, q, ctx := testRuntime(t, false)
+	sessionID := insertSession(t, q, ctx)
+	cfg := pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
+	runID, err := rt.CreateAgentState(ctx, sessionID, "verify", cfg.Mode, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.ClaimSession(ctx, sessionID, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.UpdateRun(ctx, sqlite.UpdateRunParams{
+		Status:          string(pkgagent.RunVerifying),
+		CancelRequested: 0,
+		ID:              runID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.RequestCancel(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	row, err := q.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != string(pkgagent.RunCancelled) || row.CancelRequested == 0 {
+		t.Fatalf("verifying cancel %+v", row)
+	}
+}
+
+// TestCommitStepHonorsCancelRequested 已请求取消时不得把步骤落成 completed。
+func TestCommitStepHonorsCancelRequested(t *testing.T) {
+	rt, q, ctx := testRuntime(t, false)
+	sessionID := insertSession(t, q, ctx)
+	cfg := pkgagent.DefaultYoloConfig(pkgagent.ModelConfig{Provider: "fake", Model: "fake"})
+	runID, err := rt.CreateAgentState(ctx, sessionID, "wrap", cfg.Mode, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.ClaimSession(ctx, sessionID, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.UpdateRun(ctx, sqlite.UpdateRunParams{
+		Status:          string(pkgagent.RunVerifying),
+		CancelRequested: 1,
+		ID:              runID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reason := pkgagent.StopCompleted
+	now := time.Now().UTC()
+	if err := rt.CommitStep(ctx, runID, pkgagent.StepResult{
+		State: pkgagent.AgentState{
+			SessionID:  sessionID,
+			RunID:      runID,
+			Status:     pkgagent.RunCompleted,
+			StepIndex:  1,
+			Config:     cfg,
+			StopReason: &reason,
+			FinishedAt: &now,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	row, err := q.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != string(pkgagent.RunCancelled) {
+		t.Fatalf("status=%s", row.Status)
+	}
+}
+
 // TestCommitWaitingApprovalInsertsApproval 覆盖提交等待审批时写入 approval 与 Turn 状态。
 func TestCommitWaitingApprovalInsertsApproval(t *testing.T) {
 	rt, q, ctx := testRuntime(t, false)
@@ -1011,11 +1085,8 @@ func TestRecoverPhaseHelpers(t *testing.T) {
 	if recoverPhase(pkgagent.RunEvaluating, pkgagent.AgentState{}) != pkgagent.PhaseVerifyResult {
 		t.Fatal("evaluate")
 	}
-	if recoverPhase(pkgagent.RunEvaluating, pkgagent.AgentState{WrapUpPending: true}) != pkgagent.PhaseEvaluateResult {
-		t.Fatal("wrap-up")
-	}
-	if recoverPhase(pkgagent.RunEvaluating, pkgagent.AgentState{LastEvaluateSummary: "没有可审的代码改动，跳过复审。"}) != pkgagent.PhaseEvaluateResult {
-		t.Fatal("published review")
+	if recoverPhase(pkgagent.RunEvaluating, pkgagent.AgentState{WrapUpPending: true}) != pkgagent.PhaseVerifyResult {
+		t.Fatal("legacy evaluating")
 	}
 	if turnStatusFor(pkgagent.RunCancelled) != string(pkgagent.TurnCancelled) {
 		t.Fatal("cancelled turn")

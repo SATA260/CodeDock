@@ -100,6 +100,13 @@ type EvaluateStartedPayload struct {
 	Round int `json:"round"`
 }
 
+// EvaluationResult 旧 evaluate.result 载荷；新路径不再发出。
+type EvaluationResult struct {
+	Verdict string `json:"verdict"`
+	Summary string `json:"summary,omitempty"`
+	Skipped bool   `json:"skipped,omitempty"`
+}
+
 // EvaluateResultPayload 是 evaluate.result 的载荷。
 type EvaluateResultPayload struct {
 	EvaluationResult

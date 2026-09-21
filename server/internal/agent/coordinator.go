@@ -389,7 +389,7 @@ func (r *Runtime) AppendFact(ctx context.Context, runID string, fact pkgagent.Fa
 }
 
 // CommitStep 校验状态与步骤序号，持久化 Run / Turn / Message / checkpoint，并投递下一步。
-// 逻辑：终态或旧步骤直接返回 → 事务写 Turn/消息/checkpoint/Run/事件 → 提交后发布、索引、标记 job → Enqueue Next。
+// 逻辑：终态或旧步骤直接返回 → 库里已终态则丢弃 → cancel_requested 改写成 cancelled → 事务写 Turn/消息/checkpoint/Run/事件 → 提交后发布、索引、标记 job → Enqueue Next。
 func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.StepResult) error {
 	if r == nil || r.db == nil {
 		return cderr.Invalid("runtime is not initialized")
@@ -426,6 +426,7 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 	var indexed []pkgagent.Message
 	sessionID := state.SessionID
 	terminal := pkgagent.IsTerminal(state.Status)
+	alreadyDone := false
 
 	err = r.db.WithTx(ctx, func(ctx context.Context) error {
 		q := r.q(ctx)
@@ -434,6 +435,13 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 			return wrapDB(err)
 		}
 		run := mapRun(runRow)
+		if pkgagent.IsTerminal(run.Status) {
+			alreadyDone = true
+			return nil
+		}
+		if run.CancelRequested && state.Status != pkgagent.RunCancelled {
+			abortStepForCancel(&state, &result, &terminal)
+		}
 		sessionID = run.SessionID
 		if state.SessionID == "" {
 			state.SessionID = run.SessionID
@@ -616,6 +624,9 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 	if err != nil {
 		return err
 	}
+	if alreadyDone {
+		return nil
+	}
 	for _, ev := range published {
 		r.publish(ev)
 	}
@@ -637,8 +648,26 @@ func (r *Runtime) CommitStep(ctx context.Context, runID string, result pkgagent.
 	return nil
 }
 
-// RequestCancel 标记取消；queued / waiting_approval 立即终态并清 active。
-// 逻辑：终态直接返回 → queued/审批中立刻 cancelled 并出队 → 运行中只标 cancel_requested，由 Worker 收束。
+// abortStepForCancel 把进行中的步骤改成取消终态，避免 cancel_requested 仍落成 completed。
+func abortStepForCancel(state *pkgagent.AgentState, result *pkgagent.StepResult, terminal *bool) {
+	if state == nil || result == nil || terminal == nil {
+		return
+	}
+	reason := pkgagent.StopCancelled
+	state.Status = pkgagent.RunCancelled
+	state.StopReason = &reason
+	state.CancelRequested = true
+	*terminal = true
+	result.Next = nil
+	result.Messages = nil
+	result.Facts = []pkgagent.Fact{{
+		Type:    pkgagent.EventRunCancelled,
+		Payload: pkgagent.MarshalPayload(pkgagent.RunTerminalPayload{Status: pkgagent.RunCancelled, StopReason: &reason}),
+	}}
+}
+
+// RequestCancel 标记取消；queued / 审批中 / 收尾验证立刻终态并清 active。
+// 逻辑：终态直接返回 → queued/审批/验证立刻 cancelled 并出队 → 其余运行中只标 cancel_requested，由 Worker 收束。
 func (r *Runtime) RequestCancel(ctx context.Context, runID string) error {
 	if r == nil || r.db == nil {
 		return cderr.Invalid("runtime is not initialized")
@@ -654,7 +683,7 @@ func (r *Runtime) RequestCancel(ctx context.Context, runID string) error {
 	if pkgagent.IsTerminal(run.Status) {
 		return nil
 	}
-	immediate := run.Status == pkgagent.RunQueued || run.Status == pkgagent.RunWaitingApproval
+	immediate := run.Status == pkgagent.RunQueued || run.Status == pkgagent.RunWaitingApproval || run.Status == pkgagent.RunVerifying || run.Status == pkgagent.RunEvaluating
 	nowStr := util.FormatTime(util.Now())
 	reason := pkgagent.StopCancelled
 	var published []pkgagent.AgentEvent
@@ -797,13 +826,8 @@ func (r *Runtime) RecoverRun(ctx context.Context, runID string) error {
 		}
 	}
 	if state.Status == pkgagent.RunEvaluating && len(job.Payload) == 0 {
-		if reviewAlreadyPublished(state) {
-			job.Phase = pkgagent.PhaseEvaluateResult
-			job.Payload = pkgagent.MarshalPayload(pkgagent.EvaluationResult{Verdict: pkgagent.VerdictPass, Summary: state.LastEvaluateSummary})
-		} else {
-			job.Phase = pkgagent.PhaseVerifyResult
-			job.Payload = pkgagent.MarshalPayload(pkgagent.VerifyResult{Status: pkgagent.VerifyStatusPassed})
-		}
+		job.Phase = pkgagent.PhaseVerifyResult
+		job.Payload = pkgagent.MarshalPayload(pkgagent.VerifyResult{Status: pkgagent.VerifyStatusPassed})
 	}
 	if row, ok, err := r.latestOpenStepJob(ctx, runID); err != nil {
 		return err
@@ -1088,18 +1112,10 @@ func recoverPhase(status pkgagent.RunStatus, state pkgagent.AgentState) pkgagent
 	case pkgagent.RunVerifying:
 		return pkgagent.PhaseLLMResult
 	case pkgagent.RunEvaluating:
-		if reviewAlreadyPublished(state) {
-			return pkgagent.PhaseEvaluateResult
-		}
 		return pkgagent.PhaseVerifyResult
 	default:
 		return pkgagent.PhaseUserInput
 	}
-}
-
-// reviewAlreadyPublished 复审结论已发出，恢复时不要再注入一次验证通过。
-func reviewAlreadyPublished(state pkgagent.AgentState) bool {
-	return state.WrapUpPending || strings.TrimSpace(state.LastEvaluateSummary) != ""
 }
 
 // checkpointHasDecision 判断 checkpoint 是否已有通过或拒绝的工具调用。

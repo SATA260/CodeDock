@@ -55,7 +55,11 @@ func (defaultInspector) InspectEdit(filePath, oldContent, newContent string) (Ed
 	out := EditInspection{FilePath: filePath, OldContent: oldContent, NewContent: newContent}
 	oldErrs := lintContent(filePath, oldContent)
 	newErrs := lintContent(filePath, newContent)
-	out.NewErrors = incrementalErrors(oldErrs, newErrs)
+	if strings.TrimSpace(oldContent) == "" {
+		out.NewErrors = newErrs
+	} else {
+		out.NewErrors = incrementalErrors(oldErrs, newErrs)
+	}
 	if len(out.NewErrors) > 0 {
 		out.DiffSnippet = lintDiffSnippet(oldContent, newContent, out.NewErrors[0].Line)
 	}
@@ -205,6 +209,85 @@ func formatInspectionError(inspection EditInspection) string {
 	}
 	b.WriteString("Do not retry the same broken edit.")
 	return b.String()
+}
+
+const maxLintSnapshotFiles = 400
+
+var lintSkipDirs = map[string]struct{}{
+	".git":         {},
+	"node_modules": {},
+	"vendor":       {},
+	"dist":         {},
+	"data":         {},
+}
+
+// isLintablePath 判断路径是否走写后语法轻检。
+func isLintablePath(filePath string) bool {
+	switch strings.ToLower(filepath.Ext(filePath)) {
+	case ".go", ".json", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs":
+		return true
+	default:
+		return false
+	}
+}
+
+// snapshotLintable 记录工作区内可检查源文件的正文，供命令执行后对照。
+func snapshotLintable(fs FileSystem, root string) map[string]string {
+	out := map[string]string{}
+	if fs == nil || strings.TrimSpace(root) == "" {
+		return out
+	}
+	collectLintable(fs, root, root, out)
+	return out
+}
+
+// collectLintable 递归收集可检查源文件，跳过依赖和仓库元数据目录。
+func collectLintable(fs FileSystem, root, dir string, out map[string]string) {
+	if len(out) >= maxLintSnapshotFiles {
+		return
+	}
+	entries, err := fs.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if len(out) >= maxLintSnapshotFiles {
+			return
+		}
+		name := entry.Name()
+		if _, skip := lintSkipDirs[name]; skip {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		if entry.IsDir() {
+			collectLintable(fs, root, path, out)
+			continue
+		}
+		if !isLintablePath(path) {
+			continue
+		}
+		body, err := fs.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		out[path] = string(body)
+	}
+}
+
+// guardShellEdits 对命令新引入的语法硬伤回滚，与 write/edit 同一套检查。
+func guardShellEdits(fs FileSystem, inspector EditInspector, before map[string]string, root string) error {
+	after := snapshotLintable(fs, root)
+	var first error
+	for path, newContent := range after {
+		old, existed := before[path]
+		if old == newContent {
+			continue
+		}
+		if err := applyEditGuard(fs, inspector, path, old, newContent, existed); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // applyEditGuard 写盘后做增量检查；有新硬伤则回滚并返回错误。

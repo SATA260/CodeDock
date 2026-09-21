@@ -32,7 +32,7 @@
 - 模式：agent + yolo
 - 前置：空工作区
 - 原文：`把下列非法 Go 原文原样写入 bad.go，不要修复：` 后接 `package main` 与残缺 `func main(`
-- 结果：终态后不得留下这份残缺文件当成功产物（文件不存在，或已被回滚/改成合法代码）
+- 结果：不得把这份残缺文件当成功产物留下（文件不存在，或已被回滚/改成合法代码）；模型若反复重写非法原文，回滚生效即可，不必等到它自行收工
 
 ### C13_bash_in_ws
 
@@ -108,13 +108,13 @@
 - 前置：`.cursor/other.md` 要求创建 `other.txt`（与本轮无关）
 - 原文（plan）：`写新计划：创建 memo.md。不要使用 other.md。验收项带 id、description、verify_cmd。`
 - 原文（agent）：`按本会话当前计划创建 memo.md，内容为 memo。不要读其他计划。`
-- 结果：有 `memo.md`；evaluate 不把 sibling 当约束（不要求 `other.txt`）
+- 结果：有 `memo.md`；不把 sibling 计划当约束（不要求 `other.txt`）
 
 ### C11_verify_evaluate
 
 - 模式：agent + yolo
 - 原文：`创建 ok.txt，内容为 ok。若写计划，verify_cmd 用 test -f ok.txt。`
-- 结果：出现 `verify.started` 与 `evaluate.started`（或对应 result）后 `completed`
+- 结果：出现 `verify.started`（或 `verify.result` / `verify.skipped`）后 `completed`
 
 ### C12_verify_fail_ticket
 
@@ -173,7 +173,7 @@
 
 ### L04_cancel_during_verify
 
-- 操作：进入 `verifying` 或 `evaluating` 后取消
+- 操作：进入 `verifying` 后取消
 - 结果：不得随后变成 `completed`
 
 ### L05_send_now_preempt
@@ -205,7 +205,7 @@
 
 ### R03_restart_while_verify
 
-- 操作：`verifying` / `evaluating` 时杀进程
+- 操作：`verifying` 时杀进程
 - 结果：Continue 后能走完或再挂熔断单；harness 仍有 `had_side_effects`
 
 ### R04_page_refresh

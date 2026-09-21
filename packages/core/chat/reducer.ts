@@ -14,7 +14,6 @@ import {
   type ApprovalKind,
   type AssistantStartedPayload,
   type ContextCompactedPayload,
-  type EvaluateEventPayload,
   type Message,
   type RunCreatedPayload,
   type RunStateChangedPayload,
@@ -137,10 +136,8 @@ export function applyEvent(state: SessionState, event: AgentEvent): SessionState
       next = applyVerify(next, event, event.type === "verify.skipped" ? "skipped" : "result");
       break;
     case "evaluate.started":
-      next = applyEvaluate(next, event, "started");
-      break;
     case "evaluate.result":
-      next = applyEvaluate(next, event, "result");
+      next = removeItem(next, thinkingId(event.run_id));
       break;
     case "run.completed":
     case "run.failed":
@@ -405,51 +402,27 @@ function applyApprovalDecision(
   return next;
 }
 
-/** 把收尾验证事件折成时间线卡片。 */
+/** 把收尾验证事件折成时间线卡片；跳过验证不画卡片。 */
 function applyVerify(
   state: SessionState,
   event: AgentEvent,
   stage: "started" | "result" | "skipped",
 ): SessionState {
   const payload = (event.payload ?? {}) as VerifyEventPayload;
-  let status: Extract<TimelineItem, { kind: "verify" }>["status"] = "started";
+  let next = removeItem(state, thinkingId(event.run_id));
   if (stage === "skipped" || payload.skipped) {
-    status = "skipped";
-  } else if (stage === "result") {
+    return removeItem(next, `verify:${event.run_id}`);
+  }
+  let status: Extract<TimelineItem, { kind: "verify" }>["status"] = "started";
+  if (stage === "result") {
     status = payload.status === "failed" || payload.status === "cannot_run" ? payload.status : "passed";
   }
-  let next = removeItem(state, thinkingId(event.run_id));
   return upsertItem(next, {
     kind: "verify",
     id: `verify:${event.run_id}`,
     runId: event.run_id,
     status,
     output: payload.output,
-    round: payload.round,
-    seq: event.seq,
-  });
-}
-
-/** 把独立复审事件折成时间线卡片。 */
-function applyEvaluate(
-  state: SessionState,
-  event: AgentEvent,
-  stage: "started" | "result",
-): SessionState {
-  const payload = (event.payload ?? {}) as EvaluateEventPayload;
-  const status =
-    stage === "started"
-      ? "started"
-      : payload.verdict === "needs_work" || payload.verdict === "escalate"
-        ? payload.verdict
-        : "pass";
-  let next = removeItem(state, thinkingId(event.run_id));
-  return upsertItem(next, {
-    kind: "evaluate",
-    id: `evaluate:${event.run_id}`,
-    runId: event.run_id,
-    status,
-    summary: payload.summary,
     round: payload.round,
     seq: event.seq,
   });

@@ -264,6 +264,65 @@ func decideOverride(t *testing.T, f *fixture, approvalID string, action pkgagent
 	}
 }
 
+// waitAfterDeny 拒绝后等到终态或再次待批，避免模型再要工具时空等 completed。
+func (f *fixture) waitAfterDeny(t *testing.T, sessionID, runID string) pkgagent.Run {
+	t.Helper()
+	deadline := time.Now().Add(liveTimeout())
+	var last pkgagent.Run
+	for time.Now().Before(deadline) {
+		last = f.getRun(t, runID)
+		if pkgagent.IsTerminal(last.Status) {
+			return last
+		}
+		if last.Status == pkgagent.RunWaitingApproval {
+			pending := 0
+			for _, item := range f.listApprovals(t, sessionID) {
+				if item.Status == pkgagent.ApprovalPending && item.RunID == runID {
+					pending++
+				}
+			}
+			if pending > 0 {
+				return last
+			}
+		}
+		time.Sleep(80 * time.Millisecond)
+	}
+	return last
+}
+
+// waitLiveDrainingTools 等到终态；manual 下继续批准后续工具批，验证单仍视为失败。
+func (f *fixture) waitLiveDrainingTools(t *testing.T, sessionID, runID string) pkgagent.Run {
+	t.Helper()
+	deadline := time.Now().Add(liveTimeout())
+	for time.Now().Before(deadline) {
+		run := f.getRun(t, runID)
+		if pkgagent.IsTerminal(run.Status) {
+			return run
+		}
+		if run.Status == pkgagent.RunWaitingApproval {
+			handled := false
+			for _, item := range f.listApprovals(t, sessionID) {
+				if item.Status != pkgagent.ApprovalPending || item.RunID != runID {
+					continue
+				}
+				switch item.Kind {
+				case pkgagent.ApprovalKindVerify, pkgagent.ApprovalKindEvaluate:
+					t.Fatalf("verify ticket left open: kind=%s id=%s", item.Kind, item.ID)
+				default:
+					decideApproval(t, f, item.ID, pkgagent.ApprovalApproved)
+					handled = true
+				}
+			}
+			if handled {
+				continue
+			}
+		}
+		time.Sleep(80 * time.Millisecond)
+	}
+	t.Fatalf("run %s timed out status=%s", runID, f.getRun(t, runID).Status)
+	return pkgagent.Run{}
+}
+
 // waitLive 等到终态或指定状态，超时按真实模型放宽。
 func (f *fixture) waitLive(t *testing.T, runID string, want ...pkgagent.RunStatus) pkgagent.Run {
 	t.Helper()

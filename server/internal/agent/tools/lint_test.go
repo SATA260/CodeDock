@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,32 @@ func TestApplyEditGuardRollsBackBrokenWrite(t *testing.T) {
 	}
 	if string(body) != old {
 		t.Fatalf("file=%q", body)
+	}
+}
+
+// TestWriteRollsBackC03Content 原样写入残缺 main 不得留下文件。
+func TestWriteRollsBackC03Content(t *testing.T) {
+	cwd := t.TempDir()
+	executor := NewExecutor()
+	_, err := executor.Write(context.Background(), cwd, WriteInput{Path: "bad.go", Content: "package main\nfunc main("})
+	if err == nil || !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(cwd, "bad.go")); !os.IsNotExist(statErr) {
+		t.Fatalf("broken file left: %v", statErr)
+	}
+}
+
+// TestBashRollsBackBrokenGo 经 bash 写入残缺 Go 后必须回滚，不能留下成功产物。
+func TestBashRollsBackBrokenGo(t *testing.T) {
+	cwd := t.TempDir()
+	executor := NewExecutor()
+	_, err := executor.Bash(context.Background(), cwd, ShellInput{Command: "printf 'package main\nfunc main(\\n' > bad.go"})
+	if err == nil || !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(cwd, "bad.go")); !os.IsNotExist(statErr) {
+		t.Fatalf("broken file left: %v", statErr)
 	}
 }
 

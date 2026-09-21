@@ -43,7 +43,7 @@ const thinkingCopy: Record<ThinkingPhase, string> = {
   executing_tools: "Running tools",
   waiting_approval: "Waiting for approval",
   verifying: "Verifying",
-  evaluating: "Reviewing",
+  evaluating: "Verifying",
   cancelling: "Cancelling",
 };
 
@@ -198,30 +198,14 @@ function TimelineRow({
           <LiveStatus active={live && item.status === "started"} data-testid={live && item.status === "started" ? "live-status" : undefined}>
             {item.status === "started"
               ? "Verifying"
-              : item.status === "skipped"
-                ? "No verify rules configured; treated as passed"
-                : item.status === "passed"
-                  ? "Verification passed"
-                  : `Verification failed${item.output ? `: ${item.output.slice(0, 120)}` : ""}`}
+              : item.status === "passed"
+                ? "Verification passed"
+                : `Verification failed${item.output ? `: ${item.output.slice(0, 120)}` : ""}`}
           </LiveStatus>
         </div>
       );
     case "evaluate":
-      return (
-        <div className="text-xs leading-4 text-muted-foreground" {...latestProps}>
-          <LiveStatus active={live && item.status === "started"} data-testid={live && item.status === "started" ? "live-status" : undefined}>
-            {item.status === "started"
-              ? "Reviewing"
-              : item.status === "pass"
-                ? item.summary
-                  ? `Review passed: ${item.summary}`
-                  : "Review passed"
-                : item.summary
-                  ? `Review rejected: ${item.summary}`
-                  : "Review requested more work"}
-          </LiveStatus>
-        </div>
-      );
+      return null;
     case "context":
       return (
         <div className="text-xs leading-4 text-muted-foreground" {...latestProps}>
