@@ -4,6 +4,7 @@ import type { ApprovalMode, Session, TimelineItem, WorkMode } from "@codedock/co
 import type { ClaudeSession } from "@codedock/core/claude";
 import type { Session as CodexSession } from "@codedock/core/codex";
 import { Button } from "@codedock/ui";
+import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, PlusIcon } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { ClaudePane } from "../claude/claude-pane.tsx";
@@ -14,7 +15,11 @@ import { useCodexSessionList } from "../codex/hooks/use-session-list.ts";
 import { useCodex } from "../codex/provider.tsx";
 import { useAgent } from "../provider.tsx";
 import { ApprovalDock } from "./approval-dock.tsx";
+import { useColumnLayout } from "./column-layout.ts";
+import { ColumnSash } from "./column-sash.tsx";
 import { ConversationTimeline } from "./conversation-timeline.tsx";
+import { SideDock } from "./side-dock.tsx";
+import { collectDockArtifacts, planWindowId, useWorkbench } from "./workbench.ts";
 import { useSessionList } from "./hooks/use-session-list.ts";
 import { useSessionTimeline } from "./hooks/use-session-timeline.ts";
 import { shortWorkspace } from "./lib/format.ts";
@@ -42,7 +47,7 @@ export type ChatPageProps = {
   headerActions?: ReactNode;
 };
 
-// ChatPage 组合会话侧栏、时间线与输入条。
+// ChatPage 组合会话列表、对话和右侧多窗口栏。
 export function ChatPage({
   sessionId,
   engine,
@@ -71,6 +76,12 @@ export function ChatPage({
   const [composerError, setComposerError] = useState<string | null>(null);
   const [workspaceDraft, setWorkspaceDraft] = useState("");
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
+  const workbench = useWorkbench();
+  const columns = useColumnLayout();
+
+  useEffect(() => {
+    workbench.reset();
+  }, [sessionId, activeEngine, workbench.reset]);
 
   // 上次目录只在本机 localStorage，等 hydration 后再读，避免 SSR 文本对不上。
   useEffect(() => {
@@ -94,6 +105,26 @@ export function ChatPage({
       ? shortWorkspace(frozenWorkspace)
       : ""
     : shortWorkspace(workspaceTitle);
+
+  const artifacts = useMemo(
+    () => collectDockArtifacts(timeline.state.items),
+    [timeline.state.items],
+  );
+
+  useEffect(() => {
+    for (const plan of artifacts.plans) {
+      workbench.refreshOpen({
+        id: planWindowId(plan.name),
+        kind: "plan",
+        title: plan.name || "Plan",
+        name: plan.name,
+        content: plan.content,
+        toolState: plan.toolState,
+        error: plan.error,
+      });
+    }
+    workbench.syncFiles(artifacts.files, false);
+  }, [artifacts, workbench.refreshOpen, workbench.syncFiles]);
 
   const pendingApprovals = timeline.state.items.filter(
     (item): item is Extract<TimelineItem, { kind: "approval" }> =>
@@ -149,90 +180,151 @@ export function ChatPage({
   const hideSession = async (session: SidebarSession) => {
     const hiddenId = session.id;
     const hiddenEngine = session.engine ?? "agent";
-    if (session.engine === "codex") {
-      await codexClient.archiveSession(session.id);
-      await codexList.refresh();
-    } else if (session.engine === "claude") {
-      await claudeClient.archiveSession(session.id);
-      await claudeList.refresh();
-    } else {
-      await list.removeSession(session);
+    try {
+      if (session.engine === "codex") {
+        await codexClient.archiveSession(session.id);
+        await codexList.refresh();
+      } else if (session.engine === "claude") {
+        await claudeClient.archiveSession(session.id);
+        await claudeList.refresh();
+      } else {
+        await list.removeSession(session);
+      }
+    } catch (err) {
+      setComposerError(err instanceof Error ? err.message : "归档失败");
+      throw err;
     }
     if (sessionId === hiddenId && (engine ?? "agent") === hiddenEngine) {
       onNewConversation();
     }
   };
 
+  // openPlan 打开计划窗口；右侧若收起则先展开。
+  const openPlan = (
+    preview: Parameters<typeof workbench.openPlan>[0],
+    extra?: Parameters<typeof workbench.openPlan>[1],
+  ) => {
+    columns.setRightOpen(true);
+    workbench.openPlan(preview, extra);
+  };
+  // openFile 打开文件窗口；右侧若收起则先展开。
+  const openFile = (change: Parameters<typeof workbench.openFile>[0]) => {
+    columns.setRightOpen(true);
+    workbench.openFile(change);
+  };
+  // openGit 打开 Git 窗口；右侧若收起则先展开。
+  const openGit = () => {
+    columns.setRightOpen(true);
+    workbench.openGit();
+  };
+  // createDock 从窗口栏新建；右侧若收起则先展开。
+  const createDock = (
+    kind: Parameters<typeof workbench.createKind>[0],
+    seed?: Parameters<typeof workbench.createKind>[1],
+  ) => {
+    columns.setRightOpen(true);
+    workbench.createKind(kind, seed);
+  };
+
   return (
-    <div className="flex h-full overflow-hidden bg-background text-foreground">
-      <SessionSidebar
-        sessions={sessions}
-        currentId={currentKey}
-        busy={list.busy || codexList.busy || claudeList.busy}
-        error={
-          activeEngine === "codex"
-            ? codexList.error
-            : activeEngine === "claude"
-              ? claudeList.error
-              : list.error
-        }
-        hasMore={codexList.hasMore}
-        onLoadMore={codexList.hasMore ? () => void codexList.loadMore() : undefined}
-        onCreate={onNewConversation}
-        onSelect={(id, nextEngine) => onOpenSession(id, nextEngine ?? "agent")}
-        onRecover={async (runId) => {
-          await timeline.recover(runId);
-          await list.refresh();
-        }}
-        canRecoverCurrent={activeEngine === "agent" && timeline.canRecover}
-        onArchive={async (session) => {
-          await hideSession(session);
-        }}
-        brandSrc={brandSrc}
-        codexIconSrc={codexIconSrc}
-        claudeIconSrc={claudeIconSrc}
-      />
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {sessionId ? (
-          <header className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm leading-5 text-muted-foreground">
-            <span className="shrink-0">
-              {activeEngine === "codex"
-                ? "Codex 对话"
+    <div ref={columns.rowRef} className="flex h-full overflow-hidden bg-background text-foreground">
+      {columns.leftOpen ? (
+        <>
+          <SessionSidebar
+            width={columns.left}
+            sessions={sessions}
+            currentId={currentKey}
+            busy={list.busy || codexList.busy || claudeList.busy}
+            error={
+              activeEngine === "codex"
+                ? codexList.error
                 : activeEngine === "claude"
-                  ? "Claude 对话"
-                  : "Local 对话"}
-            </span>
-            {workspaceLabel ? (
-              <>
-                <span className="text-border">·</span>
-                <span
-                  className="min-w-0 truncate font-mono text-xs text-muted-foreground/80"
-                  title={workspaceTitle}
-                  data-workspace-path={workspaceTitle}
+                  ? claudeList.error
+                  : list.error
+            }
+            hasMore={codexList.hasMore}
+            onLoadMore={codexList.hasMore ? () => void codexList.loadMore() : undefined}
+            onCreate={onNewConversation}
+            onSelect={(id, nextEngine) => onOpenSession(id, nextEngine ?? "agent")}
+            onRecover={async (runId) => {
+              await timeline.recover(runId);
+              await list.refresh();
+            }}
+            canRecoverCurrent={activeEngine === "agent" && timeline.canRecover}
+            onArchive={async (session) => {
+              await hideSession(session);
+            }}
+            brandSrc={brandSrc}
+            codexIconSrc={codexIconSrc}
+            claudeIconSrc={claudeIconSrc}
+          />
+          <ColumnSash
+            label="调整会话列表宽度"
+            onMove={columns.moveLeft}
+            onCollapse={() => columns.setLeftOpen(false)}
+          />
+        </>
+      ) : null}
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-2 text-sm leading-5 text-muted-foreground">
+          <SidebarToggle
+            label={columns.leftOpen ? "收起会话列表" : "展开会话列表"}
+            onClick={columns.toggleLeft}
+          >
+            {columns.leftOpen ? <PanelLeftClose className="size-3.5" /> : <PanelLeft className="size-3.5" />}
+          </SidebarToggle>
+          {!columns.leftOpen ? (
+            <Button size="sm" variant="secondary" onClick={onNewConversation}>
+              <PlusIcon className="size-3.5" />
+              新对话
+            </Button>
+          ) : null}
+          {sessionId ? (
+            <>
+              <span className="shrink-0">
+                {activeEngine === "codex"
+                  ? "Codex 对话"
+                  : activeEngine === "claude"
+                    ? "Claude 对话"
+                    : "Local 对话"}
+              </span>
+              {workspaceLabel ? (
+                <>
+                  <span className="text-border">·</span>
+                  <span
+                    className="min-w-0 truncate font-mono text-xs text-muted-foreground/80"
+                    title={workspaceTitle}
+                    data-workspace-path={workspaceTitle}
+                  >
+                    {workspaceLabel}
+                  </span>
+                </>
+              ) : null}
+              {activeEngine === "agent" && timeline.canRecover ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  data-testid="run-recover"
+                  onClick={async () => {
+                    await timeline.recover();
+                    await list.refresh();
+                  }}
                 >
-                  {workspaceLabel}
-                </span>
-              </>
-            ) : null}
-            {activeEngine === "agent" && timeline.canRecover ? (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={async () => {
-                  await timeline.recover();
-                  await list.refresh();
-                }}
-              >
-                恢复
-              </Button>
-            ) : null}
-            {headerActions ? <div className="ml-auto flex items-center gap-2">{headerActions}</div> : null}
-          </header>
-        ) : headerActions ? (
-          <header className="flex h-10 items-center justify-end border-b border-border px-4">
-            <div className="flex items-center gap-2">{headerActions}</div>
-          </header>
-        ) : null}
+                  恢复
+                </Button>
+              ) : null}
+            </>
+          ) : null}
+          <div className="ml-auto flex items-center gap-2">
+            {headerActions}
+            <SidebarToggle
+              label={columns.rightOpen ? "收起右侧窗口" : "展开右侧窗口"}
+              onClick={columns.toggleRight}
+            >
+              {columns.rightOpen ? <PanelRightClose className="size-3.5" /> : <PanelRight className="size-3.5" />}
+            </SidebarToggle>
+          </div>
+        </header>
         {sessionId ? (
           activeEngine === "codex" ? (
             <>
@@ -277,6 +369,9 @@ export function ChatPage({
                 state={timeline.state}
                 loading={timeline.loading}
                 scrollKey={sessionId}
+                onOpenPlan={openPlan}
+                onOpenFile={openFile}
+                onOpenGit={openGit}
               />
               <div className="relative z-30 shrink-0">
                 <PendingDock
@@ -356,11 +451,47 @@ export function ChatPage({
           </>
         )}
       </main>
+      {columns.rightOpen ? (
+        <>
+          <ColumnSash
+            label="调整右侧窗口宽度"
+            onMove={(delta, persist) => columns.moveRight(-delta, persist)}
+            onCollapse={() => columns.setRightOpen(false)}
+          />
+          <SideDock
+            width={columns.right}
+            windows={workbench.windows}
+            activeId={workbench.activeId}
+            plans={artifacts.plans}
+            files={artifacts.files}
+            onSelect={workbench.setActiveId}
+            onClose={workbench.closeWindow}
+            onCreate={createDock}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
 
-// mergeSessions 把 Local / Codex / Claude 会话按更新时间合成侧栏列表，同引擎同 ID 只留更新的一条。
+// SidebarToggle 收起或展开一侧栏。
+function SidebarToggle({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Button size="sm" variant="ghost" className="px-1.5" title={label} aria-label={label} onClick={onClick}>
+      {children}
+    </Button>
+  );
+}
+
+// mergeSessions 把 Local / Codex / Claude 会话按更新时间合成侧栏列表，去掉已归档，同引擎同 ID 只留更新的一条。
 function mergeSessions(
   agent: Session[],
   codex: CodexSession[],
@@ -379,7 +510,9 @@ function mergeSessions(
       seen.set(key, session);
     }
   }
-  return [...seen.values()].sort((left, right) => (left.updated_at < right.updated_at ? 1 : -1));
+  return [...seen.values()]
+    .filter((session) => session.status !== "archived")
+    .sort((left, right) => (left.updated_at < right.updated_at ? 1 : -1));
 }
 
 // asCodexSidebarSession 把 Codex 会话收成侧栏条目，目录用 cwd，标题优先 title。

@@ -19,6 +19,7 @@ type ApprovalVerdict struct {
 	Scope      pkgagent.ApprovalScope
 	ActorID    string
 	Reason     string
+	Override   pkgagent.OverrideAction
 }
 
 // DecideApproval 校验审批状态，将裁决与 tool.approval_decided 同事务写入，再用 RecoverRun 唤醒 Run。
@@ -42,6 +43,30 @@ func (r *Runtime) DecideApproval(ctx context.Context, req ApprovalVerdict) (pkga
 	}
 	if req.Scope != "" {
 		approval.Scope = req.Scope
+	}
+
+	kind := pkgagent.NormalizeApprovalKind(approval.Kind)
+	if req.Override != "" && (kind == pkgagent.ApprovalKindVerify || kind == pkgagent.ApprovalKindEvaluate) {
+		approval.Override = req.Override
+		switch req.Override {
+		case pkgagent.OverrideAccept, pkgagent.OverrideRetry:
+			approval.Status = pkgagent.ApprovalApproved
+		default:
+			approval.Status = pkgagent.ApprovalDenied
+		}
+		for i := range approval.ToolCalls {
+			approval.ToolCalls[i].Status = approval.Status
+			if req.Reason != "" {
+				approval.ToolCalls[i].Reason = req.Reason
+			}
+		}
+		if err := r.persistOverride(ctx, approval, req); err != nil {
+			return pkgagent.Approval{}, err
+		}
+		if err := r.RecoverRun(ctx, approval.RunID); err != nil {
+			return pkgagent.Approval{}, err
+		}
+		return approval, nil
 	}
 
 	expired := !approval.ExpiresAt.IsZero() && util.Now().After(approval.ExpiresAt)
@@ -104,6 +129,41 @@ func (r *Runtime) DecideApproval(ctx context.Context, req ApprovalVerdict) (pkga
 	return approval, nil
 }
 
+// persistOverride 写入验证/复审单裁决并记下 OverrideAction。
+func (r *Runtime) persistOverride(ctx context.Context, approval pkgagent.Approval, req ApprovalVerdict) error {
+	var decided pkgagent.AgentEvent
+	err := r.db.WithTx(ctx, func(ctx context.Context) error {
+		updated, err := r.q(ctx).UpdateApproval(ctx, sqlite.UpdateApprovalParams{
+			Scope:     string(approval.Scope),
+			Status:    string(approval.Status),
+			ToolCalls: string(pkgagent.MarshalPayload(approval.ToolCalls)),
+			ID:        approval.ID,
+		})
+		if err != nil {
+			return wrapDB(err)
+		}
+		approval = mapApproval(updated)
+		approval.Override = req.Override
+		ev, err := r.AppendFact(ctx, approval.RunID, approvalDecidedFact(approval, req.Reason))
+		if err != nil {
+			return err
+		}
+		decided = ev
+		state, _, err := r.LoadAgentState(ctx, approval.RunID)
+		if err != nil {
+			return err
+		}
+		state.OverrideAction = req.Override
+		state.ApprovalKind = pkgagent.NormalizeApprovalKind(approval.Kind)
+		return r.saveHarness(ctx, approval.RunID, state)
+	})
+	if err != nil {
+		return err
+	}
+	r.publish(decided)
+	return nil
+}
+
 func approvalDecidedFact(approval pkgagent.Approval, reason string) pkgagent.Fact {
 	decisions := make([]pkgagent.ApprovalDecision, 0, len(approval.ToolCalls))
 	for _, call := range approval.ToolCalls {
@@ -123,6 +183,8 @@ func approvalDecidedFact(approval pkgagent.Approval, reason string) pkgagent.Fac
 			Reason:     reason,
 			Decisions:  decisions,
 			ToolCalls:  approval.ToolCalls,
+			Kind:       approval.Kind,
+			Override:   approval.Override,
 		}),
 	}
 }
@@ -194,6 +256,7 @@ func fillVerdict(decisions []pkgagent.ApprovalDecision, calls []pkgagent.Approva
 	return out
 }
 
+// autoReviewPending 用独立复审模型补裁一条待批；说不清则保持 pending 等人。
 func (r *Runtime) autoReviewPending(ctx context.Context, runID, approvalID string) {
 	if r == nil || approvalID == "" {
 		return
@@ -210,7 +273,7 @@ func (r *Runtime) autoReviewPending(ctx context.Context, runID, approvalID strin
 	if err != nil {
 		return
 	}
-	result, err := pkgagent.Review(ctx, state.Config.Model, approval.ToolCalls)
+	result, err := pkgagent.Review(ctx, pkgagent.FallbackModel(state.Config.EvaluatorModel, state.Config.Model), approval.ToolCalls)
 	if err != nil || result.Escalate || len(result.Decisions) == 0 {
 		return
 	}

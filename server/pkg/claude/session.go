@@ -25,9 +25,20 @@ func Get(sessionID string) (Session, error) {
 	return ReadSession(sessionID)
 }
 
-// ListSessions 从本机 Claude 列对话。
+// ListSessions 从本机 Claude 列未归档对话。
 func ListSessions() ([]Session, error) {
-	return ReadSessions()
+	all, err := ReadSessions()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Session, 0, len(all))
+	for _, sess := range all {
+		if sess.Archived {
+			continue
+		}
+		out = append(out, sess)
+	}
+	return out, nil
 }
 
 // BindClaudeSession 记下 Claude session 编号，只能写一次。本模块不落库，编号以本机 Claude 为准。
@@ -45,10 +56,13 @@ func BindClaudeSession(sessionID, claudeSessionID string) error {
 	return nil
 }
 
-// Archive 归档，之后不能再向 Claude Code 开回合。不删本机 Claude 记录。
+// Archive 按官方 tagSession 在实录上打 archived，之后不能再向 Claude Code 开回合。不删本机记录。
 func Archive(sessionID string) error {
 	sess, err := Get(sessionID)
 	if err != nil {
+		return err
+	}
+	if err := tagClaudeSession(sess, archivedSessionTag); err != nil {
 		return err
 	}
 	rt.mu.Lock()

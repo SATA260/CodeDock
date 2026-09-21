@@ -5,9 +5,11 @@ import "fmt"
 var allowedTransitions = map[RunStatus][]RunStatus{
 	RunQueued:          {RunLoadingContext, RunCancelling, RunCancelled, RunFailed},
 	RunLoadingContext:  {RunRunningLLM, RunFailed, RunCancelling, RunCancelled},
-	RunRunningLLM:      {RunExecutingTools, RunCompleted, RunFailed, RunCancelling, RunCancelled},
+	RunRunningLLM:      {RunExecutingTools, RunVerifying, RunCompleted, RunFailed, RunCancelling, RunCancelled},
 	RunExecutingTools:  {RunLoadingContext, RunWaitingApproval, RunCompleted, RunFailed, RunCancelling, RunCancelled},
-	RunWaitingApproval: {RunExecutingTools, RunFailed, RunCancelling, RunCancelled},
+	RunWaitingApproval: {RunExecutingTools, RunRunningLLM, RunCompleted, RunFailed, RunCancelling, RunCancelled},
+	RunVerifying:       {RunRunningLLM, RunEvaluating, RunWaitingApproval, RunCompleted, RunFailed, RunCancelling, RunCancelled},
+	RunEvaluating:      {RunRunningLLM, RunCompleted, RunWaitingApproval, RunFailed, RunCancelling, RunCancelled},
 	RunCancelling:      {RunCancelled, RunFailed},
 }
 
@@ -44,7 +46,7 @@ func NeedsUserRecover(status RunStatus, workerBusy bool) bool {
 		return false
 	}
 	switch status {
-	case RunQueued, RunLoadingContext, RunRunningLLM, RunExecutingTools:
+	case RunQueued, RunLoadingContext, RunRunningLLM, RunExecutingTools, RunVerifying, RunEvaluating:
 		return true
 	default:
 		return false

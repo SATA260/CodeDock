@@ -92,7 +92,7 @@ func formatAllowedTools(names []string) string {
 	if len(clean) == 0 {
 		return "本轮不能调用任何工具。"
 	}
-	return "底座里的工具表是全集，本轮只以这些为准：" + strings.Join(clean, "、") + "。调用未列出的工具会失败。"
+	return "本轮可以调用：" + strings.Join(clean, "、") + "。调用未列出的工具会失败。"
 }
 
 // For 按工作模式返回对应的内置 Agent。未知值回落到 agent。

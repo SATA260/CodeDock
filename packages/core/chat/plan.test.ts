@@ -1,7 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { isPlanTool, latestPlanDocIds, normalizePlanName, planPreviewFromTool, planToolDump } from "./plan.ts";
+import {
+  isPlanTool,
+  latestPlanDocIds,
+  normalizePlanName,
+  planPreviewFromTool,
+  planReadableContent,
+  planToolDump,
+} from "./plan.ts";
+
+test("planReadableContent turns JSON frontmatter into markdown", () => {
+  const got = planReadableContent(
+    '---\n{"title":"图书管理系统","items":[{"id":"V1","description":"存储层可落盘","verify_cmd":"npx vitest run tests/storage.test.ts","passes":false}]}\n---\n\n先写存储。\n',
+  );
+  assert.match(got, /^# 图书管理系统/m);
+  assert.match(got, /- \[ \] V1 存储层可落盘 — `npx vitest run tests\/storage.test.ts`/);
+  assert.match(got, /先写存储/);
+  assert.doesNotMatch(got, /"plan_name"/);
+});
 
 test("isPlanTool recognizes plan_* only", () => {
   assert.equal(isPlanTool("plan_list"), true);

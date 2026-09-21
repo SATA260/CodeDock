@@ -70,6 +70,7 @@ func (executor *Executor) runShell(
 	}
 	defer cancel()
 
+	before := snapshotLintable(executor.FS, cwd)
 	output := newOutputAccumulator(executor, tempPrefix)
 	commandResult, runErr := executor.RunCommand(
 		runContext,
@@ -107,6 +108,9 @@ func (executor *Executor) runShell(
 	case commandResult.ExitCode != 0:
 		return ToolResult{}, appendStatus(fmt.Sprintf("Command exited with code %d", commandResult.ExitCode))
 	default:
+		if err := guardShellEdits(executor.FS, executor.Lint, before, cwd); err != nil {
+			return ToolResult{}, err
+		}
 		return textResult(outputText, details), nil
 	}
 }

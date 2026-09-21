@@ -283,6 +283,90 @@ func TestEngineAutoReviewApprovesWithoutApprovalEvent(t *testing.T) {
 	}
 }
 
+type stubOutside struct{}
+
+// Definition 声明默认允许的只读工具，供越界审批测试使用。
+func (stubOutside) Definition() tool.Definition {
+	return tool.Definition{
+		Name:       "read",
+		Prompt:     "read",
+		Permission: tool.Permission{Effect: tool.EffectAllow},
+		Version:    "1",
+	}
+}
+
+// Inspect 假装路径落在工作区外。
+func (stubOutside) Inspect(context.Context, tool.Input) error { return tool.ErrOutsideWorkspace }
+
+// Execute 在复审通过后返回成功，证明越界调用不会被 yolo 直接跳过。
+func (stubOutside) Execute(_ context.Context, input tool.Input) (tool.Result, error) {
+	return tool.Result{CallID: input.Call.ID, Name: "read", Success: true, Output: json.RawMessage(`{"ok":true}`)}, nil
+}
+
+// TestEngineYoloOutsideWorkspaceNeedsExternalReview 确认 yolo 越界仍须独立复审通过后才执行。
+func TestEngineYoloOutsideWorkspaceNeedsExternalReview(t *testing.T) {
+	engine, _, reg := testEngine(t)
+	if err := reg.Register(stubOutside{}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultYoloConfig(ModelConfig{
+		Provider: "fake",
+		Model:    "fake",
+		Options: mustRaw(FakeOptions{Review: &FakeReview{
+			Decisions: []ApprovalDecision{{ToolCallID: "c1", Status: ApprovalApproved, Reason: "ok"}},
+		}}),
+	})
+	got, err := engine.Step(context.Background(), StepInput{
+		State: AgentState{
+			SessionID: "sess-1",
+			RunID:     "run-1",
+			Config:    cfg,
+			Checkpoint: ToolCheckpoint{
+				Pending: []tool.Call{{ID: "c1", Name: "read", Arguments: json.RawMessage(`{"path":"../x"}`)}},
+			},
+		},
+		Job: StepJob{RunID: "run-1", StepIndex: 2, Phase: PhaseLLMResult},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Status != RunExecutingTools {
+		t.Fatalf("status=%s facts=%+v", got.State.Status, got.Facts)
+	}
+	if len(got.Messages) != 1 || got.Messages[0].Role != RoleTool {
+		t.Fatalf("tool messages=%+v", got.Messages)
+	}
+}
+
+// TestEngineYoloOutsideWorkspaceEscalateAsksHuman 确认复审说不清时 yolo 越界仍开人单。
+func TestEngineYoloOutsideWorkspaceEscalateAsksHuman(t *testing.T) {
+	engine, _, reg := testEngine(t)
+	if err := reg.Register(stubOutside{}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake"})
+	got, err := engine.Step(context.Background(), StepInput{
+		State: AgentState{
+			SessionID: "sess-1",
+			RunID:     "run-1",
+			Config:    cfg,
+			Checkpoint: ToolCheckpoint{
+				Pending: []tool.Call{{ID: "c1", Name: "read", Arguments: json.RawMessage(`{"path":"../x"}`)}},
+			},
+		},
+		Job: StepJob{RunID: "run-1", StepIndex: 2, Phase: PhaseLLMResult},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Status != RunWaitingApproval {
+		t.Fatalf("status=%s", got.State.Status)
+	}
+	if len(got.Facts) != 1 || got.Facts[0].Type != EventApprovalRequired {
+		t.Fatalf("facts=%+v", got.Facts)
+	}
+}
+
 func TestEngineAutoReviewEscalateEmitsApprovalRequired(t *testing.T) {
 	engine, facts, _ := testEngine(t)
 	cfg := DefaultRunConfig(WorkAgent, ModelConfig{Provider: "fake", Model: "fake"})
@@ -409,6 +493,22 @@ func TestEngineNilAndMaxTurns(t *testing.T) {
 	if got.State.StopReason == nil || *got.State.StopReason != StopMaxTurns {
 		t.Fatalf("want max_turns, got %+v", got.State.StopReason)
 	}
+
+	state.HadSideEffects = true
+	got, err = e.Step(context.Background(), StepInput{
+		State:   state,
+		Job:     StepJob{RunID: "run-1", StepIndex: 1, Phase: PhaseUserInput},
+		History: History{Turn: Turn{Number: 2}, Run: Run{ID: "run-1", Config: state.Config}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Status != RunVerifying {
+		t.Fatalf("dirty max turns should verify, status=%s stop=%v", got.State.Status, got.State.StopReason)
+	}
+	if got.Next == nil || got.Next.Phase != PhaseVerifyResult {
+		t.Fatalf("dirty max turns next=%+v", got.Next)
+	}
 }
 
 func TestEngineHumanApprovedUsesCheckpoint(t *testing.T) {
@@ -437,10 +537,12 @@ func TestEngineHumanApprovedUsesCheckpoint(t *testing.T) {
 func TestEngineCallLLMFail(t *testing.T) {
 	engine, _, _ := testEngine(t)
 	opts := FakeOptions{FailTimes: 1, Turns: []FakeTurn{{Text: "nope"}}}
+	cfg := DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)})
+	cfg.RetryPolicy.Model.MaxAttempts = 1
 	_, err := engine.Step(context.Background(), StepInput{
 		State: AgentState{
 			RunID:  "run-1",
-			Config: DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(opts)}),
+			Config: cfg,
 		},
 		Job:     StepJob{RunID: "run-1", StepIndex: 1, Phase: PhaseUserInput},
 		History: fakeHistory("run-1", opts),
@@ -774,7 +876,7 @@ func TestRetryHelpers(t *testing.T) {
 	if Retryable(nil) || Retryable(context.Canceled) || Retryable(ErrNonRetryable) || Retryable(ErrPermissionDenied) || Retryable(ErrInvalidArguments) || Retryable(ErrApprovalRequired) {
 		t.Fatal("non-retryable")
 	}
-	if !Retryable(errors.New("temp")) {
+	if !Retryable(errors.New("temp")) || !Retryable(fmt.Errorf("openai status 503: busy")) || Retryable(fmt.Errorf("openai status 401: no")) {
 		t.Fatal("retryable")
 	}
 	cfg := RetryConfig{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: 10 * time.Millisecond, Multiplier: 2}

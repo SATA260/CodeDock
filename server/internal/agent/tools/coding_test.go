@@ -156,7 +156,7 @@ func TestPlanToolsAndJail(t *testing.T) {
 	out, err := write.Execute(context.Background(), tool.Input{Call: tool.Call{
 		ID:        "w1",
 		Name:      "plan_write",
-		Arguments: json.RawMessage(`{"name":"demo","content":"# hi"}`),
+		Arguments: json.RawMessage(`{"name":"demo","content":"---\n{\"title\":\"demo\",\"items\":[{\"id\":\"item-1\",\"description\":\"文档说明\",\"verify_cmd\":\"manual\"}]}\n---\n\n# hi"}`),
 	}})
 	if err != nil || !out.Success {
 		t.Fatalf("write %v %+v", err, out)
@@ -165,11 +165,27 @@ func TestPlanToolsAndJail(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	pass, err := reg.Get(tool.Reference{Name: "plan_pass"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marked, err := pass.Execute(context.Background(), tool.Input{
+		ActivePlan: "demo.md",
+		Call: tool.Call{
+			ID:        "p1",
+			Name:      "plan_pass",
+			Arguments: json.RawMessage(`{"name":"demo","itemId":"item-1","evidence":"manual ok"}`),
+		},
+	})
+	if err != nil || !marked.Success {
+		t.Fatalf("plan_pass %v %+v", err, marked)
+	}
+
 	list, err := reg.Get(tool.Reference{Name: "plan_list"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	listed, err := list.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "l1", Name: "plan_list", Arguments: json.RawMessage(`{}`)}})
+	listed, err := list.Execute(context.Background(), tool.Input{ActivePlan: "demo.md", Call: tool.Call{ID: "l1", Name: "plan_list", Arguments: json.RawMessage(`{}`)}})
 	if err != nil || !listed.Success || !strings.Contains(string(listed.Output), "demo.md") {
 		t.Fatalf("list %v %+v", err, listed)
 	}
@@ -178,12 +194,15 @@ func TestPlanToolsAndJail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := read.Execute(context.Background(), tool.Input{Call: tool.Call{
-		ID:        "r1",
-		Name:      "plan_read",
-		Arguments: json.RawMessage(`{"name":"demo.md"}`),
-	}})
-	if err != nil || !got.Success || !strings.Contains(string(got.Output), "# hi") {
+	got, err := read.Execute(context.Background(), tool.Input{
+		ActivePlan: "demo.md",
+		Call: tool.Call{
+			ID:        "r1",
+			Name:      "plan_read",
+			Arguments: json.RawMessage(`{"name":"demo.md"}`),
+		},
+	})
+	if err != nil || !got.Success || !strings.Contains(string(got.Output), "## 验收") || !strings.Contains(string(got.Output), "文档说明") {
 		t.Fatalf("read %v %+v", err, got)
 	}
 

@@ -21,6 +21,97 @@ export function normalizePlanName(name: string): string {
   return /\.md$/i.test(base) ? base : `${base}.md`;
 }
 
+// planReadableContent 把旧 JSON frontmatter 收成给人看的 Markdown。
+export function planReadableContent(content: string): string {
+  const split = splitPlanFrontmatter(content);
+  if (!split) {
+    return content;
+  }
+  const meta = split.meta.trim();
+  if (!meta.startsWith("{")) {
+    return split.body || content;
+  }
+  try {
+    const raw = JSON.parse(meta) as {
+      title?: string;
+      items?: Array<{
+        id?: string;
+        description?: string;
+        verify_cmd?: string;
+        passes?: boolean;
+        evidence?: string;
+      }>;
+    };
+    return renderReadablePlan(raw.title ?? "", raw.items ?? [], split.body);
+  } catch {
+    return split.body || content;
+  }
+}
+
+// splitPlanFrontmatter 切开首个 --- 块。
+function splitPlanFrontmatter(content: string): { meta: string; body: string } | null {
+  const text = content.replace(/^\uFEFF/, "");
+  if (!text.startsWith("---")) {
+    return null;
+  }
+  const rest = text.slice(3).replace(/^\r?\n/, "");
+  const close = rest.indexOf("\n---");
+  if (close < 0) {
+    return null;
+  }
+  return {
+    meta: rest.slice(0, close),
+    body: rest.slice(close + 4).replace(/^\r?\n/, ""),
+  };
+}
+
+// renderReadablePlan 用标题和勾选列表拼出计划正文。
+function renderReadablePlan(
+  title: string,
+  items: Array<{
+    id?: string;
+    description?: string;
+    verify_cmd?: string;
+    passes?: boolean;
+    evidence?: string;
+  }>,
+  body: string,
+): string {
+  const lines: string[] = [];
+  if (title.trim()) {
+    lines.push(`# ${title.trim()}`, "");
+  }
+  if (items.length > 0) {
+    lines.push("## 验收", "");
+    for (const item of items) {
+      const mark = item.passes ? "x" : " ";
+      const id = (item.id ?? "").trim();
+      const desc = (item.description ?? "").trim();
+      const cmd = (item.verify_cmd ?? "").trim();
+      let line = `- [${mark}]`;
+      if (id) {
+        line += ` ${id}`;
+      }
+      if (desc) {
+        line += ` ${desc}`;
+      }
+      if (cmd) {
+        line += ` — \`${cmd}\``;
+      }
+      lines.push(line);
+      if (item.passes && item.evidence?.trim()) {
+        lines.push(`  依据：${item.evidence.trim()}`);
+      }
+    }
+    lines.push("");
+  }
+  const rest = body.replace(/^# [^\n]+\n*/, "").trim();
+  if (rest) {
+    lines.push(rest);
+  }
+  return lines.join("\n").trim() + (lines.length ? "\n" : "");
+}
+
 export function planPreviewFromTool(input: {
   name: string;
   arguments?: unknown;

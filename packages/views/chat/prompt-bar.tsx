@@ -14,6 +14,15 @@ import {
 import { ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import {
+  DEFAULT_APPROVAL_MODE,
+  DEFAULT_WORK_MODE,
+  readLastApprovalMode,
+  readLastWorkMode,
+  writeLastApprovalMode,
+  writeLastWorkMode,
+} from "./lib/composer.ts";
+
 const workModes: { value: WorkMode; label: string }[] = [
   { value: "agent", label: "agent" },
   { value: "ask", label: "ask" },
@@ -26,6 +35,7 @@ const approvalModes: { value: ApprovalMode; label: string }[] = [
   { value: "yolo", label: "yolo" },
 ];
 
+// PromptBar 本地对话输入栏；工作模式和审批模式记在本机，刷新后还原。
 export function PromptBar({
   running,
   sending,
@@ -40,15 +50,38 @@ export function PromptBar({
   className?: string;
 }) {
   const [text, setText] = useState("");
-  const [mode, setMode] = useState<WorkMode>("agent");
-  const [approval, setApproval] = useState<ApprovalMode>("manual");
+  const [mode, setMode] = useState<WorkMode>(DEFAULT_WORK_MODE);
+  const [approval, setApproval] = useState<ApprovalMode>(DEFAULT_APPROVAL_MODE);
+  const [hydrated, setHydrated] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // 等 hydration 后再读本机缓存，避免 SSR 文本对不上。
+  useEffect(() => {
+    setMode(readLastWorkMode());
+    setApproval(readLastApprovalMode());
+    setHydrated(true);
+  }, []);
+
+  // rememberWorkMode 记下工作模式，刷新后还用这个。
+  const rememberWorkMode = (next: WorkMode) => {
+    setMode(next);
+    writeLastWorkMode(next);
+  };
+  // rememberApprovalMode 记下审批模式，刷新后还用这个。
+  const rememberApprovalMode = (next: ApprovalMode) => {
+    setApproval(next);
+    writeLastApprovalMode(next);
+  };
   const keepFocus = () => {
     inputRef.current?.focus();
   };
 
   return (
-    <div className={cn("relative z-30 mx-auto w-full max-w-3xl px-4 pb-4", className)}>
+    <div
+      className={cn("relative z-30 mx-auto w-full max-w-3xl px-4 pb-4", className)}
+      data-testid="composer"
+      data-hydrated={hydrated ? "true" : "false"}
+    >
       <PromptInput
         onSend={async (message) => {
           const next = message.text.trim();
@@ -68,6 +101,7 @@ export function PromptBar({
           ref={inputRef}
           value={text}
           autoFocus
+          data-testid="composer-input"
           placeholder="给 Local 发消息…"
           onChange={(event) => setText(event.currentTarget.value)}
           onKeyDown={(event) => {
@@ -80,10 +114,10 @@ export function PromptBar({
         />
         <PromptInputFooter>
           <PromptInputTools>
-            <ChoiceMenu value={mode} options={workModes} onChange={setMode} />
-            <ChoiceMenu value={approval} options={approvalModes} onChange={setApproval} />
+            <ChoiceMenu testid="work-mode" value={mode} options={workModes} onChange={rememberWorkMode} />
+            <ChoiceMenu testid="approval-mode" value={approval} options={approvalModes} onChange={rememberApprovalMode} />
             {running ? (
-              <Button size="sm" variant="outline" onClick={() => void onCancel()}>
+              <Button size="sm" variant="outline" data-testid="composer-cancel" onClick={() => void onCancel()}>
                 取消
               </Button>
             ) : null}
@@ -91,6 +125,7 @@ export function PromptBar({
           <PromptInputSubmit
             status={sending ? "streaming" : "ready"}
             disabled={sending || !text.trim()}
+            data-testid="composer-send"
           />
         </PromptInputFooter>
       </PromptInput>
@@ -98,14 +133,17 @@ export function PromptBar({
   );
 }
 
+// ChoiceMenu 从底部弹出选项，选中后关掉。
 function ChoiceMenu<T extends string>({
   value,
   options,
   onChange,
+  testid,
 }: {
   value: T;
   options: { value: T; label: string }[];
   onChange: (value: T) => void;
+  testid: string;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -140,6 +178,7 @@ function ChoiceMenu<T extends string>({
         variant="outline"
         aria-expanded={open}
         aria-haspopup="listbox"
+        data-testid={testid}
         onClick={() => setOpen((currentOpen) => !currentOpen)}
       >
         {current}
@@ -155,6 +194,7 @@ function ChoiceMenu<T extends string>({
               key={item.value}
               type="button"
               role="option"
+              data-testid={`${testid}-${item.value}`}
               aria-selected={item.value === value}
               className={
                 item.value === value

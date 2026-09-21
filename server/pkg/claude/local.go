@@ -198,6 +198,46 @@ func applySessionTitle(path, title string) error {
 	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
 }
 
+// tagClaudeSession 按官方 tagSession 往本机实录追加 type=tag。还没有实录时只改内存。
+func tagClaudeSession(sess Session, tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return wrapErr(errInvalid, "tag is required")
+	}
+	resumeID := sess.ClaudeSessionID
+	if resumeID == "" {
+		resumeID = sess.ID
+	}
+	path := findSessionFile(resumeID)
+	if path == "" {
+		path = findSessionFile(sess.ID)
+	}
+	if path == "" {
+		return nil
+	}
+	return applySessionTag(path, tag)
+}
+
+// applySessionTag 往官方 JSONL 追加一条 tag，后写的覆盖先写的。
+func applySessionTag(path, tag string) error {
+	if path == "" {
+		return wrapErr(errNotFound, "session file is required")
+	}
+	encoded, err := json.Marshal(map[string]any{"type": "tag", "tag": tag})
+	if err != nil {
+		return wrapErr(errUnavailable, "%s", err.Error())
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return wrapErr(errUnavailable, "%s", err.Error())
+	}
+	defer file.Close()
+	if _, err := file.Write(append(encoded, '\n')); err != nil {
+		return wrapErr(errUnavailable, "%s", err.Error())
+	}
+	return nil
+}
+
 // isTitleLine 认官方实录里的会话标题行。
 func isTitleLine(line []byte) bool {
 	var parsed ndjsonLine
@@ -213,6 +253,7 @@ type parsedSessionFile struct {
 	Usage     TokenUsage
 	CreatedAt int64
 	UpdatedAt int64
+	Archived  bool // 官方 tagSession("archived") 打在实录上。
 }
 
 // parseSessionFile 读本机 JSONL：标题、给人看的实录，以及首末 timestamp。
@@ -249,6 +290,9 @@ func parseSessionFile(path string) (parsedSessionFile, error) {
 		}
 		if usage, ok := usageFromLine(line); ok {
 			out.Usage = usage
+		}
+		if tag, ok := tagFromLine(line); ok {
+			out.Archived = strings.EqualFold(strings.TrimSpace(tag), archivedSessionTag)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -426,6 +470,7 @@ func ReadSession(claudeSessionID string) (Session, error) {
 	title := ""
 	fileID := ""
 	createdAt, updatedAt := int64(0), int64(0)
+	archived := false
 	if path != "" {
 		parsed, err := parseSessionFile(path)
 		if err != nil {
@@ -434,6 +479,7 @@ func ReadSession(claudeSessionID string) (Session, error) {
 		title = parsed.Title
 		createdAt = parsed.CreatedAt
 		updatedAt = parsed.UpdatedAt
+		archived = parsed.Archived
 		fileID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	}
 	rt.mu.Lock()
@@ -450,6 +496,9 @@ func ReadSession(claudeSessionID string) (Session, error) {
 	}
 	if updatedAt > 0 {
 		sess.UpdatedAt = updatedAt
+	}
+	if archived {
+		sess.Archived = true
 	}
 	out := sess.snapshot()
 	if out.Title == "" {

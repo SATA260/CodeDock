@@ -394,3 +394,54 @@ func mergeToolDelta(calls []tool.Call, item openaiToolCall, turnID string) []too
 	calls[idx] = call
 	return calls
 }
+
+// PublicModelError 抽出可给用户看的模型失败原因。
+func PublicModelError(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := strings.TrimSpace(err.Error())
+	if msg := openaiErrorMessage(text); msg != "" {
+		return clipPublicError(msg)
+	}
+	if _, rest, ok := strings.Cut(text, "openai status "); ok {
+		if _, body, found := strings.Cut(rest, ":"); found {
+			body = strings.TrimSpace(body)
+			if body != "" {
+				return clipPublicError(body)
+			}
+		}
+	}
+	return clipPublicError(text)
+}
+
+// openaiErrorMessage 从网关 JSON 里取出 error.message。
+func openaiErrorMessage(text string) string {
+	start := strings.Index(text, "{")
+	if start < 0 {
+		return ""
+	}
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(text[start:]), &payload) != nil {
+		return ""
+	}
+	if strings.TrimSpace(payload.Error.Message) != "" {
+		return payload.Error.Message
+	}
+	return strings.TrimSpace(payload.Message)
+}
+
+// clipPublicError 把失败原因压到状态行能放下的长度。
+func clipPublicError(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) <= 180 {
+		return text
+	}
+	return string(runes[:177]) + "..."
+}

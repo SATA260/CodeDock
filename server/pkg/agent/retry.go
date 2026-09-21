@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -29,7 +31,27 @@ func Retryable(err error) bool {
 	if errors.Is(err, ErrNonRetryable) || errors.Is(err, ErrPermissionDenied) || errors.Is(err, ErrInvalidArguments) || errors.Is(err, ErrApprovalRequired) {
 		return false
 	}
+	if status, ok := openaiHTTPStatus(err); ok && status >= 400 && status < 500 && status != 408 && status != 429 {
+		return false
+	}
 	return true
+}
+
+// openaiHTTPStatus 从 openai status N: ... 里取出状态码。
+func openaiHTTPStatus(err error) (int, bool) {
+	if err == nil {
+		return 0, false
+	}
+	rest, ok := strings.CutPrefix(err.Error(), "openai status ")
+	if !ok {
+		return 0, false
+	}
+	code, _, _ := strings.Cut(rest, ":")
+	status, convErr := strconv.Atoi(strings.TrimSpace(code))
+	if convErr != nil || status <= 0 {
+		return 0, false
+	}
+	return status, true
 }
 
 // Backoff 计算第 attempt 次失败后的等待时间。attempt 从 1 开始。

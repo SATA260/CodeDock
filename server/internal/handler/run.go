@@ -97,6 +97,32 @@ func (a *API) CancelRun(w http.ResponseWriter, r *http.Request) {
 	if worker := a.runtime.Worker(); worker != nil {
 		worker.CancelAndWait(runID)
 	}
+	if err := a.runtime.EnsureCancelled(r.Context(), runID); err != nil {
+		a.requestLog(r).Error("ensure cancel failed", "run_id", runID, "error", err)
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, RunActionResponse{OK: true})
+}
+
+// RestoreRunRequest 指定快照回滚粒度。
+type RestoreRunRequest struct {
+	Mode pkgagent.RestoreMode `json:"mode"`
+}
+
+// RestoreRun 按快照粒度还原本次任务的工作区。
+func (a *API) RestoreRun(w http.ResponseWriter, r *http.Request) {
+	runID := chi.URLParam(r, "run_id")
+	var req RestoreRunRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := a.runtime.RestoreRun(r.Context(), runID, req.Mode); err != nil {
+		a.requestLog(r).Error("restore run failed", "run_id", runID, "error", err)
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, RunActionResponse{OK: true})
 }
 

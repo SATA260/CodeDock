@@ -194,7 +194,7 @@ func TestDispatchOutsideWorkspaceNeedsApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.WaitingApproval || len(out.ApprovalCalls) != 1 {
+	if !out.WaitingApproval || !out.NeedsExternalReview || len(out.ApprovalCalls) != 1 {
 		t.Fatalf("yolo must not skip outside-workspace approval: %+v", out)
 	}
 

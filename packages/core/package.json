@@ -11,7 +11,7 @@
     "./claude": "./claude/index.ts"
   },
   "scripts": {
-    "test": "node --test --experimental-strip-types chat/reducer.test.ts chat/queue.test.ts chat/sse.test.ts chat/plan.test.ts chat/wait-run.test.ts git/client.test.ts codex/client.test.ts codex/reducer.test.ts claude/client.test.ts"
+    "test": "node --test --experimental-strip-types chat/reducer.test.ts chat/queue.test.ts chat/sse.test.ts chat/plan.test.ts chat/files.test.ts chat/wait-run.test.ts git/client.test.ts codex/client.test.ts codex/reducer.test.ts claude/client.test.ts arch.test.ts"
   },
   "devDependencies": {
     "@types/node": "^20",

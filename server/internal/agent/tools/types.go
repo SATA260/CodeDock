@@ -140,6 +140,7 @@ type FileSystem interface {
 	Stat(name string) (fs.FileInfo, error)
 	ReadDir(name string) ([]fs.DirEntry, error)
 	EvalSymlinks(path string) (string, error)
+	Remove(name string) error
 }
 
 type Executor struct {
@@ -150,6 +151,7 @@ type Executor struct {
 	GOOS       string
 	HomeDir    string
 	Env        []string
+	Lint       EditInspector // 写后语法检查；空则用默认实现
 }
 
 func textResult(text string, details *ResultDetails) ToolResult {

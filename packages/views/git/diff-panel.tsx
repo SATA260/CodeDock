@@ -17,17 +17,17 @@ export function DiffPanel({
 }) {
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
+      <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-border px-2">
         {target ? (
           <>
-            <span className="shrink-0 text-[11px] text-muted-foreground">{scopeLabel(target.scope)}</span>
-            <span className="min-w-0 truncate font-mono text-[12px]">{target.path}</span>
+            <span className="shrink-0 text-[10px] text-muted-foreground">{scopeLabel(target.scope)}</span>
+            <span className="min-w-0 truncate font-mono text-[11px]">{target.path}</span>
             {file?.orig_path ? (
-              <span className="min-w-0 truncate text-[11px] text-muted-foreground">来自 {file.orig_path}</span>
+              <span className="min-w-0 truncate text-[10px] text-muted-foreground">来自 {file.orig_path}</span>
             ) : null}
           </>
         ) : (
-          <span className="text-[12px] text-muted-foreground">差异</span>
+          <span className="text-[11px] text-muted-foreground">差异</span>
         )}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">{content(target, file, ready)}</div>

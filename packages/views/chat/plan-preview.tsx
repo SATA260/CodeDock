@@ -1,32 +1,35 @@
 "use client";
 
-import type { PlanPreview, ToolItemState } from "@codedock/core/chat";
+import { planReadableContent, type PlanPreview, type ToolItemState } from "@codedock/core/chat";
 import {
   cn,
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
+  LiveStatus,
   MessageResponse,
 } from "@codedock/ui";
 import { ChevronDownIcon, FileText } from "lucide-react";
 import { useState } from "react";
 
 const stateLabel: Record<ToolItemState, Partial<Record<"write" | "read" | "doc", string>>> = {
-  pending: { write: "正在写入", read: "正在读取", doc: "处理中" },
-  running: { write: "正在写入", read: "正在读取", doc: "处理中" },
-  completed: { write: "已写入", read: "已读取", doc: "已完成" },
-  error: { write: "写入失败", read: "读取失败", doc: "失败" },
-  denied: { write: "已拒绝", read: "已拒绝", doc: "已拒绝" },
+  pending: { write: "Writing", read: "Reading", doc: "Working" },
+  running: { write: "Writing", read: "Reading", doc: "Working" },
+  completed: { write: "Wrote", read: "Read", doc: "Done" },
+  error: { write: "Write failed", read: "Read failed", doc: "Failed" },
+  denied: { write: "Denied", read: "Denied", doc: "Denied" },
 };
 
 export function PlanPreviewCard({
   preview,
   state = "completed",
+  live = false,
   error,
   className,
 }: {
   preview: PlanPreview;
   state?: ToolItemState;
+  live?: boolean;
   error?: string;
   className?: string;
 }) {
@@ -49,9 +52,11 @@ export function PlanPreviewCard({
       >
         <CollapsibleTrigger className="flex items-center gap-2 px-5 py-2 text-xs leading-4 text-muted-foreground hover:text-accent-foreground">
           <FileText className="size-3.5 shrink-0" />
-          <span>计划</span>
+          <span>Plan</span>
           <span className="min-w-0 truncate font-mono text-accent-foreground">{preview.name}</span>
-          <span className="ml-auto shrink-0 text-muted-foreground/70">{status}</span>
+          <span className="ml-auto shrink-0 text-muted-foreground/70">
+            <LiveStatus active={live && (state === "pending" || state === "running")}>{status}</LiveStatus>
+          </span>
           <ChevronDownIcon
             className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-180")}
           />
@@ -61,7 +66,7 @@ export function PlanPreviewCard({
           <PlanDocBody
             content={preview.content}
             emptyHint={emptyDocHint(preview.source, state)}
-            animating={preview.source === "write" && (state === "pending" || state === "running")}
+            animating={live && preview.source === "write" && (state === "pending" || state === "running")}
           />
         </CollapsibleContent>
       </article>
@@ -69,7 +74,8 @@ export function PlanPreviewCard({
   );
 }
 
-function PlanDocBody({
+// PlanDocBody 渲染计划 Markdown，给对话卡片和右侧窗口共用。
+export function PlanDocBody({
   content,
   emptyHint,
   animating,
@@ -78,8 +84,13 @@ function PlanDocBody({
   emptyHint: string;
   animating: boolean;
 }) {
+  content = planReadableContent(content);
   if (!content.trim()) {
-    return <p className="text-xs leading-5 text-muted-foreground">{emptyHint}</p>;
+    return (
+      <p className="text-xs leading-5 text-muted-foreground">
+        <LiveStatus active={animating}>{emptyHint}</LiveStatus>
+      </p>
+    );
   }
   return (
     <MessageResponse isAnimating={animating} className="text-sm">
@@ -90,10 +101,10 @@ function PlanDocBody({
 
 function emptyDocHint(source: "write" | "read", state: ToolItemState): string {
   if (source === "read" && (state === "pending" || state === "running")) {
-    return "正在读取…";
+    return "Reading";
   }
   if (source === "write" && (state === "pending" || state === "running")) {
-    return "正在写入…";
+    return "Writing";
   }
-  return "空计划";
+  return "Empty plan";
 }

@@ -16,7 +16,7 @@ export function useClaudeSessionList() {
   const refresh = useCallback(async () => {
     try {
       const next = await client.listSessions();
-      setSessions(uniqueSessions(next));
+      setSessions(uniqueSessions(next).filter((session) => !session.archived));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "无法加载 Claude 对话");

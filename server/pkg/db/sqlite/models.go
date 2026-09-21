@@ -29,6 +29,7 @@ type Approval struct {
 	Status     string
 	ExpiresAt  string
 	ToolCalls  string
+	Kind       string
 }
 
 type CompactionCheckpoint struct {
@@ -80,6 +81,8 @@ type Run struct {
 	CancelRequested  int64
 	StartedAt        sql.NullString
 	FinishedAt       sql.NullString
+	SnapshotOid      sql.NullString
+	Harness          string
 }
 
 type RunOverlay struct {

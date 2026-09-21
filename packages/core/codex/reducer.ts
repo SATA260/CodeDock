@@ -155,16 +155,16 @@ function turnItem(turn: Turn): TimelineItem {
     error: turn.error,
     text:
       turn.status === "queued"
-        ? "已排队，等当前回合结束"
+        ? "Queued until the current turn finishes"
         : turn.status === "completed"
-          ? "本轮完成"
+          ? "Turn completed"
           : turn.status === "cancelled"
-            ? "已打断"
+            ? "Interrupted"
             : turn.status === "failed"
-              ? turn.error || "本轮失败"
+              ? turn.error || "Turn failed"
               : turn.status === "waiting_approval"
-                ? "等待你的作答"
-                : "Codex 正在工作",
+                ? "Waiting for your answer"
+                : "Codex is working",
   };
 }
 

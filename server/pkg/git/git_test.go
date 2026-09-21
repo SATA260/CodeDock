@@ -438,6 +438,41 @@ func TestCaptureRestoreWork(t *testing.T) {
 	}
 }
 
+// TestCaptureWorkCleanFallsBackToHead 干净工作区没有 stash 对象时用 HEAD 当基线。
+func TestCaptureWorkCleanFallsBackToHead(t *testing.T) {
+	repo, co := initRepo(t)
+	first := commitFile(t, repo, co, "a.txt", "base", "first")
+	oid, err := CaptureWork(repo, co, "clean")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oid != first.ID {
+		t.Fatalf("oid=%s head=%s", oid, first.ID)
+	}
+}
+
+// TestDiffUntrackedSinceIncludesNewFile 快照后新建的未跟踪文件必须出现在 diff 里。
+func TestDiffUntrackedSinceIncludesNewFile(t *testing.T) {
+	repo, co := initRepo(t)
+	commitFile(t, repo, co, "a.txt", "base", "first")
+	keep, err := ListUntracked(repo, co)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRepoFile(t, co.Path, "new.txt", "hello\n")
+	text, err := DiffUntrackedSince(repo, co, keep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "+++ b/new.txt") || !strings.Contains(text, "+hello") {
+		t.Fatalf("diff=%q", text)
+	}
+	names, err := ListNewUntracked(repo, co, keep)
+	if err != nil || len(names) != 1 || names[0] != "new.txt" {
+		t.Fatalf("names=%v err=%v", names, err)
+	}
+}
+
 func TestMergeConflictReadContinueAbort(t *testing.T) {
 	repo, co := initRepo(t)
 	commitFile(t, repo, co, "a.txt", "base\n", "base")

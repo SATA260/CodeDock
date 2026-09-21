@@ -43,6 +43,7 @@ func newRouter(log *slog.Logger, api *handler.API, codexAPI *codexhttp.API) http
 			r.Post("/{run_id}/continue", api.ContinueRun)
 			r.Post("/{run_id}/retry", api.RetryRun)
 			r.Post("/{run_id}/cancel", api.CancelRun)
+			r.Post("/{run_id}/restore", api.RestoreRun)
 		})
 		router.Route("/approvals", func(r chi.Router) {
 			r.Get("/{approval_id}", api.GetApproval)

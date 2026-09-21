@@ -17,6 +17,7 @@ import {
   type ApprovalMode,
   type WorkMode,
   type ApprovalDecision,
+  type OverrideAction,
   type SessionState,
   type TimelineItem,
 } from "@codedock/core/chat";
@@ -363,21 +364,24 @@ export function useSessionTimeline(sessionId: string | undefined) {
   }, [client]);
 
   const decide = useCallback(
-    async (approvalId: string, decisions: ApprovalDecision[]) => {
+    async (approvalId: string, decisions: ApprovalDecision[], extra?: { override?: OverrideAction }) => {
       if (!sessionId) {
         return;
       }
       try {
         let covered = decisions;
-        try {
-          const latest = await client.getApproval(approvalId);
-          covered = decisionsForApproval(latest, decisions);
-        } catch {
-          covered = decisions;
+        if (!extra?.override) {
+          try {
+            const latest = await client.getApproval(approvalId);
+            covered = decisionsForApproval(latest, decisions);
+          } catch {
+            covered = decisions;
+          }
         }
         const approval = await client.decideApproval(approvalId, {
-          decisions: covered,
+          decisions: extra?.override ? [] : covered,
           actor_id: userId,
+          override: extra?.override,
         });
         setState((current) => {
           if (sessionRef.current !== sessionId) {
@@ -404,17 +408,21 @@ export function useSessionTimeline(sessionId: string | undefined) {
         item.kind === "approval" && item.status === "pending",
     );
     for (const item of pendingApprovals) {
-      const decisions: ApprovalDecision[] = item.toolCalls
-        .filter((call) => call.id)
-        .map((call) => ({
-          tool_call_id: call.id,
-          status: "denied",
-          reason: "发送排队消息，已中断审批",
-        }));
-      if (decisions.length === 0) {
-        continue;
-      }
       try {
+        if (item.approvalKind === "verify" || item.approvalKind === "evaluate") {
+          await decide(item.approvalId, [], { override: "abort" });
+          continue;
+        }
+        const decisions: ApprovalDecision[] = item.toolCalls
+          .filter((call) => call.id)
+          .map((call) => ({
+            tool_call_id: call.id,
+            status: "denied",
+            reason: "发送排队消息，已中断审批",
+          }));
+        if (decisions.length === 0) {
+          continue;
+        }
         await decide(item.approvalId, decisions);
       } catch {
         // 单条审批失败不挡住后续拒绝与发送

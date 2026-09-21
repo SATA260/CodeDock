@@ -193,15 +193,16 @@ func (w *Worker) execute(parent context.Context, job pkgagent.StepJob) {
 			blocked = true
 		}
 	}
+	persist := context.Background()
 	if skipped || state.CancelRequested || blocked {
 		if !pkgagent.IsTerminal(state.Status) {
-			result, ferr := w.runtime.engine.Step(ctx, pkgagent.StepInput{
+			result, ferr := w.runtime.engine.Step(persist, pkgagent.StepInput{
 				State:   cancelState(state),
 				Job:     job,
 				History: history,
 			})
 			if ferr == nil {
-				_ = w.runtime.CommitStep(ctx, job.RunID, result)
+				_ = w.runtime.CommitStep(persist, job.RunID, result)
 			}
 		}
 		w.mu.Lock()
@@ -212,23 +213,38 @@ func (w *Worker) execute(parent context.Context, job pkgagent.StepJob) {
 	result, err := w.runtime.engine.Step(ctx, pkgagent.StepInput{State: state, Job: job, History: history})
 	if err != nil {
 		if ctx.Err() != nil || state.CancelRequested {
-			result, _ = w.runtime.engine.Step(context.Background(), pkgagent.StepInput{
+			result, _ = w.runtime.engine.Step(persist, pkgagent.StepInput{
 				State:   cancelState(state),
 				Job:     job,
 				History: history,
 			})
-			_ = w.runtime.CommitStep(ctx, job.RunID, result)
+			_ = w.runtime.CommitStep(persist, job.RunID, result)
 			return
 		}
 		w.runtime.logger().Error("worker step failed", "run_id", job.RunID, "step_index", job.StepIndex, "phase", job.Phase, "error", err)
 		failed := failState(state, err)
-		_ = w.runtime.CommitStep(ctx, job.RunID, pkgagent.StepResult{
+		_ = w.runtime.CommitStep(persist, job.RunID, pkgagent.StepResult{
 			State: failed,
 			Facts: []pkgagent.Fact{{
-				Type:    pkgagent.EventRunFailed,
-				Payload: pkgagent.MarshalPayload(pkgagent.RunTerminalPayload{Status: pkgagent.RunFailed, StopReason: failed.StopReason}),
+				Type: pkgagent.EventRunFailed,
+				Payload: pkgagent.MarshalPayload(pkgagent.RunTerminalPayload{
+					Status:     pkgagent.RunFailed,
+					StopReason: failed.StopReason,
+					Error:      pkgagent.PublicModelError(err),
+				}),
 			}},
 		})
+		return
+	}
+	if ctx.Err() != nil || state.CancelRequested || result.State.CancelRequested {
+		if !pkgagent.IsTerminal(result.State.Status) {
+			result, _ = w.runtime.engine.Step(persist, pkgagent.StepInput{
+				State:   cancelState(result.State),
+				Job:     job,
+				History: history,
+			})
+		}
+		_ = w.runtime.CommitStep(persist, job.RunID, result)
 		return
 	}
 	_ = w.runtime.CommitStep(ctx, job.RunID, result)

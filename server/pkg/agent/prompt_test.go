@@ -22,7 +22,7 @@ func TestComposeSystemPrompt(t *testing.T) {
 	if !strings.Contains(empty, "使用要求：\n- 用用户的语言回复") {
 		t.Fatalf("missing shared guidelines: %q", empty)
 	}
-	if !strings.Contains(empty, "- 回复尽量简洁\n- 涉及文件时写清路径") {
+	if !strings.Contains(empty, "- 回复尽量简洁\n- 涉及文件时写清路径\n- 当一轮不再调用工具时，先写清改了什么") {
 		t.Fatalf("missing default guidelines: %q", empty)
 	}
 	got := ComposeSystemPrompt("base", []tool.Definition{
@@ -121,11 +121,11 @@ func TestBuildModeDeveloperStableBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ask.SystemPrompt != agent.SystemPrompt {
-		t.Fatalf("system must be stable\nask=%q\nagent=%q", ask.SystemPrompt, agent.SystemPrompt)
+	if strings.Contains(ask.SystemPrompt, "- write:") || namesOf(ask.Tools) != "read" {
+		t.Fatalf("ask must only keep bound tools: tools=%v system=%q", namesOf(ask.Tools), ask.SystemPrompt)
 	}
-	if len(ask.Tools) != len(agent.Tools) || ask.Tools[0].Name != agent.Tools[0].Name {
-		t.Fatalf("tools must be stable ask=%v agent=%v", ask.Tools, agent.Tools)
+	if !strings.Contains(agent.SystemPrompt, "- write:") || namesOf(agent.Tools) != "read,write,plan_write" {
+		t.Fatalf("agent must keep bound tools: tools=%v system=%q", namesOf(agent.Tools), agent.SystemPrompt)
 	}
 	askDev := lastDeveloper(ask.Messages)
 	agentDev := lastDeveloper(agent.Messages)
@@ -138,6 +138,30 @@ func TestBuildModeDeveloperStableBase(t *testing.T) {
 	if DecodeText(ask.Messages[0].Content) != "hi" || ask.Messages[len(ask.Messages)-1].Role != RoleDeveloper {
 		t.Fatalf("developer should follow history: %#v", ask.Messages)
 	}
+	if !strings.Contains(askDev, "尚未绑定计划") || !strings.Contains(agentDev, "尚未绑定计划") {
+		t.Fatalf("unbound plan note ask=%q agent=%q", askDev, agentDev)
+	}
+	bound, err := Build(context.Background(), Prompt{
+		Run:     Run{Config: DefaultRunConfig(WorkPlan, ModelConfig{})},
+		Context: ContextSnapshot{ActivePlan: "task.md", Tools: tools, Messages: []Message{{Role: RoleUser, Content: EncodeText("hi")}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(lastDeveloper(bound.Messages), "本会话当前计划：task.md") {
+		t.Fatalf("bound note=%q", lastDeveloper(bound.Messages))
+	}
+	if namesOf(bound.Tools) != "plan_write" {
+		t.Fatalf("plan tools=%v", namesOf(bound.Tools))
+	}
+}
+
+func namesOf(defs []tool.Definition) string {
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
+		names = append(names, def.Name)
+	}
+	return strings.Join(names, ",")
 }
 
 func TestProfileDeveloperPrompt(t *testing.T) {
@@ -147,11 +171,11 @@ func TestProfileDeveloperPrompt(t *testing.T) {
 		t.Fatalf("empty=%q", got)
 	}
 	inlineOnly := profile.Config{Prompt: profile.PromptConfig{Inline: "  duty  "}, Tools: profile.ToolConfig{Names: []string{"read"}}}
-	if got := inlineOnly.DeveloperPrompt(); got != "duty\n\n底座里的工具表是全集，本轮只以这些为准：read。调用未列出的工具会失败。" {
+	if got := inlineOnly.DeveloperPrompt(); got != "duty\n\n本轮可以调用：read。调用未列出的工具会失败。" {
 		t.Fatalf("inline=%q", got)
 	}
 	guidelinesOnly := profile.Config{Prompt: profile.PromptConfig{Guidelines: []string{" a ", ""}}, Tools: profile.ToolConfig{Names: []string{"read"}}}
-	if got := guidelinesOnly.DeveloperPrompt(); !strings.Contains(got, "本轮只以这些为准：read") || !strings.Contains(got, "- a") {
+	if got := guidelinesOnly.DeveloperPrompt(); !strings.Contains(got, "本轮可以调用：read") || !strings.Contains(got, "- a") {
 		t.Fatalf("guidelines=%q", got)
 	}
 }

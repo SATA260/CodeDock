@@ -551,6 +551,9 @@ func TestJailAndPlanErrors(t *testing.T) {
 	if err != nil || !got.Success {
 		t.Fatalf("list %v %+v", err, got)
 	}
+	if strings.Contains(string(got.Output), "keep.md") {
+		t.Fatalf("unbound list leaked sibling: %s", got.Output)
+	}
 	if _, err := planDir(""); err == nil {
 		t.Fatal("planDir empty")
 	}
@@ -564,6 +567,66 @@ func TestJailAndPlanErrors(t *testing.T) {
 	got, err = badRead.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "br", Arguments: json.RawMessage(`{"name":"../x"}`)}})
 	if err != nil || got.Success {
 		t.Fatalf("bad read name %v %+v", err, got)
+	}
+}
+
+func TestPlanSessionIsolation(t *testing.T) {
+	root := t.TempDir()
+	ports := Ports{WorkspaceRoot: root}
+	other := "---\n{\"title\":\"other\",\"items\":[{\"id\":\"x\",\"description\":\"别的任务\",\"verify_cmd\":\"manual\"}]}\n---\n# other\n"
+	if err := os.MkdirAll(filepath.Join(root, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".cursor", "other.md"), []byte(other), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	list := planTool{name: "plan_list", ports: ports}
+	got, err := list.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "l"}})
+	if err != nil || !got.Success || strings.Contains(string(got.Output), "other.md") {
+		t.Fatalf("unbound list %v %+v", err, got)
+	}
+	listed, err := list.Execute(context.Background(), tool.Input{AllowListAll: true, Call: tool.Call{ID: "all"}})
+	if err != nil || !listed.Success || !strings.Contains(string(listed.Output), "other.md") {
+		t.Fatalf("catalog list %v %+v", err, listed)
+	}
+	read := planTool{name: "plan_read", ports: ports}
+	got, err = read.Execute(context.Background(), tool.Input{Call: tool.Call{ID: "r", Arguments: json.RawMessage(`{"name":"other.md"}`)}})
+	if err != nil || got.Success {
+		t.Fatalf("foreign read should fail %v %+v", err, got)
+	}
+	got, err = read.Execute(context.Background(), tool.Input{MentionedPlans: []string{"other.md"}, Call: tool.Call{ID: "r2", Arguments: json.RawMessage(`{"name":"other.md"}`)}})
+	if err != nil || !got.Success {
+		t.Fatalf("mentioned read %v %+v", err, got)
+	}
+	write := planTool{name: "plan_write", ports: ports}
+	got, err = write.Execute(context.Background(), tool.Input{Call: tool.Call{
+		ID:        "w",
+		Arguments: json.RawMessage(`{"name":"other.md","content":"x"}`),
+	}})
+	if err != nil || got.Success {
+		t.Fatalf("overwrite sibling %v %+v", err, got)
+	}
+	fresh, err := write.Execute(context.Background(), tool.Input{Call: tool.Call{
+		ID:        "w2",
+		Arguments: json.RawMessage(`{"name":"mine.md","content":"---\n{\"title\":\"mine\",\"items\":[{\"id\":\"a\",\"description\":\"文档说明\",\"verify_cmd\":\"manual\"}]}\n---\n# mine"}`),
+	}})
+	if err != nil || !fresh.Success {
+		t.Fatalf("new plan %v %+v", err, fresh)
+	}
+	plain, err := write.Execute(context.Background(), tool.Input{Call: tool.Call{
+		ID:        "w3",
+		Arguments: json.RawMessage(`{"name":"plain.md","title":"plain","content":"# 正文","items":[{"id":"V1","description":"文档说明","verify_cmd":"manual"}]}`),
+	}})
+	if err != nil || !plain.Success || !strings.Contains(string(plain.Output), "V1") || !strings.Contains(string(plain.Output), "文档说明") {
+		t.Fatalf("items param %v %+v", err, plain)
+	}
+	reader := codingTool{name: ToolRead, ports: ports}
+	got, err = reader.Execute(context.Background(), tool.Input{Call: tool.Call{
+		ID:        "cr",
+		Arguments: json.RawMessage(`{"path":".cursor/other.md"}`),
+	}})
+	if err != nil || got.Success {
+		t.Fatalf("coding read sibling %v %+v", err, got)
 	}
 }
 

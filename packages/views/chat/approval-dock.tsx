@@ -3,8 +3,10 @@
 import {
   planPreviewFromTool,
   type ApprovalDecision,
+  type ApprovalKind,
   type ApprovalStatus,
   type ApprovalToolCall,
+  type OverrideAction,
   type TimelineItem,
 } from "@codedock/core/chat";
 import { Button, cn, formatJSON, MessageResponse } from "@codedock/ui";
@@ -16,6 +18,7 @@ type ApprovalItem = Extract<TimelineItem, { kind: "approval" }>;
 type ApprovalPage = {
   approvalId: string;
   call: ApprovalToolCall;
+  approvalKind?: ApprovalKind;
 };
 
 type Choice = "approved" | "denied";
@@ -25,7 +28,11 @@ export function ApprovalDock({
   onDecide,
 }: {
   items: ApprovalItem[];
-  onDecide: (approvalId: string, decisions: ApprovalDecision[]) => Promise<void>;
+  onDecide: (
+    approvalId: string,
+    decisions: ApprovalDecision[],
+    extra?: { override?: OverrideAction },
+  ) => Promise<void>;
 }) {
   const pages = useMemo(() => pagesFrom(items), [items]);
   const [index, setIndex] = useState(0);
@@ -104,6 +111,18 @@ export function ApprovalDock({
     }
   };
 
+  /** 提交验证/复审单上的人工裁决。 */
+  const decideOverride = async (action: OverrideAction) => {
+    setSubmitting(true);
+    try {
+      await onDecide(page.approvalId, [], { override: action });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const overrideKind = page.approvalKind === "verify" || page.approvalKind === "evaluate";
+
   return (
     <div className="flex justify-center px-4 pb-1.5">
       <div
@@ -112,7 +131,13 @@ export function ApprovalDock({
         aria-label="工具审批"
       >
         <div className="flex items-center justify-between gap-2">
-          <div className="text-[10px] leading-3.5 font-medium text-muted-foreground">需要批准才能继续</div>
+          <div className="text-[10px] leading-3.5 font-medium text-muted-foreground">
+            {overrideKind
+              ? page.approvalKind === "verify"
+                ? "Verification failed; decide how to proceed"
+                : "Review failed; decide how to proceed"
+              : "Approval required to continue"}
+          </div>
           <div className="flex items-center gap-0.5 text-[10px] leading-3.5 text-muted-foreground">
             <Button
               size="sm"
@@ -178,24 +203,60 @@ export function ApprovalDock({
           ) : null}
         </div>
         <div className="mt-1.5 flex justify-end gap-1.5">
-          <Button
-            size="sm"
-            variant={currentChoice === "denied" ? "secondary" : "outline"}
-            className="h-6 px-2 text-[11px]"
-            disabled={submitting}
-            onClick={() => void decideCurrent("denied")}
-          >
-            {currentChoice === "denied" ? "已拒绝" : "拒绝"}
-          </Button>
-          <Button
-            size="sm"
-            variant={currentChoice === "approved" ? "default" : "secondary"}
-            className="h-6 px-2 text-[11px]"
-            disabled={submitting}
-            onClick={() => void decideCurrent("approved")}
-          >
-            {currentChoice === "approved" ? "已允许" : "允许"}
-          </Button>
+          {overrideKind ? (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-[11px]"
+                disabled={submitting}
+                data-testid="run-restore"
+                onClick={() => void decideOverride("abort")}
+              >
+                回滚并取消
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="h-6 px-2 text-[11px]"
+                disabled={submitting}
+                onClick={() => void decideOverride("retry")}
+              >
+                再试一次
+              </Button>
+              <Button
+                size="sm"
+                variant="default"
+                className="h-6 px-2 text-[11px]"
+                disabled={submitting}
+                data-testid="run-accept"
+                onClick={() => void decideOverride("accept")}
+              >
+                就这样结束
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                size="sm"
+                variant={currentChoice === "denied" ? "secondary" : "outline"}
+                className="h-6 px-2 text-[11px]"
+                disabled={submitting}
+                onClick={() => void decideCurrent("denied")}
+              >
+                {currentChoice === "denied" ? "已拒绝" : "拒绝"}
+              </Button>
+              <Button
+                size="sm"
+                variant={currentChoice === "approved" ? "default" : "secondary"}
+                className="h-6 px-2 text-[11px]"
+                disabled={submitting}
+                onClick={() => void decideCurrent("approved")}
+              >
+                {currentChoice === "approved" ? "已允许" : "允许"}
+              </Button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -210,11 +271,12 @@ function pagesFrom(items: ApprovalItem[]): ApprovalPage[] {
       pages.push({
         approvalId: item.approvalId,
         call: item.toolCalls[0] ?? { id: "", name: "工具调用" },
+        approvalKind: item.approvalKind,
       });
       continue;
     }
     for (const call of calls) {
-      pages.push({ approvalId: item.approvalId, call });
+      pages.push({ approvalId: item.approvalId, call, approvalKind: item.approvalKind });
     }
   }
   return pages;
@@ -237,12 +299,12 @@ function asChoice(status?: ApprovalStatus): Choice | undefined {
 
 function statusLabel(status?: Choice): string {
   if (status === "approved") {
-    return "已允许";
+    return "Allowed";
   }
   if (status === "denied") {
-    return "已拒绝";
+    return "Denied";
   }
-  return "待批";
+  return "Pending";
 }
 
 function statusTone(status?: Choice): string {

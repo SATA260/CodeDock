@@ -11,6 +11,7 @@ import {
   type ApprovalToolCall,
   type AssistantCompletedPayload,
   type AssistantDeltaPayload,
+  type ApprovalKind,
   type AssistantStartedPayload,
   type ContextCompactedPayload,
   type Message,
@@ -23,6 +24,7 @@ import {
   type TimelineItem,
   type ToolCall,
   type ToolCallPayload,
+  type VerifyEventPayload,
 } from "./types.ts";
 
 export function emptyState(messages: Record<string, Message> = {}): SessionState {
@@ -125,6 +127,17 @@ export function applyEvent(state: SessionState, event: AgentEvent): SessionState
       break;
     case "context.compacted":
       next = applyContextCompacted(next, event);
+      break;
+    case "verify.started":
+      next = applyVerify(next, event, "started");
+      break;
+    case "verify.result":
+    case "verify.skipped":
+      next = applyVerify(next, event, event.type === "verify.skipped" ? "skipped" : "result");
+      break;
+    case "evaluate.started":
+    case "evaluate.result":
+      next = removeItem(next, thinkingId(event.run_id));
       break;
     case "run.completed":
     case "run.failed":
@@ -302,6 +315,7 @@ function applyApprovalRequired(state: SessionState, event: AgentEvent): SessionS
     approvalId: payload.approval_id,
     toolCalls: mergeApprovalCalls(existingApprovalCalls(state, payload.approval_id), payload.tool_calls ?? []),
     status: "pending",
+    approvalKind: payload.kind,
     seq: event.seq,
   });
 }
@@ -314,6 +328,7 @@ function applyApprovalDecided(state: SessionState, event: AgentEvent): SessionSt
     status: payload.status,
     toolCalls: payload.tool_calls ?? existingApprovalCalls(state, payload.approval_id),
     decisions: payload.decisions ?? [],
+    approvalKind: payload.kind ?? existingApprovalKind(state, payload.approval_id),
     seq: event.seq,
   });
 }
@@ -341,6 +356,7 @@ export function applyApprovalRecord(state: SessionState, approval: Approval): Se
       status: call.status ?? approval.status,
       reason: call.reason,
     })),
+    approvalKind: approval.kind,
     seq: state.lastSeq,
   });
 }
@@ -353,6 +369,7 @@ function applyApprovalDecision(
     status: ApprovalStatus;
     toolCalls: ApprovalToolCall[];
     decisions: ApprovalDecision[];
+    approvalKind?: ApprovalKind;
     seq: number;
   },
 ): SessionState {
@@ -363,6 +380,7 @@ function applyApprovalDecision(
     approvalId: input.approvalId,
     toolCalls: input.toolCalls,
     status: input.status,
+    approvalKind: input.approvalKind ?? existingApprovalKind(state, input.approvalId),
     seq: input.seq,
   });
   for (const decision of input.decisions) {
@@ -382,6 +400,32 @@ function applyApprovalDecision(
     }
   }
   return next;
+}
+
+/** 把收尾验证事件折成时间线卡片；跳过验证不画卡片。 */
+function applyVerify(
+  state: SessionState,
+  event: AgentEvent,
+  stage: "started" | "result" | "skipped",
+): SessionState {
+  const payload = (event.payload ?? {}) as VerifyEventPayload;
+  let next = removeItem(state, thinkingId(event.run_id));
+  if (stage === "skipped" || payload.skipped) {
+    return removeItem(next, `verify:${event.run_id}`);
+  }
+  let status: Extract<TimelineItem, { kind: "verify" }>["status"] = "started";
+  if (stage === "result") {
+    status = payload.status === "failed" || payload.status === "cannot_run" ? payload.status : "passed";
+  }
+  return upsertItem(next, {
+    kind: "verify",
+    id: `verify:${event.run_id}`,
+    runId: event.run_id,
+    status,
+    output: payload.output,
+    round: payload.round,
+    seq: event.seq,
+  });
 }
 
 function applyContextCompacted(state: SessionState, event: AgentEvent): SessionState {
@@ -407,6 +451,7 @@ function applyRunTerminal(state: SessionState, event: AgentEvent): SessionState 
     runId: event.run_id,
     status,
     stopReason: payload.stop_reason,
+    error: payload.error,
     seq: event.seq,
   });
   if (canTakeActive(state, event.run_id)) {
@@ -562,7 +607,8 @@ function upsertItem(state: SessionState, item: TimelineItem): SessionState {
   const items = state.items.slice();
   const index = items.findIndex((current) => current.id === item.id);
   if (index >= 0) {
-    items[index] = { ...items[index], ...item };
+    const current = items[index];
+    items[index] = current.kind === item.kind ? ({ ...current, ...item } as TimelineItem) : item;
   } else {
     items.push(item);
   }
@@ -633,6 +679,15 @@ function mergeApprovalCalls(current: ApprovalToolCall[], incoming: ApprovalToolC
     byId.set(call.id, { ...byId.get(call.id), ...call });
   }
   return [...byId.values()];
+}
+
+/** 读出时间线上已有审批卡片的 kind。 */
+function existingApprovalKind(state: SessionState, approvalId: string): ApprovalKind | undefined {
+  const item = state.items.find(
+    (current): current is Extract<TimelineItem, { kind: "approval" }> =>
+      current.kind === "approval" && current.approvalId === approvalId,
+  );
+  return item?.approvalKind;
 }
 
 function existingApprovalCalls(state: SessionState, approvalId: string): ApprovalToolCall[] {

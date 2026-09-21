@@ -149,6 +149,9 @@ func (executor *Executor) Edit(ctx context.Context, cwd string, input EditInput)
 		if err := executor.FS.WriteFile(absolutePath, finalContent, 0o644); err != nil {
 			return ToolResult{}, fmt.Errorf("Could not edit file: %s. %s.", input.Path, formatFileError(err))
 		}
+		if err := applyEditGuard(executor.FS, executor.Lint, absolutePath, content, string(finalContent), true); err != nil {
+			return ToolResult{}, err
+		}
 		if err := contextOperationError(ctx); err != nil {
 			return ToolResult{}, err
 		}

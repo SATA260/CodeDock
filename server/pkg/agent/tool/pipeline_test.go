@@ -89,6 +89,21 @@ func TestPipelineShortCircuit(t *testing.T) {
 			in:   PipelineInput{Default: EffectAsk, HasAgentEffect: true, AgentEffect: EffectAllow, Approval: ApprovalManual, Approved: true},
 			want: EffectDeny,
 		},
+		{
+			name: "locked ask yolo executes",
+			in:   PipelineInput{Default: EffectAsk, Bound: true, LockedAsk: true, HasAgentEffect: true, AgentEffect: EffectAllow, Approval: ApprovalYolo},
+			want: EffectAllow,
+		},
+		{
+			name: "locked ask ignores agent allow in manual",
+			in:   PipelineInput{Default: EffectAsk, Bound: true, LockedAsk: true, HasAgentEffect: true, AgentEffect: EffectAllow, Approval: ApprovalManual},
+			want: EffectAsk,
+		},
+		{
+			name: "locked ask approved executes",
+			in:   PipelineInput{Default: EffectAsk, Bound: true, LockedAsk: true, Approval: ApprovalManual, Approved: true},
+			want: EffectAllow,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 )
 
 const getRun = `-- name: GetRun :one
-SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at FROM runs
+SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at, snapshot_oid, harness FROM runs
 WHERE id = ?
 `
 
@@ -30,6 +30,8 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 		&i.CancelRequested,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.SnapshotOid,
+		&i.Harness,
 	)
 	return i, err
 }
@@ -40,7 +42,7 @@ INSERT INTO runs (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at
+RETURNING id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at, snapshot_oid, harness
 `
 
 type InsertRunParams struct {
@@ -84,13 +86,15 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (Run, erro
 		&i.CancelRequested,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.SnapshotOid,
+		&i.Harness,
 	)
 	return i, err
 }
 
 const listRecoverableRuns = `-- name: ListRecoverableRuns :many
-SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at FROM runs
-WHERE status IN ('queued', 'loading_context', 'running_llm', 'executing_tools')
+SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at, snapshot_oid, harness FROM runs
+WHERE status IN ('queued', 'loading_context', 'running_llm', 'executing_tools', 'verifying', 'evaluating')
 ORDER BY id
 `
 
@@ -115,6 +119,8 @@ func (q *Queries) ListRecoverableRuns(ctx context.Context) ([]Run, error) {
 			&i.CancelRequested,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.SnapshotOid,
+			&i.Harness,
 		); err != nil {
 			return nil, err
 		}
@@ -130,7 +136,7 @@ func (q *Queries) ListRecoverableRuns(ctx context.Context) ([]Run, error) {
 }
 
 const listSessionRuns = `-- name: ListSessionRuns :many
-SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at FROM runs
+SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at, snapshot_oid, harness FROM runs
 WHERE session_id = ?
 ORDER BY id
 `
@@ -156,6 +162,8 @@ func (q *Queries) ListSessionRuns(ctx context.Context, sessionID string) ([]Run,
 			&i.CancelRequested,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.SnapshotOid,
+			&i.Harness,
 		); err != nil {
 			return nil, err
 		}
@@ -171,7 +179,7 @@ func (q *Queries) ListSessionRuns(ctx context.Context, sessionID string) ([]Run,
 }
 
 const listWaitingApprovalRuns = `-- name: ListWaitingApprovalRuns :many
-SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at FROM runs
+SELECT id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at, snapshot_oid, harness FROM runs
 WHERE status = 'waiting_approval'
 ORDER BY id
 `
@@ -197,6 +205,8 @@ func (q *Queries) ListWaitingApprovalRuns(ctx context.Context) ([]Run, error) {
 			&i.CancelRequested,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.SnapshotOid,
+			&i.Harness,
 		); err != nil {
 			return nil, err
 		}
@@ -215,7 +225,7 @@ const updateRun = `-- name: UpdateRun :one
 UPDATE runs
 SET status = ?, current_turn_id = ?, stop_reason = ?, cancel_requested = ?, started_at = ?, finished_at = ?
 WHERE id = ?
-RETURNING id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at
+RETURNING id, session_id, trigger_message_id, mode, config, status, current_turn_id, stop_reason, cancel_requested, started_at, finished_at, snapshot_oid, harness
 `
 
 type UpdateRunParams struct {
@@ -251,6 +261,8 @@ func (q *Queries) UpdateRun(ctx context.Context, arg UpdateRunParams) (Run, erro
 		&i.CancelRequested,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.SnapshotOid,
+		&i.Harness,
 	)
 	return i, err
 }

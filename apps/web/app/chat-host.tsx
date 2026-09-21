@@ -1,8 +1,12 @@
 "use client";
 
+import { GitClient } from "@codedock/core/git";
 import { ChatPage, type SessionEngine } from "@codedock/views/chat";
+import { GitProvider } from "@codedock/views/git";
 import { usePathname, useRouter } from "next/navigation";
+import { useMemo } from "react";
 
+import { apiBase } from "@/lib/env";
 import { rememberSession } from "@/lib/session";
 
 // ChatHost 解析对话路径并把导航收成回调；views 不知道具体 URL。
@@ -13,26 +17,33 @@ export function ChatHost() {
   if (parsed.sessionId && parsed.engine === "agent") {
     rememberSession(parsed.sessionId);
   }
+  const gitSessionId = parsed.engine === "agent" ? parsed.sessionId : undefined;
+  const git = useMemo(
+    () => new GitClient({ baseUrl: apiBase, sessionId: gitSessionId }),
+    [gitSessionId],
+  );
 
   return (
-    <ChatPage
-      sessionId={parsed.sessionId}
-      engine={parsed.engine}
-      brandSrc="/brand/codedock-berth-mark.svg"
-      codexIconSrc="/brand/codex-app-icon.png"
-      claudeIconSrc="/brand/claude-app-icon.svg"
-      onOpenSession={(id, engine = parsed.engine ?? "agent") => {
-        const path = pathFor(id, engine);
-        if (pathname !== path) {
-          router.push(path);
-        }
-      }}
-      onNewConversation={() => {
-        if (pathname !== "/") {
-          router.push("/");
-        }
-      }}
-    />
+    <GitProvider client={git} sessionId={gitSessionId}>
+      <ChatPage
+        sessionId={parsed.sessionId}
+        engine={parsed.engine}
+        brandSrc="/brand/codedock-berth-mark.svg"
+        codexIconSrc="/brand/codex-app-icon.png"
+        claudeIconSrc="/brand/claude-app-icon.svg"
+        onOpenSession={(id, engine = parsed.engine ?? "agent") => {
+          const path = pathFor(id, engine);
+          if (pathname !== path) {
+            router.push(path);
+          }
+        }}
+        onNewConversation={() => {
+          if (pathname !== "/") {
+            router.push("/");
+          }
+        }}
+      />
+    </GitProvider>
   );
 }
 

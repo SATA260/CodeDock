@@ -3,6 +3,7 @@
 import { ChevronDownIcon, WrenchIcon } from "lucide-react";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
+import { LiveStatus } from "./live-status.tsx";
 import { cn } from "../lib/cn.ts";
 import { formatJSON } from "../lib/json.ts";
 import {
@@ -13,12 +14,17 @@ import {
 
 export type ToolState = "pending" | "running" | "completed" | "error" | "denied";
 
+// isLiveToolState 判断工具是否仍在排队或执行，需要动态状态文案。
+function isLiveToolState(state: ToolState): boolean {
+  return state === "pending" || state === "running";
+}
+
 const stateLabel: Record<ToolState, string> = {
-  pending: "待执行",
-  running: "执行中",
-  completed: "已完成",
-  error: "失败",
-  denied: "已拒绝",
+  pending: "Pending",
+  running: "Running",
+  completed: "Done",
+  error: "Failed",
+  denied: "Denied",
 };
 
 type OpenContextValue = {
@@ -55,10 +61,12 @@ export function ToolGroup({
 export function ToolGroupHeader({
   count,
   state,
+  live = false,
   className,
 }: {
   count: number;
   state: ToolState;
+  live?: boolean;
   className?: string;
 }) {
   const ctx = useContext(ToolGroupContext);
@@ -70,8 +78,10 @@ export function ToolGroupHeader({
       )}
     >
       <WrenchIcon className="size-3.5" />
-      <span>{count === 1 ? "调用了 1 个工具" : `调用了 ${count} 个工具`}</span>
-      <span className="text-muted-foreground/70">{stateLabel[state]}</span>
+      <span>{count === 1 ? "Used 1 tool" : `Used ${count} tools`}</span>
+      <span className="text-muted-foreground/70">
+        <LiveStatus active={live && isLiveToolState(state)}>{stateLabel[state]}</LiveStatus>
+      </span>
       <ChevronDownIcon
         className={cn("size-3.5 transition-transform", ctx?.isOpen && "rotate-180")}
       />
@@ -116,10 +126,12 @@ export function Tool({
 export function ToolHeader({
   type,
   state,
+  live = false,
   className,
 }: {
   type: string;
   state: ToolState;
+  live?: boolean;
   className?: string;
 }) {
   const name = type.startsWith("tool-") ? type.slice(5) : type;
@@ -132,7 +144,7 @@ export function ToolHeader({
       )}
     >
       <span className="font-mono text-accent-foreground">{name}</span>
-      <span>{stateLabel[state]}</span>
+      <LiveStatus active={live && isLiveToolState(state)}>{stateLabel[state]}</LiveStatus>
       <ChevronDownIcon
         className={cn("size-3.5 transition-transform", ctx?.isOpen && "rotate-180")}
       />
@@ -148,11 +160,11 @@ export function ToolContent({ children, className }: { children: ReactNode; clas
 
 export function ToolInput({ input }: { input: unknown }) {
   if (input == null) {
-    return <p className="text-[11px] leading-4 text-muted-foreground/70">无参数</p>;
+    return <p className="text-[11px] leading-4 text-muted-foreground/70">No arguments</p>;
   }
   return (
     <div className="space-y-1">
-      <div className="text-[11px] leading-4 text-muted-foreground/70">参数</div>
+      <div className="text-[11px] leading-4 text-muted-foreground/70">Arguments</div>
       <pre className="overflow-x-auto rounded-md bg-muted/60 p-2 font-mono text-xs leading-5 text-muted-foreground">
         {formatJSON(input)}
       </pre>
@@ -170,7 +182,7 @@ export function ToolOutput({
   if (errorText) {
     return (
       <div className="space-y-1">
-        <div className="text-[11px] leading-4 text-destructive">错误</div>
+        <div className="text-[11px] leading-4 text-destructive">Error</div>
         <p className="text-xs leading-5 text-destructive">{errorText}</p>
       </div>
     );
@@ -180,7 +192,7 @@ export function ToolOutput({
   }
   return (
     <div className="space-y-1">
-      <div className="text-[11px] leading-4 text-muted-foreground/70">输出</div>
+      <div className="text-[11px] leading-4 text-muted-foreground/70">Output</div>
       <pre className="overflow-x-auto rounded-md bg-muted/60 p-2 font-mono text-xs leading-5 text-foreground/80">
         {formatJSON(output)}
       </pre>

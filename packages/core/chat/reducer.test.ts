@@ -182,6 +182,20 @@ test("hydrate interleaves turns instead of grouping users then assistants", () =
   ]);
 });
 
+test("run.failed keeps a public model error on the terminal row", () => {
+  const state = applyEvent(
+    emptyState(),
+    ev({
+      seq: 1,
+      type: "run.failed",
+      payload: { status: "failed", stop_reason: "model_error", error: "Service is too busy." },
+    }),
+  );
+  const row = state.items.find((item) => item.kind === "terminal");
+  assert.equal(row?.kind === "terminal" && row.error, "Service is too busy.");
+  assert.equal(row?.kind === "terminal" && row.stopReason, "model_error");
+});
+
 test("applyEvent skips duplicate seq on reconnect", () => {
   let state = emptyState();
   const created = ev({
@@ -604,6 +618,43 @@ test("decodeText and parseDelta accept backend payloads", () => {
   assert.equal(decodeText('{"text":""}'), "");
   assert.deepEqual(parseDelta({ text: "x" }), { kind: "text", text: "x" });
   assert.equal(parseDelta({ id: "c1", name: "ping" }).kind, "tool");
+});
+
+test("verify events become timeline cards; skipped verify and evaluate do not", () => {
+  let state = applyEvent(
+    emptyState(),
+    ev({ seq: 1, type: "run.state_changed", payload: { from: "running_llm", to: "verifying", reason: "" } }),
+  );
+  assert.equal(state.runStatus, "verifying");
+  state = applyEvent(state, ev({ seq: 2, type: "verify.started", payload: { round: 1 } }));
+  state = applyEvent(state, ev({ seq: 3, type: "verify.result", payload: { status: "passed", round: 1 } }));
+  const verify = state.items.find((item) => item.kind === "verify");
+  assert.ok(verify && verify.kind === "verify" && verify.status === "passed");
+
+  let skipped = applyEvent(emptyState(), ev({ seq: 1, type: "verify.started", payload: { round: 1 } }));
+  skipped = applyEvent(skipped, ev({ seq: 2, type: "verify.skipped", payload: { skipped: true, round: 1 } }));
+  assert.equal(skipped.items.some((item) => item.kind === "verify"), false);
+
+  let evaluate = applyEvent(emptyState(), ev({ seq: 1, type: "evaluate.started", payload: { round: 1 } }));
+  evaluate = applyEvent(
+    evaluate,
+    ev({ seq: 2, type: "evaluate.result", payload: { verdict: "pass", summary: "没有可审的代码改动，跳过复审。" } }),
+  );
+  assert.equal(evaluate.items.some((item) => item.kind === "evaluate"), false);
+});
+
+test("verify approval cards keep kind for override buttons", () => {
+  let state = applyEvent(
+    emptyState(),
+    ev({
+      seq: 1,
+      type: "tool.approval_required",
+      payload: { approval_id: "a1", kind: "verify", tool_calls: [{ id: "verify", name: "verify" }] },
+    }),
+  );
+  const item = state.items.find((current) => current.kind === "approval");
+  assert.ok(item && item.kind === "approval");
+  assert.equal(item.approvalKind, "verify");
 });
 
 test("assistant.completed with encoded empty text does not keep a JSON blob", () => {

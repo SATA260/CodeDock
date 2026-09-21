@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { LiveStatus } from "./live-status.tsx";
 import { cn } from "../lib/cn.ts";
 import {
   Collapsible,
@@ -76,7 +77,9 @@ export function ReasoningTrigger({
       {children ?? (
         <>
           <BrainIcon className="size-3.5" />
-          <span>{ctx?.isStreaming ? "思考中…" : "思考过程"}</span>
+          <LiveStatus active={Boolean(ctx?.isStreaming)}>
+            {ctx?.isStreaming ? "Thinking" : "Reasoning"}
+          </LiveStatus>
           <ChevronDownIcon
             className={cn("size-3.5 transition-transform", ctx?.isOpen && "rotate-180")}
           />

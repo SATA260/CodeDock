@@ -236,7 +236,7 @@ func (a *API) ClaudeCreateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ClaudeSessionResponse{Session: mapClaudeSession(sess)})
 }
 
-// ClaudeListSessions 从本机 Claude 列对话。
+// ClaudeListSessions 从本机 Claude 列未归档对话。
 func (a *API) ClaudeListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := claude.ListSessions()
 	if err != nil {
@@ -271,7 +271,7 @@ func (a *API) ClaudeRenameSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, claudeOK())
 }
 
-// ClaudeArchiveSession 归档，之后不能再向 Claude Code 开回合。
+// ClaudeArchiveSession 按官方 tagSession 归档，之后不能再向 Claude Code 开回合。
 func (a *API) ClaudeArchiveSession(w http.ResponseWriter, r *http.Request) {
 	if err := claude.Archive(claudeSessionID(r)); err != nil {
 		writeError(w, err)

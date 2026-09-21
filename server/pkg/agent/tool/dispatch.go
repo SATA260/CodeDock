@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,6 +42,7 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 
 	prepared := make([]preparedCall, 0, len(inv.Calls))
 	var approvalCalls []Call
+	needsExternal := false
 	for i, call := range inv.Calls {
 		if _, ok := denied[call.ID]; ok {
 			prepared = append(prepared, preparedCall{
@@ -51,10 +53,13 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 			})
 			continue
 		}
-		item, wait, updated := prepareCall(ctx, inv, call, approved)
+		item, wait, updated, outside := prepareCall(ctx, inv, call, approved)
 		inv.Calls[i] = updated
 		if wait {
 			approvalCalls = append(approvalCalls, updated)
+			if outside {
+				needsExternal = true
+			}
 			continue
 		}
 		prepared = append(prepared, item)
@@ -66,9 +71,10 @@ func Dispatch(ctx context.Context, inv Invocation) (DispatchResult, error) {
 	if len(approvalCalls) > 0 {
 		emit(inv, "approval_required", approvalCalls[0], max(1, approvalCalls[0].Attempt), nil)
 		return DispatchResult{
-			WaitingApproval: true,
-			PendingCalls:    append([]Call(nil), inv.Calls...),
-			ApprovalCalls:   approvalCalls,
+			WaitingApproval:     true,
+			NeedsExternalReview: needsExternal,
+			PendingCalls:        append([]Call(nil), inv.Calls...),
+			ApprovalCalls:       approvalCalls,
 		}, nil
 	}
 
@@ -86,24 +92,18 @@ type preparedCall struct {
 	softFail bool
 }
 
-// prepareCall 查找工具并做参数、权限、审批校验；wait=true 表示需先审批。
+// prepareCall 查找工具并做参数、权限、审批校验；wait=true 表示需先审批，outside=true 表示因离开工作区而待批。
 // 查不到、参数错、权限不足、插件否决都写成失败 Result，不返回 error。
 // 未批准的调用在流水线之后再走 tools/pre-execute，可改参、否决或抬到审批。
-func prepareCall(ctx context.Context, inv Invocation, call Call, approved map[string]struct{}) (preparedCall, bool, Call) {
+func prepareCall(ctx context.Context, inv Invocation, call Call, approved map[string]struct{}) (preparedCall, bool, Call, bool) {
 	emit(inv, "call_started", call, max(1, call.Attempt), nil)
 	item, err := inv.Registry.Get(Reference{Name: call.Name})
 	if err != nil {
-		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false, call
+		return preparedCall{call: call, result: failResult(call, err.Error()), skip: true}, false, call, false
 	}
 	def := item.Definition()
 	bound := Bound(inv.BoundNames, call.Name)
-	toolInput := Input{
-		SessionID:     inv.SessionID,
-		RunID:         inv.RunID,
-		TurnID:        inv.TurnID,
-		WorkspaceRoot: inv.WorkspaceRoot,
-		Call:          call,
-	}
+	toolInput := invocationInput(inv, call)
 	inspectErr := validateArguments(def, call.Arguments)
 	outside := false
 	if inspectErr == nil {
@@ -123,6 +123,10 @@ func prepareCall(ctx context.Context, inv Invocation, call Call, approved map[st
 	}
 	_, hasAgent := inv.Effects[def.Name]
 	_, already := approved[call.ID]
+	locked := false
+	if locker, ok := item.(AskLocker); ok {
+		locked = locker.LockAsk(ctx, toolInput)
+	}
 	effect := Pipeline(PipelineInput{
 		Default:          defaultEffect,
 		InspectErr:       inspectErr,
@@ -132,6 +136,7 @@ func prepareCall(ctx context.Context, inv Invocation, call Call, approved map[st
 		HasAgentEffect:   hasAgent,
 		Approval:         inv.Approval,
 		Approved:         already,
+		LockedAsk:        locked,
 	})
 	if effect == EffectDeny {
 		msg := "permission denied"
@@ -141,22 +146,22 @@ func prepareCall(ctx context.Context, inv Invocation, call Call, approved map[st
 		if inspectErr != nil {
 			msg = inspectErr.Error()
 		}
-		return preparedCall{call: call, result: failResult(call, msg), skip: true}, false, call
+		return preparedCall{call: call, result: failResult(call, msg), skip: true}, false, call, outside
 	}
 	if !already {
 		updated, denied, ask := applyPreExecute(ctx, inv, call)
 		call = updated
 		if denied {
-			return preparedCall{call: call, result: failResult(call, "denied by plugin"), skip: true}, false, call
+			return preparedCall{call: call, result: failResult(call, "denied by plugin"), skip: true}, false, call, outside
 		}
 		if ask {
-			return preparedCall{}, true, call
+			return preparedCall{}, true, call, outside
 		}
 	}
 	if effect == EffectAsk {
-		return preparedCall{}, true, call
+		return preparedCall{}, true, call, outside
 	}
-	return preparedCall{call: call, tool: item}, false, call
+	return preparedCall{call: call, tool: item}, false, call, outside
 }
 
 // applyPreExecute 在审批判断前递工具入参。已批准的调用不会走到这里。
@@ -246,6 +251,7 @@ func runSerial(ctx context.Context, inv Invocation, items []preparedCall) (Dispa
 			continue
 		}
 		result, err := executeOne(ctx, inv, item)
+		bindActivePlan(&inv, result)
 		results = append(results, result)
 		if isInterrupt(err) {
 			return DispatchResult{Results: appendSkippedResults(results, items[i+1:])}, err
@@ -308,13 +314,7 @@ func executeOne(ctx context.Context, inv Invocation, item preparedCall) (Result,
 			}
 		}
 		emit(inv, "execution_started", item.call, attempt, nil)
-		result, err := item.tool.Execute(ctx, Input{
-			SessionID:     inv.SessionID,
-			RunID:         inv.RunID,
-			TurnID:        inv.TurnID,
-			WorkspaceRoot: inv.WorkspaceRoot,
-			Call:          item.call,
-		})
+		result, err := item.tool.Execute(ctx, invocationInput(inv, item.call))
 		if inv.Gate != nil {
 			inv.Gate.Release()
 		}
@@ -433,6 +433,43 @@ func validateArguments(def Definition, raw json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// invocationInput 把调度上下文摊成单次工具入参。
+func invocationInput(inv Invocation, call Call) Input {
+	return Input{
+		SessionID:      inv.SessionID,
+		RunID:          inv.RunID,
+		TurnID:         inv.TurnID,
+		WorkspaceRoot:  inv.WorkspaceRoot,
+		ActivePlan:     inv.ActivePlan,
+		MentionedPlans: append([]string(nil), inv.MentionedPlans...),
+		AllowListAll:   inv.AllowListAll,
+		Call:           call,
+	}
+}
+
+// bindActivePlan 本批成功的计划读写会立刻更新可见范围，供后续串行调用使用。
+func bindActivePlan(inv *Invocation, result Result) {
+	if inv == nil || !result.Success {
+		return
+	}
+	switch result.Name {
+	case "plan_write", "plan_read", "plan_pass":
+	default:
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(result.Output, &body) != nil {
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		return
+	}
+	inv.ActivePlan = name
 }
 
 // failResult 构造一条失败的工具结果。

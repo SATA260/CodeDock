@@ -17,12 +17,14 @@ export type TreeAction = {
   onDiscard?: (info: { name: string; paths: string[] }) => void;
 };
 
+// FileTree 按目录展开改动文件；compact 给侧栏用更小行高和字号。
 export function FileTree({
   files,
   labelOf,
   empty,
   activePath,
   busy,
+  compact = false,
   action,
   onPreview,
 }: {
@@ -31,12 +33,17 @@ export function FileTree({
   empty: string;
   activePath?: string | null;
   busy?: boolean;
+  compact?: boolean;
   action?: TreeAction;
   onPreview?: (path: string) => void;
 }) {
   const tree = useMemo(() => buildFileTree(files), [files]);
   if (files.length === 0) {
-    return <p className="px-3 py-3 text-xs text-muted-foreground">{empty}</p>;
+    return (
+      <p className={compact ? "px-2 py-1 text-[11px] text-muted-foreground" : "px-3 py-3 text-xs text-muted-foreground"}>
+        {empty}
+      </p>
+    );
   }
   return (
     <ul>
@@ -45,6 +52,7 @@ export function FileTree({
           key={node.path}
           node={node}
           depth={0}
+          compact={compact}
           activePath={activePath}
           busy={busy}
           labelOf={labelOf}
@@ -59,6 +67,7 @@ export function FileTree({
 function TreeNode({
   node,
   depth,
+  compact,
   activePath,
   busy,
   labelOf,
@@ -67,6 +76,7 @@ function TreeNode({
 }: {
   node: FileTreeNode;
   depth: number;
+  compact: boolean;
   activePath?: string | null;
   busy?: boolean;
   labelOf: (file: FileStatus) => string;
@@ -79,7 +89,7 @@ function TreeNode({
   const expandable = !file || node.children.length > 0;
   const previewable = Boolean(file && isPreviewablePath(file.path));
   const active = Boolean(file && activePath === file.path);
-  const padding = ROW_PAD + depth * DEPTH_STEP;
+  const padding = (compact ? 8 : ROW_PAD) + depth * (compact ? 14 : DEPTH_STEP);
 
   return (
     <li>
@@ -88,7 +98,8 @@ function TreeNode({
         tabIndex={previewable || expandable ? 0 : undefined}
         aria-expanded={expandable ? open : undefined}
         className={cn(
-          "group relative flex items-center gap-1.5 py-0.5 pr-2 text-sm hover:bg-accent/60",
+          "group relative flex items-center gap-1.5 py-0.5 pr-2 hover:bg-accent/60",
+          compact ? "text-[11px]" : "text-sm",
           active && "bg-accent before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-zinc-400",
           (previewable || expandable) && "cursor-pointer",
         )}
@@ -118,28 +129,28 @@ function TreeNode({
       >
         {expandable ? (
           <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground" aria-hidden>
-            {open ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
+            {open ? <ChevronDownIcon className={compact ? "size-3" : "size-3.5"} /> : <ChevronRightIcon className={compact ? "size-3" : "size-3.5"} />}
           </span>
         ) : (
           <span className="size-4 shrink-0" aria-hidden />
         )}
         {previewable ? (
-          <File className="size-3.5 shrink-0 text-muted-foreground" />
+          <File className={cn("shrink-0 text-muted-foreground", compact ? "size-3" : "size-3.5")} />
         ) : open && expandable ? (
-          <FolderOpen className="size-3.5 shrink-0 text-amber-500/80" />
+          <FolderOpen className={cn("shrink-0 text-amber-500/80", compact ? "size-3" : "size-3.5")} />
         ) : (
-          <Folder className="size-3.5 shrink-0 text-amber-500/80" />
+          <Folder className={cn("shrink-0 text-amber-500/80", compact ? "size-3" : "size-3.5")} />
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-[13px]">{node.name}</span>
+          <span className={cn("block truncate font-mono", compact ? "text-[11px]" : "text-[13px]")}>{node.name}</span>
           {file?.orig_path ? (
-            <span className="block truncate text-[11px] text-muted-foreground">来自 {file.orig_path}</span>
+            <span className="block truncate text-[10px] text-muted-foreground">来自 {file.orig_path}</span>
           ) : null}
         </span>
         {file ? (
-          <span className="shrink-0 text-[11px] text-muted-foreground">{labelOf(file)}</span>
+          <span className={cn("shrink-0 text-muted-foreground", compact ? "text-[10px]" : "text-[11px]")}>{labelOf(file)}</span>
         ) : (
-          <span className="shrink-0 text-[11px] text-muted-foreground">{paths.length}</span>
+          <span className={cn("shrink-0 text-muted-foreground", compact ? "text-[10px]" : "text-[11px]")}>{paths.length}</span>
         )}
         {action ? (
           <button
@@ -152,7 +163,7 @@ function TreeNode({
               action.onRun(paths);
             }}
           >
-            {action.kind === "stage" ? <Plus className="size-3.5" /> : <Minus className="size-3.5" />}
+            {action.kind === "stage" ? <Plus className={compact ? "size-3" : "size-3.5"} /> : <Minus className={compact ? "size-3" : "size-3.5"} />}
           </button>
         ) : null}
         {action?.onDiscard ? (
@@ -166,7 +177,7 @@ function TreeNode({
               action.onDiscard?.({ name: node.name, paths });
             }}
           >
-            <Undo2 className="size-3.5" />
+            <Undo2 className={compact ? "size-3" : "size-3.5"} />
           </button>
         ) : null}
       </div>
@@ -177,6 +188,7 @@ function TreeNode({
               key={child.path}
               node={child}
               depth={depth + 1}
+              compact={compact}
               activePath={activePath}
               busy={busy}
               labelOf={labelOf}

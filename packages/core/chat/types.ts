@@ -10,10 +10,18 @@ export type RunStatus =
   | "running_llm"
   | "executing_tools"
   | "waiting_approval"
+  | "verifying"
+  | "evaluating"
   | "cancelling"
   | "completed"
   | "failed"
   | "cancelled";
+
+export type ApprovalKind = "tools" | "verify" | "evaluate";
+
+export type OverrideAction = "accept" | "retry" | "abort";
+
+export type RestoreMode = "restore_files" | "restore_messages" | "restore_all";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired";
 
@@ -39,9 +47,23 @@ export type EventType =
   | "turn.completed"
   | "run.completed"
   | "run.failed"
-  | "run.cancelled";
+  | "run.cancelled"
+  | "verify.started"
+  | "verify.result"
+  | "verify.skipped"
+  | "evaluate.started"
+  | "evaluate.result"
+  | "snapshot.skipped";
 
-export type ThinkingPhase = "queued" | "loading_context" | "running_llm";
+export type ThinkingPhase =
+  | "queued"
+  | "loading_context"
+  | "running_llm"
+  | "executing_tools"
+  | "waiting_approval"
+  | "verifying"
+  | "evaluating"
+  | "cancelling";
 
 export type ToolItemState =
   | "pending"
@@ -114,6 +136,8 @@ export interface Approval {
   scope: ApprovalScope;
   status: ApprovalStatus;
   expires_at: string;
+  kind?: ApprovalKind;
+  override?: OverrideAction;
 }
 
 export interface AgentEvent<T = unknown> {
@@ -171,6 +195,7 @@ export interface ToolCallPayload {
 export interface ApprovalRequiredPayload {
   approval_id: string;
   tool_calls: ApprovalToolCall[];
+  kind?: ApprovalKind;
 }
 
 export interface ApprovalDecision {
@@ -187,6 +212,23 @@ export interface ApprovalDecidedPayload {
   reason?: string;
   decisions?: ApprovalDecision[];
   tool_calls?: ApprovalToolCall[];
+  kind?: ApprovalKind;
+  override?: OverrideAction;
+}
+
+export interface VerifyEventPayload {
+  round?: number;
+  status?: "passed" | "failed" | "cannot_run";
+  output?: string;
+  skipped?: boolean;
+  fingerprint?: string;
+}
+
+export interface EvaluateEventPayload {
+  round?: number;
+  verdict?: "pass" | "needs_work" | "escalate";
+  summary?: string;
+  issues?: Array<{ file_path?: string; line?: number; category?: string; reason?: string }>;
 }
 
 export interface ContextCompactedPayload {
@@ -197,6 +239,7 @@ export interface ContextCompactedPayload {
 export interface RunTerminalPayload {
   status: RunStatus;
   stop_reason?: string;
+  error?: string;
 }
 
 export interface CreateSessionRequest {
@@ -223,6 +266,8 @@ export const RECOVERABLE_RUN_STATUSES: readonly RunStatus[] = [
   "loading_context",
   "running_llm",
   "executing_tools",
+  "verifying",
+  "evaluating",
 ];
 
 export function isRecoverableRun(status: string): boolean {
@@ -242,10 +287,11 @@ export interface StartRunResponse {
 }
 
 export interface DecideApprovalRequest {
-  decisions: ApprovalDecision[];
+  decisions?: ApprovalDecision[];
   scope?: ApprovalScope;
   actor_id?: string;
   reason?: string;
+  override?: OverrideAction;
 }
 
 export type TimelineItem =
@@ -286,13 +332,32 @@ export type TimelineItem =
       error?: string;
       seq: number;
     }
-  | {
+    | {
       kind: "approval";
       id: string;
       runId: string;
       approvalId: string;
       toolCalls: ApprovalToolCall[];
       status: ApprovalStatus;
+      approvalKind?: ApprovalKind;
+      seq: number;
+    }
+    | {
+      kind: "verify";
+      id: string;
+      runId: string;
+      status: "started" | "passed" | "failed" | "skipped" | "cannot_run";
+      output?: string;
+      round?: number;
+      seq: number;
+    }
+    | {
+      kind: "evaluate";
+      id: string;
+      runId: string;
+      status: "started" | "pass" | "needs_work" | "escalate";
+      summary?: string;
+      round?: number;
       seq: number;
     }
   | {
@@ -309,6 +374,7 @@ export type TimelineItem =
       runId: string;
       status: RunStatus;
       stopReason?: string;
+      error?: string;
       seq: number;
     };
 
@@ -324,6 +390,11 @@ export const THINKING_PHASES: readonly ThinkingPhase[] = [
   "queued",
   "loading_context",
   "running_llm",
+  "executing_tools",
+  "waiting_approval",
+  "verifying",
+  "evaluating",
+  "cancelling",
 ];
 
 export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = [

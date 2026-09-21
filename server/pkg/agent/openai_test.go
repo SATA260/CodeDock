@@ -4,6 +4,7 @@ import (
 	"codedock/pkg/agent/tool"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,6 +187,44 @@ func TestCompactWithOpenAI(t *testing.T) {
 	idx, err := CompactIndex(context.Background(), model, "# index")
 	if err != nil || idx != "short" {
 		t.Fatal(idx, err)
+	}
+}
+
+func TestPublicModelError(t *testing.T) {
+	got := PublicModelError(fmt.Errorf(`openai status 503: {"error":{"message":"Service is too busy.","type":"service_unavailable_error"}}`))
+	if got != "Service is too busy." {
+		t.Fatalf("got %q", got)
+	}
+	if PublicModelError(nil) != "" {
+		t.Fatal("nil")
+	}
+}
+
+func TestStreamWithRetryThenOK(t *testing.T) {
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if hits < 2 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"message":"Service is too busy."}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+	opts, _ := json.Marshal(map[string]string{"api_key": "k", "base_url": server.URL})
+	stream, err := streamWithRetry(context.Background(), Chat{
+		Model: ModelConfig{Provider: "openai", Model: "gpt", Options: opts},
+	}, RetryConfig{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: 5 * time.Millisecond, Multiplier: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	result, err := stream.Result(context.Background())
+	if err != nil || DecodeText(result.Message.Content) != "ok" || hits != 2 {
+		t.Fatalf("result=%+v err=%v hits=%d", result, err, hits)
 	}
 }
 
