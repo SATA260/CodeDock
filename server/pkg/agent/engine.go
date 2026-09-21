@@ -116,6 +116,7 @@ func (e *Engine) Step(ctx context.Context, in StepInput) (StepResult, error) {
 
 // callLLM 占槽后压缩上下文、调模型，把流式增量写成 Fact，再产出 assistant 消息与下一步。
 // 逻辑：校验取消 → 超回合则有副作用先验证否则收束 → CompactIfNeeded + Stream → 收齐文本/工具调用 → 有 Tool 则下一步 llm_result。
+// 复审通过后的 wrap-up 回合清空工具表；模型空正文时用改动/验证/复审事实拼装。
 func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (StepResult, error) {
 	if err := ctx.Err(); err != nil {
 		return e.finish(ctx, in, finishInstructions(RunCancelled, StopCancelled)[0])
@@ -133,10 +134,18 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	if hist.Turn.Number <= 0 {
 		hist.Turn.Number = 1
 	}
+	wrapUp := in.Job.Phase == PhaseEvaluateResult || state.WrapUpPending
+	if wrapUp {
+		state.WrapUpPending = true
+		state.Status = RunRunningLLM
+	}
 	if limit := state.Config.Limits.MaxTurns; limit > 0 && hist.Turn.Number > limit {
 		state.ForceFinish = true
 		in.State = state
 		in.History = hist
+		if wrapUp {
+			return e.finish(ctx, in, finishInstructions(RunCompleted, StopMaxTurns)[0])
+		}
 		if state.HadSideEffects {
 			return e.runVerify(ctx, in)
 		}
@@ -166,6 +175,10 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	chat, err := Build(ctx, Prompt{Run: hist.Run, Turn: hist.Turn, Context: snapshot})
 	if err != nil {
 		return StepResult{}, err
+	}
+	if wrapUp {
+		chat.Tools = nil
+		chat.Messages = append(chat.Messages, Message{Role: RoleDeveloper, Content: EncodeText(wrapUpDeveloperNote)})
 	}
 	chat.SessionID = state.SessionID
 	chat.RunID = state.RunID
@@ -219,6 +232,12 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	assistant.SessionID = state.SessionID
 	assistant.RunID = ptrValue(state.RunID)
 	assistant.TurnID = state.TurnID
+	if wrapUp {
+		result.ToolCalls = nil
+		if strings.TrimSpace(DecodeText(assistant.Content)) == "" {
+			assistant.Content = EncodeText(composeWrapUpText(e, state, hist.Messages))
+		}
+	}
 	if len(assistant.Content) == 0 {
 		assistant.Content = EncodeText("")
 	}
@@ -241,7 +260,7 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 	if state.StepIndex <= 0 {
 		state.StepIndex = 1
 	}
-	if len(result.ToolCalls) > 0 {
+	if !wrapUp && len(result.ToolCalls) > 0 {
 		state.Checkpoint.Pending = result.ToolCalls
 		state.Checkpoint.TurnID = turnID
 		state.Checkpoint.Results = nil
@@ -458,13 +477,22 @@ func (e *Engine) finish(_ context.Context, in StepInput, inst Instruction) (Step
 	if state.StepIndex <= 0 {
 		state.StepIndex = 1
 	}
+	var messages []Message
+	facts := []Fact{{
+		Type:    TerminalEvent(payload.Status),
+		TurnID:  state.TurnID,
+		Payload: MarshalPayload(RunTerminalPayload{Status: payload.Status, StopReason: &payload.Reason}),
+	}}
+	if shouldComposeWrapUp(state, payload) {
+		text := composeWrapUpText(e, state, in.History.Messages)
+		msg, wrapFacts := wrapUpAssistantFacts(state, text)
+		messages = append(messages, msg)
+		facts = append(wrapFacts, facts...)
+	}
 	return StepResult{
-		State: state,
-		Facts: []Fact{{
-			Type:    TerminalEvent(payload.Status),
-			TurnID:  state.TurnID,
-			Payload: MarshalPayload(RunTerminalPayload{Status: payload.Status, StopReason: &payload.Reason}),
-		}},
+		State:    state,
+		Facts:    facts,
+		Messages: messages,
 	}, nil
 }
 

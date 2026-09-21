@@ -797,8 +797,13 @@ func (r *Runtime) RecoverRun(ctx context.Context, runID string) error {
 		}
 	}
 	if state.Status == pkgagent.RunEvaluating && len(job.Payload) == 0 {
-		job.Phase = pkgagent.PhaseVerifyResult
-		job.Payload = pkgagent.MarshalPayload(pkgagent.VerifyResult{Status: pkgagent.VerifyStatusPassed})
+		if reviewAlreadyPublished(state) {
+			job.Phase = pkgagent.PhaseEvaluateResult
+			job.Payload = pkgagent.MarshalPayload(pkgagent.EvaluationResult{Verdict: pkgagent.VerdictPass, Summary: state.LastEvaluateSummary})
+		} else {
+			job.Phase = pkgagent.PhaseVerifyResult
+			job.Payload = pkgagent.MarshalPayload(pkgagent.VerifyResult{Status: pkgagent.VerifyStatusPassed})
+		}
 	}
 	if row, ok, err := r.latestOpenStepJob(ctx, runID); err != nil {
 		return err
@@ -1083,10 +1088,18 @@ func recoverPhase(status pkgagent.RunStatus, state pkgagent.AgentState) pkgagent
 	case pkgagent.RunVerifying:
 		return pkgagent.PhaseLLMResult
 	case pkgagent.RunEvaluating:
+		if reviewAlreadyPublished(state) {
+			return pkgagent.PhaseEvaluateResult
+		}
 		return pkgagent.PhaseVerifyResult
 	default:
 		return pkgagent.PhaseUserInput
 	}
+}
+
+// reviewAlreadyPublished 复审结论已发出，恢复时不要再注入一次验证通过。
+func reviewAlreadyPublished(state pkgagent.AgentState) bool {
+	return state.WrapUpPending || strings.TrimSpace(state.LastEvaluateSummary) != ""
 }
 
 // checkpointHasDecision 判断 checkpoint 是否已有通过或拒绝的工具调用。

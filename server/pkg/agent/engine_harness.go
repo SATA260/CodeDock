@@ -85,6 +85,10 @@ func (e *Engine) runEvaluate(ctx context.Context, in StepInput) (StepResult, err
 	if result.Verdict == VerdictNeedsWork || result.Verdict == VerdictEscalate {
 		state.EvaluateRound = round
 	}
+	if strings.TrimSpace(result.Summary) != "" {
+		state.LastEvaluateSummary = result.Summary
+	}
+	leaveEvaluating(&state, result)
 
 	_ = e.appendFact(ctx, state.RunID, Fact{
 		Type:    EventEvaluateResult,
@@ -106,6 +110,22 @@ func (e *Engine) runEvaluate(ctx context.Context, in StepInput) (StepResult, err
 			Payload:   MarshalPayload(result),
 		},
 	}, nil
+}
+
+// leaveEvaluating 复审已有结论就离开 evaluating，避免结果已发出而 Run 仍显示 Reviewing。
+func leaveEvaluating(state *AgentState, result EvaluationResult) {
+	if state == nil {
+		return
+	}
+	switch result.Verdict {
+	case VerdictPass:
+		state.Status = RunRunningLLM
+		if !result.Skipped {
+			state.WrapUpPending = true
+		}
+	case VerdictNeedsWork:
+		state.Status = RunRunningLLM
+	}
 }
 
 // requestOverride 打开验证/复审人工单并停在 waiting_approval。
@@ -213,8 +233,13 @@ func rememberHarnessFingerprints(phase Phase, payload json.RawMessage, state Age
 		}
 	case PhaseEvaluateResult:
 		var result EvaluationResult
-		if json.Unmarshal(payload, &result) == nil && result.DiffFingerprint != "" {
-			state.LastEvaluateFingerprint = result.DiffFingerprint
+		if json.Unmarshal(payload, &result) == nil {
+			if result.DiffFingerprint != "" {
+				state.LastEvaluateFingerprint = result.DiffFingerprint
+			}
+			if strings.TrimSpace(result.Summary) != "" {
+				state.LastEvaluateSummary = result.Summary
+			}
 		}
 	case PhaseHumanOverride:
 		var item HumanOverridePayload

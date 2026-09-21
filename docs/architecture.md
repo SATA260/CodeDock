@@ -2,7 +2,7 @@
 
 本文档定义 CodeDock 当前的技术骨架。目录按能力拆分；Issue、Task、Review、Workspace 等业务目录不属于本项目的基础结构。
 
-Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。三个内置 Agent（ask / plan / agent）共用同一 Loop；审批走工具 → Agent 表 → 审批模式流水线。模型不再直接结束有副作用的任务：`HadSideEffects` 为真时必须经过 `verifying` 与 `evaluating`，通过才 `completed`。
+Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runtime 装上下文、调模型、执行 Tool，事件先落库再经 Bus 由 SSE 消费。三个内置 Agent（ask / plan / agent）共用同一 Loop；审批走工具 → Agent 表 → 审批模式流水线。模型不再直接结束有副作用的任务：`HadSideEffects` 为真时必须经过 `verifying` 与 `evaluating`，通过后再写一轮面向用户的收尾说明才 `completed`。
 
 ## 总体架构
 
@@ -279,7 +279,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 - 模型调用 `Stream` / 压缩：在函数内按 `ModelConfig.Provider` 创建
   - `fake`：读 `Model.Options` 脚本（多段 text / tool_calls、失败次数、可取消挂起、verify/evaluate 脚本），测试用
   - `openai`：OpenAI 兼容 HTTP（`BaseURL` + API Key）
-- 正确性工作流：`Brain` 在 `llm_result` 且无待批工具时，若 `HadSideEffects` 则发 `verify`，测试通过后再发 `evaluate`。状态含 `verifying` / `evaluating`。事件含 `verify.started` / `verify.result` / `verify.skipped` / `evaluate.started` / `evaluate.result` / `snapshot.skipped`
+- 正确性工作流：`Brain` 在 `llm_result` 且无待批工具时，若 `HadSideEffects` 则发 `verify`，测试通过后再发 `evaluate`，复审通过后再写一轮禁止工具的 wrap-up，然后才 `completed`。状态含 `verifying` / `evaluating`。事件含 `verify.started` / `verify.result` / `verify.skipped` / `evaluate.started` / `evaluate.result` / `snapshot.skipped`
 - `EvaluatorModel` 是独立复审模型；`SubagentModel` 是 explore 子代理模型。空则回落主模型
 - explore 小循环只绑 `read` / `grep` / `find` / `ls` / `memory_search`，有轮次、工具次数和超时预算
 - 会话级计划隔离：未点名不读 `.cursor` 下其他计划；`evaluate` 只用 `LoadPlanItems(workspace, ActivePlan)`

@@ -636,7 +636,7 @@ test("verify and evaluate events become timeline cards", () => {
   const verify = state.items.find((item) => item.kind === "verify");
   const evaluate = state.items.find((item) => item.kind === "evaluate");
   assert.ok(verify && verify.kind === "verify" && verify.status === "passed");
-  assert.ok(evaluate && evaluate.kind === "evaluate" && evaluate.status === "pass");
+  assert.ok(evaluate && evaluate.kind === "evaluate" && evaluate.status === "pass" && evaluate.summary === "ok");
 });
 
 test("verify approval cards keep kind for override buttons", () => {

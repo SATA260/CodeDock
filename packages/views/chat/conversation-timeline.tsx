@@ -213,7 +213,9 @@ function TimelineRow({
             {item.status === "started"
               ? "Reviewing"
               : item.status === "pass"
-                ? "Review passed"
+                ? item.summary
+                  ? `Review passed: ${item.summary}`
+                  : "Review passed"
                 : item.summary
                   ? `Review rejected: ${item.summary}`
                   : "Review requested more work"}

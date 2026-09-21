@@ -22,7 +22,7 @@ func TestComposeSystemPrompt(t *testing.T) {
 	if !strings.Contains(empty, "使用要求：\n- 用用户的语言回复") {
 		t.Fatalf("missing shared guidelines: %q", empty)
 	}
-	if !strings.Contains(empty, "- 回复尽量简洁\n- 涉及文件时写清路径") {
+	if !strings.Contains(empty, "- 回复尽量简洁\n- 涉及文件时写清路径\n- 当一轮不再调用工具时，先写清改了什么") {
 		t.Fatalf("missing default guidelines: %q", empty)
 	}
 	got := ComposeSystemPrompt("base", []tool.Definition{

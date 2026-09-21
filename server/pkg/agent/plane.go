@@ -62,6 +62,8 @@ type AgentState struct {
 	LastVerifySummary       string            // 最近一次验证输出，供复审对照
 	EvaluateRound           int               // 已完成的复审轮次
 	LastEvaluateFingerprint string            // 上一轮复审 diff 指纹
+	LastEvaluateSummary     string            // 最近一次复审摘要，供收工说明对照
+	WrapUpPending           bool              // 复审通过后正在写面向用户的收尾说明
 	ApprovalKind            ApprovalKind      // 当前等待的审批种类
 	OverrideAction          OverrideAction    // 人对验证/复审单的裁决
 	ActivePlan              string            // 本会话绑定的计划文件名；空表示尚未绑定

@@ -1008,6 +1008,15 @@ func TestRecoverPhaseHelpers(t *testing.T) {
 	if recoverPhase(pkgagent.RunExecutingTools, pkgagent.AgentState{Checkpoint: pkgagent.ToolCheckpoint{Results: []tool.Result{{CallID: "c"}}}}) != pkgagent.PhaseToolsBatchResult {
 		t.Fatal("tools results")
 	}
+	if recoverPhase(pkgagent.RunEvaluating, pkgagent.AgentState{}) != pkgagent.PhaseVerifyResult {
+		t.Fatal("evaluate")
+	}
+	if recoverPhase(pkgagent.RunEvaluating, pkgagent.AgentState{WrapUpPending: true}) != pkgagent.PhaseEvaluateResult {
+		t.Fatal("wrap-up")
+	}
+	if recoverPhase(pkgagent.RunEvaluating, pkgagent.AgentState{LastEvaluateSummary: "没有可审的代码改动，跳过复审。"}) != pkgagent.PhaseEvaluateResult {
+		t.Fatal("published review")
+	}
 	if turnStatusFor(pkgagent.RunCancelled) != string(pkgagent.TurnCancelled) {
 		t.Fatal("cancelled turn")
 	}

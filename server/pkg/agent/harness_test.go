@@ -42,7 +42,20 @@ func TestBrainVerifyAndEvaluateGates(t *testing.T) {
 	}
 	got, err = brain.Decide(PhaseEvaluateResult, evalPass, AgentState{})
 	if err != nil || len(got) != 1 || got[0].Type != InstructionFinish {
-		t.Fatalf("eval pass: %+v %v", got, err)
+		t.Fatalf("eval pass recovered: %+v %v", got, err)
+	}
+	got, err = brain.Decide(PhaseEvaluateResult, evalPass, AgentState{WrapUpPending: true})
+	if err != nil || len(got) != 1 || got[0].Type != InstructionCallLLM {
+		t.Fatalf("eval pass wrap-up: %+v %v", got, err)
+	}
+	evalSkip, _ := json.Marshal(EvaluationResult{Verdict: VerdictPass, Skipped: true})
+	got, err = brain.Decide(PhaseEvaluateResult, evalSkip, AgentState{WrapUpPending: true})
+	if err != nil || len(got) != 1 || got[0].Type != InstructionFinish {
+		t.Fatalf("eval skip: %+v %v", got, err)
+	}
+	got, err = brain.Decide(PhaseEvaluateResult, evalPass, AgentState{ForceFinish: true})
+	if err != nil || len(got) != 1 || got[0].Type != InstructionFinish {
+		t.Fatalf("eval pass at max turns: %+v %v", got, err)
 	}
 	got, err = brain.Decide(PhaseEvaluateResult, evalWork, AgentState{EvaluateRound: 1})
 	if err != nil || len(got) != 1 || got[0].Type != InstructionCallLLM {
@@ -234,6 +247,78 @@ func (stubSnap) ChangedFiles(string, WorkspaceSnapshot) ([]string, error) { retu
 // Diff 测试里没有 diff。
 func (stubSnap) Diff(string, WorkspaceSnapshot) (string, error) { return "", nil }
 
+// TestLeaveEvaluatingOnPass 复审通过后不能还停在 evaluating。
+func TestLeaveEvaluatingOnPass(t *testing.T) {
+	state := AgentState{Status: RunEvaluating}
+	leaveEvaluating(&state, EvaluationResult{Verdict: VerdictPass})
+	if state.Status != RunRunningLLM || !state.WrapUpPending {
+		t.Fatalf("pass=%+v", state)
+	}
+	state = AgentState{Status: RunEvaluating}
+	leaveEvaluating(&state, EvaluationResult{Verdict: VerdictPass, Skipped: true})
+	if state.Status != RunRunningLLM || state.WrapUpPending {
+		t.Fatalf("skip=%+v", state)
+	}
+	state = AgentState{Status: RunEvaluating}
+	leaveEvaluating(&state, EvaluationResult{Verdict: VerdictNeedsWork})
+	if state.Status != RunRunningLLM || state.WrapUpPending {
+		t.Fatalf("needs_work=%+v", state)
+	}
+	state = AgentState{Status: RunEvaluating}
+	leaveEvaluating(&state, EvaluationResult{Verdict: VerdictEscalate})
+	if state.Status != RunEvaluating {
+		t.Fatalf("escalate=%+v", state)
+	}
+}
+
+// TestEngineSkipEvaluateFinishesWithoutWrapUp 无代码改动时复审跳过，不再卡在 evaluating、也不再调收尾模型。
+func TestEngineSkipEvaluateFinishesWithoutWrapUp(t *testing.T) {
+	engine, facts, _ := testEngine(t)
+	engine.SetHarness(stubSnap{oid: "snap"}, nil)
+	cfg := DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{
+		Verify: []FakeVerifyResult{{Status: VerifyStatusPassed}},
+	})})
+	state := AgentState{RunID: "run-skip", SessionID: "s", Config: cfg, HadSideEffects: true, WorkspaceRoot: t.TempDir()}
+	got, err := engine.Step(context.Background(), StepInput{
+		State: state,
+		Job:   StepJob{RunID: "run-skip", StepIndex: 4, Phase: PhaseLLMResult},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = engine.Step(context.Background(), StepInput{State: got.State, Job: *got.Next})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Status != RunRunningLLM || got.State.WrapUpPending || got.State.LastEvaluateSummary == "" || got.Next == nil || got.Next.Phase != PhaseEvaluateResult {
+		t.Fatalf("skip evaluate=%+v", got)
+	}
+	got, err = engine.Step(context.Background(), StepInput{State: got.State, Job: *got.Next})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Status != RunCompleted {
+		t.Fatalf("status=%s", got.State.Status)
+	}
+	if len(got.Messages) != 1 || !strings.Contains(DecodeText(got.Messages[0].Content), "没有可审的代码改动") {
+		t.Fatalf("wrap-up=%+v", got.Messages)
+	}
+	var persisted []EventType
+	for _, fact := range facts.facts {
+		persisted = append(persisted, fact.Type)
+	}
+	if !containsEvent(persisted, EventEvaluateResult) {
+		t.Fatalf("persisted=%v", persisted)
+	}
+	var finishTypes []EventType
+	for _, fact := range got.Facts {
+		finishTypes = append(finishTypes, fact.Type)
+	}
+	if !containsEvent(finishTypes, EventAssistantCompleted) {
+		t.Fatalf("finish facts=%v", finishTypes)
+	}
+}
+
 // TestEngineVerifyThenEvaluateFinish 改过代码后必须先验证再复审才能收工。
 func TestEngineVerifyThenEvaluateFinish(t *testing.T) {
 	engine, facts, _ := testEngine(t)
@@ -257,8 +342,22 @@ func TestEngineVerifyThenEvaluateFinish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State.Status != RunEvaluating || got.Next == nil || got.Next.Phase != PhaseEvaluateResult {
+	if got.State.Status != RunRunningLLM || !got.State.WrapUpPending || got.Next == nil || got.Next.Phase != PhaseEvaluateResult {
 		t.Fatalf("evaluate step=%+v", got)
+	}
+	got, err = engine.Step(context.Background(), StepInput{
+		State:   got.State,
+		Job:     *got.Next,
+		History: fakeHistory("run-v", FakeOptions{Turns: []FakeTurn{{Text: ""}}}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.State.WrapUpPending || len(got.Messages) != 1 || !strings.Contains(DecodeText(got.Messages[0].Content), "已完成") {
+		t.Fatalf("wrap-up=%+v", got)
+	}
+	if got.Next == nil || got.Next.Phase != PhaseLLMResult {
+		t.Fatalf("wrap-up next=%+v", got.Next)
 	}
 	got, err = engine.Step(context.Background(), StepInput{State: got.State, Job: *got.Next})
 	if err != nil {
@@ -271,7 +370,7 @@ func TestEngineVerifyThenEvaluateFinish(t *testing.T) {
 	for _, fact := range facts.facts {
 		types = append(types, fact.Type)
 	}
-	if !containsEvent(types, EventVerifyStarted) || !containsEvent(types, EventEvaluateResult) {
+	if !containsEvent(types, EventVerifyStarted) || !containsEvent(types, EventEvaluateResult) || !containsEvent(types, EventAssistantCompleted) {
 		t.Fatalf("facts=%v", types)
 	}
 }

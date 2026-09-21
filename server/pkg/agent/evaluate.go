@@ -55,6 +55,7 @@ type EvaluationResult struct {
 	Summary         string            `json:"summary,omitempty"`
 	DiffFingerprint string            `json:"diff_fingerprint,omitempty"`
 	TokensUsed      int               `json:"tokens_used,omitempty"`
+	Skipped         bool              `json:"skipped,omitempty"` // 无代码改动，未送复审模型
 }
 
 // SanitizeDiff 去掉 lock / 生成文件与纯空白变动，并按字节上限截断。
@@ -81,6 +82,7 @@ func EvaluateRun(ctx context.Context, model ModelConfig, sanitizedDiff string, i
 	if nothingToReview(sanitizedDiff, items) {
 		return EvaluationResult{
 			Verdict:         VerdictPass,
+			Skipped:         true,
 			Summary:         "没有可审的代码改动，跳过复审。",
 			DiffFingerprint: fp,
 		}, nil

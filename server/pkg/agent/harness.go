@@ -29,6 +29,8 @@ type RunHarness struct {
 	LastVerifySummary       string         `json:"last_verify_summary,omitempty"`
 	EvaluateRound           int            `json:"evaluate_round"`
 	LastEvaluateFingerprint string         `json:"last_evaluate_fingerprint,omitempty"`
+	LastEvaluateSummary     string         `json:"last_evaluate_summary,omitempty"`
+	WrapUpPending           bool           `json:"wrap_up_pending,omitempty"`
 	ApprovalKind            ApprovalKind   `json:"approval_kind,omitempty"`
 	OverrideAction          OverrideAction `json:"override_action,omitempty"`
 	ActivePlan              string         `json:"active_plan,omitempty"` // 本会话绑定的计划文件名
@@ -46,6 +48,8 @@ func (s AgentState) Harness() RunHarness {
 		LastVerifySummary:       s.LastVerifySummary,
 		EvaluateRound:           s.EvaluateRound,
 		LastEvaluateFingerprint: s.LastEvaluateFingerprint,
+		LastEvaluateSummary:     s.LastEvaluateSummary,
+		WrapUpPending:           s.WrapUpPending,
 		ApprovalKind:            s.ApprovalKind,
 		OverrideAction:          s.OverrideAction,
 		ActivePlan:              s.ActivePlan,
@@ -66,6 +70,8 @@ func (s *AgentState) ApplyHarness(h RunHarness) {
 	s.LastVerifySummary = h.LastVerifySummary
 	s.EvaluateRound = h.EvaluateRound
 	s.LastEvaluateFingerprint = h.LastEvaluateFingerprint
+	s.LastEvaluateSummary = h.LastEvaluateSummary
+	s.WrapUpPending = h.WrapUpPending
 	s.ApprovalKind = h.ApprovalKind
 	s.OverrideAction = h.OverrideAction
 	s.ActivePlan = h.ActivePlan

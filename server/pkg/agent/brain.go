@@ -28,6 +28,9 @@ func (b *Brain) Decide(phase Phase, payload json.RawMessage, state AgentState) (
 	case PhaseUserInput, PhaseInit, PhaseToolsBatchResult, PhaseCompressionResult:
 		return []Instruction{{Type: InstructionCallLLM}}, nil
 	case PhaseLLMResult:
+		if state.WrapUpPending {
+			return finishInstructions(RunCompleted, StopCompleted), nil
+		}
 		if hasPendingTools(state) {
 			return []Instruction{{Type: InstructionCallToolsBatch}}, nil
 		}
@@ -60,13 +63,16 @@ func decideVerifyResult(payload json.RawMessage, state AgentState) []Instruction
 	}
 }
 
-// decideEvaluateResult 按复审结论决定收工、打回或开人工单。
+// decideEvaluateResult 按复审结论决定写收尾说明、打回或开人工单。
 func decideEvaluateResult(payload json.RawMessage, state AgentState) []Instruction {
 	var result EvaluationResult
 	_ = json.Unmarshal(payload, &result)
 	switch result.Verdict {
 	case VerdictPass:
-		return finishInstructions(RunCompleted, StopCompleted)
+		if state.ForceFinish || result.Skipped || !state.WrapUpPending {
+			return finishInstructions(RunCompleted, StopCompleted)
+		}
+		return []Instruction{{Type: InstructionCallLLM}}
 	case VerdictEscalate:
 		return overrideInstructions(ApprovalKindEvaluate, result.Summary)
 	default:

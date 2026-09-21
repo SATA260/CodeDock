@@ -31,6 +31,7 @@ func TestBrainDecideTable(t *testing.T) {
 		{name: "llm_result_tools", phase: PhaseLLMResult, state: pending, want: InstructionCallToolsBatch},
 		{name: "llm_result_text", phase: PhaseLLMResult, state: base, want: InstructionFinish, stop: StopCompleted},
 		{name: "llm_result_dirty", phase: PhaseLLMResult, state: AgentState{HadSideEffects: true}, want: InstructionVerify},
+		{name: "llm_result_wrapup", phase: PhaseLLMResult, state: AgentState{WrapUpPending: true, HadSideEffects: true, Checkpoint: ToolCheckpoint{Pending: []tool.Call{{ID: "c1", Name: "write"}}}}, want: InstructionFinish, stop: StopCompleted},
 		{name: "human_approved", phase: PhaseHumanApproved, state: pending, want: InstructionCallToolsBatch},
 		{name: "human_abort", phase: PhaseHumanAbort, state: base, want: InstructionFinish, stop: StopApprovalDenied},
 		{name: "error", phase: PhaseError, state: base, want: InstructionFinish, stop: StopModelError},
