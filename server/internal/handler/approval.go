@@ -23,8 +23,8 @@ type DecideApprovalRequest struct {
 	Decisions  []ToolDecision          `json:"decisions"`
 	Status     pkgagent.ApprovalStatus `json:"status"`
 	Scope      pkgagent.ApprovalScope  `json:"scope"`
-	ActorID    string                   `json:"actor_id"`
-	Reason     string                   `json:"reason"`
+	ActorID    string                  `json:"actor_id"`
+	Reason     string                  `json:"reason"`
 	Override   pkgagent.OverrideAction `json:"override,omitempty"`
 }
 

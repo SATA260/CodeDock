@@ -15,13 +15,13 @@ const (
 
 // FakeOptions 控制 fake 模型的确定性输出，供测试与离线闭环使用。
 type FakeOptions struct {
-	Turns               []FakeTurn  `json:"turns"`
-	FailTimes           int         `json:"fail_times"`
-	Hang                bool        `json:"hang"`
-	CompactSummary      string      `json:"compact_summary"`
-	IndexCompactSummary string      `json:"index_compact_summary"`
-	Review *FakeReview        `json:"review,omitempty"`
-	Verify []FakeVerifyResult `json:"verify,omitempty"`
+	Turns               []FakeTurn         `json:"turns"`
+	FailTimes           int                `json:"fail_times"`
+	Hang                bool               `json:"hang"`
+	CompactSummary      string             `json:"compact_summary"`
+	IndexCompactSummary string             `json:"index_compact_summary"`
+	Review              *FakeReview        `json:"review,omitempty"`
+	Verify              []FakeVerifyResult `json:"verify,omitempty"`
 }
 
 // FakeReview 控制 fake 复审模型的输出。
@@ -33,10 +33,10 @@ type FakeReview struct {
 
 // FakeVerifyResult 控制 fake 验证脚本的一轮输出。
 type FakeVerifyResult struct {
-	Status      VerifyStatus `json:"status"`
-	Output      string       `json:"output,omitempty"`
-	Fingerprint string       `json:"fingerprint,omitempty"`
-	FailedCommand string     `json:"failed_command,omitempty"`
+	Status        VerifyStatus `json:"status"`
+	Output        string       `json:"output,omitempty"`
+	Fingerprint   string       `json:"fingerprint,omitempty"`
+	FailedCommand string       `json:"failed_command,omitempty"`
 }
 
 // FakeTurn 是 fake 模型一轮输出。

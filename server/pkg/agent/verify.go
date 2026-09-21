@@ -32,8 +32,8 @@ type VerifyRule struct {
 
 // VerifyFile 是 .cursor/verify.yaml 的可解析形态。
 type VerifyFile struct {
-	Rules                 []VerifyRule `json:"rules" yaml:"rules"`
-	CheckNewTestsOnBase   bool         `json:"check_new_tests_on_base" yaml:"check_new_tests_on_base"` // 可选：新测试必须在旧代码上失败
+	Rules               []VerifyRule `json:"rules" yaml:"rules"`
+	CheckNewTestsOnBase bool         `json:"check_new_tests_on_base" yaml:"check_new_tests_on_base"` // 可选：新测试必须在旧代码上失败
 }
 
 // VerifyResult 验证流水线输出。

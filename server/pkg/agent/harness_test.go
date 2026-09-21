@@ -272,7 +272,7 @@ func TestEngineVerifyLLMErrorOpensTicket(t *testing.T) {
 		State: AgentState{RunID: "run-e", Config: cfg, HadSideEffects: true, VerifyRound: 1},
 		Job:   StepJob{RunID: "run-e", StepIndex: 2, Phase: PhaseVerifyResult, Payload: failed},
 		History: History{
-			Run: Run{ID: "run-e", Config: cfg},
+			Run:      Run{ID: "run-e", Config: cfg},
 			Messages: []Message{{Role: RoleUser, Content: EncodeText("按 .cursor/task.md 创建 fail.txt。")}},
 		},
 	})

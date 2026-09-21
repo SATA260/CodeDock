@@ -29,7 +29,7 @@ export function nextFilesWindows<T extends DockLike>(
         kind: "file",
         title: "文件",
         selectedKey: "",
-      } as T,
+      } as unknown as T,
     ];
   }
   if (existing.kind !== "file") {

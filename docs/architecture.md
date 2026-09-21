@@ -279,7 +279,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 - 模型调用 `Stream` / 压缩：在函数内按 `ModelConfig.Provider` 创建
   - `fake`：读 `Model.Options` 脚本（多段 text / tool_calls、失败次数、可取消挂起、verify 脚本），测试用
   - `openai`：OpenAI 兼容 HTTP（`BaseURL` + API Key）
-- 正确性工作流：`Brain` 在 `llm_result` 且无待批工具时，若 `HadSideEffects` 则发 `verify`，通过后写收尾说明再 `completed`。状态含 `verifying`。事件含 `verify.started` / `verify.result` / `verify.skipped` / `snapshot.skipped`
+- 正确性工作流：`Brain` 在 `llm_result` 且无待批工具时，若 `HadSideEffects` 则发 `verify`，通过后写收尾说明再 `completed`。状态含 `verifying`；旧行仍可能是 `evaluating`，恢复时当验证已通过。事件含 `verify.started` / `verify.result` / `verify.skipped` / `snapshot.skipped`；旧 `evaluate.result` 只清思考态，不再画复审卡片
 - `EvaluatorModel` 只用于工具出站审批；`SubagentModel` 是 explore 子代理模型。空则回落主模型
 - explore 小循环只绑 `read` / `grep` / `find` / `ls` / `memory_search`，有轮次、工具次数和超时预算
 - 会话级计划隔离：未点名不读 `.cursor` 下其他计划

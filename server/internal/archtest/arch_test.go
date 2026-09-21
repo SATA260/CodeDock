@@ -14,10 +14,10 @@ import (
 func TestImportDirection(t *testing.T) {
 	root := repoRoot(t)
 	rules := []struct {
-		dir   string
-		deny  []string
-		hint  string
-		doc   string
+		dir  string
+		deny []string
+		hint string
+		doc  string
 	}{
 		{"server/pkg/agent", []string{"codedock/internal"}, "底座核心包不可依赖上层内部包，请将事件通过接口回调注入。", "docs/architecture.md 第 3 节"},
 		{"server/pkg/git", []string{"codedock/internal", "codedock/pkg/agent"}, "Git CLI 不进 pkg/agent，也不写产品流程。", "docs/architecture.md"},

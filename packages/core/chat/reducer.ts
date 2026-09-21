@@ -607,7 +607,8 @@ function upsertItem(state: SessionState, item: TimelineItem): SessionState {
   const items = state.items.slice();
   const index = items.findIndex((current) => current.id === item.id);
   if (index >= 0) {
-    items[index] = { ...items[index], ...item };
+    const current = items[index];
+    items[index] = current.kind === item.kind ? ({ ...current, ...item } as TimelineItem) : item;
   } else {
     items.push(item);
   }
