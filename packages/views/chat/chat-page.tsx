@@ -19,7 +19,7 @@ import { useColumnLayout } from "./column-layout.ts";
 import { ColumnSash } from "./column-sash.tsx";
 import { ConversationTimeline } from "./conversation-timeline.tsx";
 import { SideDock } from "./side-dock.tsx";
-import { collectDockArtifacts, fileWindowId, planWindowId, useWorkbench } from "./workbench.ts";
+import { collectDockArtifacts, planWindowId, useWorkbench } from "./workbench.ts";
 import { useSessionList } from "./hooks/use-session-list.ts";
 import { useSessionTimeline } from "./hooks/use-session-timeline.ts";
 import { shortWorkspace } from "./lib/format.ts";
@@ -123,17 +123,8 @@ export function ChatPage({
         error: plan.error,
       });
     }
-    for (const file of artifacts.files) {
-      workbench.refreshOpen({
-        id: fileWindowId(file.path),
-        kind: "file",
-        title: file.path.split("/").pop() || file.path,
-        path: file.path,
-        content: file.content,
-        action: file.action,
-      });
-    }
-  }, [artifacts, workbench.refreshOpen]);
+    workbench.syncFiles(artifacts.files, false);
+  }, [artifacts, workbench.refreshOpen, workbench.syncFiles]);
 
   const pendingApprovals = timeline.state.items.filter(
     (item): item is Extract<TimelineItem, { kind: "approval" }> =>
@@ -220,6 +211,11 @@ export function ChatPage({
   const openFile = (change: Parameters<typeof workbench.openFile>[0]) => {
     columns.setRightOpen(true);
     workbench.openFile(change);
+  };
+  // openGit 打开 Git 窗口；右侧若收起则先展开。
+  const openGit = () => {
+    columns.setRightOpen(true);
+    workbench.openGit();
   };
   // createDock 从窗口栏新建；右侧若收起则先展开。
   const createDock = (
@@ -375,6 +371,7 @@ export function ChatPage({
                 scrollKey={sessionId}
                 onOpenPlan={openPlan}
                 onOpenFile={openFile}
+                onOpenGit={openGit}
               />
               <div className="relative z-30 shrink-0">
                 <PendingDock

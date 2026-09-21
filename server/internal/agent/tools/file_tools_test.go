@@ -252,6 +252,9 @@ func TestWriteCreatesDirectoriesAndUsesJSStringLength(t *testing.T) {
 	if got := resultText(t, result); got != "Successfully wrote 2 bytes to nested/file.txt" {
 		t.Fatalf("result = %q", got)
 	}
+	if result.Details == nil || !strings.Contains(result.Details.Patch, "+😀") {
+		t.Fatalf("write patch = %+v", result.Details)
+	}
 	if _, err := NewExecutor().Write(context.Background(), cwd, WriteInput{Path: "file://%zz", Content: "x"}); err == nil {
 		t.Fatal("bad write path")
 	}

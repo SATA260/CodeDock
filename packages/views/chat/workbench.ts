@@ -2,13 +2,20 @@
 
 import {
   fileChangeFromTool,
+  fileKey,
   planPreviewFromTool,
   type FileChangePreview,
   type PlanPreview,
+  type RunFileGroup,
   type TimelineItem,
   type ToolItemState,
 } from "@codedock/core/chat";
 import { useCallback, useState } from "react";
+
+import { FILES_WINDOW_ID, nextFilesWindows, type FileWindow } from "./lib/files-window.ts";
+
+export type { FileWindow };
+export { FILES_WINDOW_ID };
 
 export type DockKind = "plan" | "file" | "git";
 
@@ -20,15 +27,6 @@ export type PlanWindow = {
   content: string;
   toolState?: ToolItemState;
   error?: string;
-};
-
-export type FileWindow = {
-  id: string;
-  kind: "file";
-  title: string;
-  path: string;
-  content: string;
-  action: "write" | "edit";
 };
 
 export type GitWindow = {
@@ -45,23 +43,23 @@ export const DOCK_KINDS: { kind: DockKind; label: string }[] = [
   { kind: "git", label: "Git" },
 ];
 
+export const GIT_WINDOW_ID = "git";
+
+const EMPTY_FILE: FileChangePreview = { path: "", content: "", action: "write", patch: "", runId: "" };
+
+export type TitledRunFileGroup = RunFileGroup & { title: string };
+
 // planWindowId 用计划名做窗口键，同名复用。
 export function planWindowId(name: string): string {
   return `plan:${name || "untitled"}`;
 }
-
-// fileWindowId 用路径做窗口键，同文件复用。
-export function fileWindowId(path: string): string {
-  return `file:${path || "untitled"}`;
-}
-
-export const GIT_WINDOW_ID = "git";
 
 // useWorkbench 管理右侧多窗口：打开、刷新已打开的、关闭、切到指定窗口。
 export function useWorkbench() {
   const [windows, setWindows] = useState<DockWindow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
+  // upsert 写入或更新一个窗口，并切到它。
   const upsert = useCallback((window: DockWindow) => {
     setWindows((current) => {
       const index = current.findIndex((item) => item.id === window.id);
@@ -75,6 +73,7 @@ export function useWorkbench() {
     setActiveId(window.id);
   }, []);
 
+  // openPlan 打开或刷新指定计划窗口。
   const openPlan = useCallback(
     (preview: PlanPreview, extra?: { toolState?: ToolItemState; error?: string }) => {
       upsert({
@@ -90,24 +89,40 @@ export function useWorkbench() {
     [upsert],
   );
 
+  // openFile 打开或切到文件窗口，并选中这条路径。
   const openFile = useCallback(
     (change: FileChangePreview) => {
       upsert({
-        id: fileWindowId(change.path),
+        id: FILES_WINDOW_ID,
         kind: "file",
-        title: basename(change.path),
-        path: change.path,
-        content: change.content,
-        action: change.action,
+        title: fileBasename(change.path) || "文件",
+        selectedKey: fileKey(change),
       });
     },
     [upsert],
   );
 
+  // selectFile 只改列表选中项，不切窗口。
+  const selectFile = useCallback((file: FileChangePreview) => {
+    setWindows((current) =>
+      current.map((item) => (item.kind === "file" ? { ...item, selectedKey: fileKey(file) } : item)),
+    );
+  }, []);
+
+  // syncFiles 把时间线上的文件同步进已打开的文件窗口；create 时在还没有窗口时补开。
+  const syncFiles = useCallback((files: FileChangePreview[], create: boolean) => {
+    setWindows((current) => nextFilesWindows(current, files, create));
+    if (create) {
+      setActiveId((active) => active ?? FILES_WINDOW_ID);
+    }
+  }, []);
+
+  // openGit 打开 Git 窗口。
   const openGit = useCallback(() => {
     upsert({ id: GIT_WINDOW_ID, kind: "git", title: "Git" });
   }, [upsert]);
 
+  // createKind 按种类新建窗口，可用现成的计划或文件做种子。
   const createKind = useCallback(
     (kind: DockKind, seed?: { plan?: PlanPreview; file?: FileChangePreview }) => {
       if (kind === "git") {
@@ -118,11 +133,12 @@ export function useWorkbench() {
         openPlan(seed?.plan ?? { kind: "doc", name: "", content: "", source: "read" });
         return;
       }
-      openFile(seed?.file ?? { path: "", content: "", action: "write" });
+      openFile(seed?.file ?? EMPTY_FILE);
     },
     [openFile, openGit, openPlan],
   );
 
+  // closeWindow 关掉指定窗口，并切到剩下的最后一个。
   const closeWindow = useCallback((id: string) => {
     setWindows((current) => {
       const next = current.filter((item) => item.id !== id);
@@ -136,18 +152,24 @@ export function useWorkbench() {
     });
   }, []);
 
+  // refreshOpen 只更新已经打开的窗口，内容没变就不动，避免把页面刷死。
   const refreshOpen = useCallback((window: DockWindow) => {
     setWindows((current) => {
       const index = current.findIndex((item) => item.id === window.id);
       if (index < 0) {
         return current;
       }
+      const merged = { ...current[index], ...window } as DockWindow;
+      if (sameDockWindow(current[index], merged)) {
+        return current;
+      }
       const next = current.slice();
-      next[index] = { ...current[index], ...window } as DockWindow;
+      next[index] = merged;
       return next;
     });
   }, []);
 
+  // reset 清空全部窗口，换会话时用。
   const reset = useCallback(() => {
     setWindows([]);
     setActiveId(null);
@@ -159,6 +181,8 @@ export function useWorkbench() {
     setActiveId,
     openPlan,
     openFile,
+    selectFile,
+    syncFiles,
     openGit,
     createKind,
     closeWindow,
@@ -167,10 +191,30 @@ export function useWorkbench() {
   };
 }
 
+// sameDockWindow 判断刷新前后窗口内容是否一样。
+function sameDockWindow(left: DockWindow, right: DockWindow): boolean {
+  if (left.id !== right.id || left.kind !== right.kind || left.title !== right.title) {
+    return false;
+  }
+  if (left.kind === "plan" && right.kind === "plan") {
+    return (
+      left.name === right.name &&
+      left.content === right.content &&
+      left.toolState === right.toolState &&
+      left.error === right.error
+    );
+  }
+  if (left.kind === "file" && right.kind === "file") {
+    return left.selectedKey === right.selectedKey;
+  }
+  return true;
+}
+
 // collectDockArtifacts 从时间线抽出最新的计划和文件改动，给窗口菜单和刷新用。
 export function collectDockArtifacts(items: TimelineItem[]): {
   plans: Array<PlanPreview & { toolState?: ToolItemState; error?: string }>;
   files: FileChangePreview[];
+  fileGroups: TitledRunFileGroup[];
 } {
   const plans = new Map<string, PlanPreview & { toolState?: ToolItemState; error?: string }>();
   const files = new Map<string, FileChangePreview>();
@@ -188,11 +232,16 @@ export function collectDockArtifacts(items: TimelineItem[]): {
       files.set(change.path, change);
     }
   }
-  return { plans: [...plans.values()], files: [...files.values()] };
+  const list = [...files.values()];
+  return {
+    plans: [...plans.values()],
+    files: list,
+    fileGroups: list.length ? [{ runId: "session", title: "改动", files: list }] : [],
+  };
 }
 
-// basename 取路径最后一段，给标签用。
-function basename(path: string): string {
+// fileBasename 取路径最后一段给窗口标签用。
+function fileBasename(path: string): string {
   const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
-  return parts[parts.length - 1] || path || "文件";
+  return parts[parts.length - 1] || "";
 }

@@ -320,7 +320,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/views`
 
-组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage` 三栏（会话列表、对话、右侧窗口栏，左右栏可收起），瀑布、审批、prompt；新建会话可选 Local / Codex / Claude。对话里的 Plan 与文件改动收成条目，点开后在右侧窗口显示。右侧窗口栏可新建 / 关闭 Plan、文件、Git，后续窗口种类往这里加。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，不进 `AgentContext`；由 `ChatPage` 右侧窗口组合，不单独做业务页。Codex 在 `codex/`：`CodexProvider` 只注入 `CodexClient`。Claude 在 `claude/`：`ClaudeProvider` 只注入 `ClaudeClient`。二者都由 `ChatPage` 组合。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
+组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage` 三栏（会话列表、对话、右侧窗口栏，左右栏可收起），瀑布、审批、prompt；新建会话可选 Local / Codex / Claude。对话里的 Plan 收成条目，点开后在右侧窗口显示。每次 Run 改过的文件集中在一个框里（时间线与文件窗口共用），点选后右侧看正文。右侧窗口栏可新建 / 关闭 Plan、文件、Git，后续窗口种类往这里加。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，不进 `AgentContext`；由 `ChatPage` 右侧窗口组合，不单独做业务页。Codex 在 `codex/`：`CodexProvider` 只注入 `CodexClient`。Claude 在 `claude/`：`ClaudeProvider` 只注入 `ClaudeClient`。二者都由 `ChatPage` 组合。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
 
 ### `apps/web`
 

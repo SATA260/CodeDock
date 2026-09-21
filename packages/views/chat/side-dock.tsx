@@ -1,11 +1,12 @@
 "use client";
 
-import type { FileChangePreview, PlanPreview } from "@codedock/core/chat";
-import { Button, MessageResponse, cn } from "@codedock/ui";
+import { fileKey, type FileChangePreview, type PlanPreview } from "@codedock/core/chat";
+import { Button, cn } from "@codedock/ui";
 import { FileCode2, FileText, GitBranch, Plus, X } from "lucide-react";
 import { useState } from "react";
 
 import { GitPage } from "../git/git-page.tsx";
+import { FileDiffPane } from "./file-diff.tsx";
 import { PlanDocBody } from "./plan-preview.tsx";
 import {
   DOCK_KINDS,
@@ -15,7 +16,7 @@ import {
   type PlanWindow,
 } from "./workbench.ts";
 
-// SideDock 是对话右侧的多窗口栏：Plan、文件详情、Git，可新建和关闭。
+// SideDock 是对话右侧的多窗口栏：Plan、单个文件正文、Git，可新建和关闭。
 export function SideDock({
   windows,
   activeId,
@@ -53,7 +54,7 @@ export function SideDock({
         onCreate={onCreate}
       />
       <div className="min-h-0 flex-1 overflow-hidden">
-        {active ? <DockBody window={active} /> : <DockEmpty />}
+        {active ? <DockBody window={active} files={files} /> : <DockEmpty />}
       </div>
     </aside>
   );
@@ -188,14 +189,20 @@ function DockTab({
 }
 
 // DockBody 按窗口种类渲染 Plan、文件或 Git。
-function DockBody({ window }: { window: DockWindow }) {
+function DockBody({
+  window,
+  files,
+}: {
+  window: DockWindow;
+  files: FileChangePreview[];
+}) {
   if (window.kind === "git") {
     return <GitPage variant="dock" />;
   }
   if (window.kind === "plan") {
     return <PlanPane window={window} />;
   }
-  return <FilePane window={window} />;
+  return <FilePane window={window} files={files} />;
 }
 
 // PlanPane 在右侧展开整篇计划。
@@ -219,32 +226,18 @@ function PlanPane({ window }: { window: PlanWindow }) {
   );
 }
 
-// FilePane 显示一次 write/edit 的文件详情。
-function FilePane({ window }: { window: FileWindow }) {
+// FilePane 只展示当前点开的那一个文件的正文。
+function FilePane({
+  window,
+  files,
+}: {
+  window: FileWindow;
+  files: FileChangePreview[];
+}) {
+  const selected = files.find((file) => fileKey(file) === window.selectedKey) ?? null;
   return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="dock-window-file">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground">
-        <FileCode2 className="size-3.5" />
-        <span className="truncate font-mono text-foreground">{window.path || "未打开文件"}</span>
-        <span className="ml-auto">{window.action === "edit" ? "编辑" : "写入"}</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {window.content.trim() ? (
-          window.action === "edit" && window.content.includes("@@ edit") ? (
-            <pre className="whitespace-pre-wrap break-words px-4 py-3 font-mono text-xs leading-5 text-foreground">
-              {window.content}
-            </pre>
-          ) : (
-            <div className="px-4 py-3">
-              <MessageResponse className="text-sm">{fence(window.path, window.content)}</MessageResponse>
-            </div>
-          )
-        ) : (
-          <p className="px-4 py-3 text-xs text-muted-foreground">
-            {window.path ? "这次改动没有带上正文" : "从对话里点开文件，或用 + 打开 Git 看工作区"}
-          </p>
-        )}
-      </div>
+    <div className="h-full min-h-0" data-testid="dock-window-file">
+      <FileDiffPane file={selected} />
     </div>
   );
 }
@@ -253,7 +246,7 @@ function FilePane({ window }: { window: FileWindow }) {
 function DockEmpty() {
   return (
     <div className="flex h-full flex-col justify-center gap-2 px-6 text-sm text-muted-foreground">
-      <p>右侧用来看 Plan、文件详情和 Git。</p>
+      <p>右侧用来看 Plan、会话改过的文件和 Git。</p>
       <p className="text-xs">点对话里的 Plan 或文件，或用右上角 + 新建窗口。</p>
     </div>
   );
@@ -271,10 +264,3 @@ function KindIcon({ kind }: { kind: DockKind }) {
   return <FileCode2 className={className} />;
 }
 
-// fence 把文件正文包进 markdown 代码块，按扩展名着色。
-function fence(path: string, content: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  const lang =
-    ext === "py" ? "python" : ext === "ts" || ext === "tsx" ? "ts" : ext === "js" || ext === "jsx" ? "js" : ext;
-  return `\`\`\`${lang}\n${content}\n\`\`\``;
-}

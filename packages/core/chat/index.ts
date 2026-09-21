@@ -1,10 +1,15 @@
 export { AgentClient, AgentClientError, type AgentClientOptions } from "./client.ts";
 export { decodeText, firstLine, parseDelta } from "./content.ts";
 export {
+  collectRunFileGroups,
   compactToolDump,
+  diffViewHunks,
   fileChangeFromTool,
+  fileKey,
   isFileChangeTool,
+  unifiedPatch,
   type FileChangePreview,
+  type RunFileGroup,
 } from "./files.ts";
 export {
   isPlanTool,

@@ -32,7 +32,7 @@ import {
 } from "@codedock/ui";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { FileText, FileCode2 } from "lucide-react";
+import { FileCode2, FileText, GitBranch } from "lucide-react";
 
 import { terminalStatusCopy } from "./lib/terminal.ts";
 
@@ -66,6 +66,7 @@ function isLiveTimelineItem(item: TimelineItem): boolean {
   }
 }
 
+// ConversationTimeline 按用户轮次分段渲染瀑布。
 export function ConversationTimeline({
   state,
   loading = false,
@@ -73,6 +74,7 @@ export function ConversationTimeline({
   emptyDescription,
   onOpenPlan,
   onOpenFile,
+  onOpenGit,
 }: {
   state: SessionState;
   loading?: boolean;
@@ -80,6 +82,7 @@ export function ConversationTimeline({
   emptyDescription?: string;
   onOpenPlan?: (preview: PlanPreview, extra?: { toolState?: ToolItem["state"]; error?: string }) => void;
   onOpenFile?: (change: FileChangePreview) => void;
+  onOpenGit?: () => void;
 }) {
   const items = state.items.filter(
     (item) =>
@@ -130,6 +133,7 @@ export function ConversationTimeline({
                   latestDocIds={latestDocs}
                   onOpenPlan={onOpenPlan}
                   onOpenFile={onOpenFile}
+                  onOpenGit={onOpenGit}
                 />
               ) : (
                 <TimelineRow
@@ -242,6 +246,7 @@ type TimelineRowModel =
   | { kind: "item"; item: Exclude<TimelineItem, { kind: "tool" }> }
   | { kind: "tools"; id: string; tools: ToolItem[] };
 
+// groupTimeline 把连续工具收成一行。
 function groupTimeline(items: TimelineItem[]): TimelineRowModel[] {
   const rows: TimelineRowModel[] = [];
   let index = 0;
@@ -276,6 +281,7 @@ function rollupToolState(tools: ToolItem[]): ToolState {
   return order.find((state) => tools.some((tool) => tool.state === state)) ?? "completed";
 }
 
+// ToolCallsRow 把连续工具收成一组；计划仍用芯片，文件改动排成竖向列表。
 function ToolCallsRow({
   tools,
   latest = false,
@@ -283,6 +289,7 @@ function ToolCallsRow({
   latestDocIds,
   onOpenPlan,
   onOpenFile,
+  onOpenGit,
 }: {
   tools: ToolItem[];
   latest?: boolean;
@@ -290,21 +297,25 @@ function ToolCallsRow({
   latestDocIds: Set<string>;
   onOpenPlan?: (preview: PlanPreview, extra?: { toolState?: ToolItem["state"]; error?: string }) => void;
   onOpenFile?: (change: FileChangePreview) => void;
+  onOpenGit?: () => void;
 }) {
-  const artifacts = tools.flatMap((item) => {
+  const plans: Array<{ item: ToolItem; preview: PlanPreview }> = [];
+  const filesByPath = new Map<string, FileChangePreview>();
+  for (const item of tools) {
     const preview = planPreviewFromTool(item);
     if (preview) {
-      return [{ item, preview, change: null }];
+      plans.push({ item, preview });
+      continue;
     }
     const change = fileChangeFromTool(item);
     if (change) {
-      return [{ item, preview: null, change }];
+      filesByPath.set(change.path, change);
     }
-    return [];
-  });
+  }
+  const files = [...filesByPath.values()];
   return (
     <div
-      className={artifacts.length > 0 ? "flex flex-col gap-2" : undefined}
+      className={plans.length > 0 || files.length > 0 ? "flex flex-col gap-2" : undefined}
       {...(latest ? { "data-conversation-latest": "" } : {})}
     >
       <ToolGroup>
@@ -327,42 +338,33 @@ function ToolCallsRow({
           })}
         </ToolGroupContent>
       </ToolGroup>
-      {artifacts.length > 0 ? (
+      {plans.length > 0 ? (
         <div className="flex flex-wrap gap-1.5 px-3">
-          {artifacts.map(({ item, preview, change }) =>
-            preview ? (
-              <ArtifactChip
-                key={`plan:${item.id}`}
-                icon="plan"
-                label={latestDocIds.has(item.id) ? `Plan ${preview.name}` : preview.name}
-                onClick={
-                  onOpenPlan
-                    ? () => onOpenPlan(preview, { toolState: item.state, error: item.error })
-                    : undefined
-                }
-              />
-            ) : change ? (
-              <ArtifactChip
-                key={`file:${item.id}`}
-                icon="file"
-                label={change.path}
-                onClick={onOpenFile ? () => onOpenFile(change) : undefined}
-              />
-            ) : null,
-          )}
+          {plans.map(({ item, preview }) => (
+            <ArtifactChip
+              key={`plan:${item.id}`}
+              label={latestDocIds.has(item.id) ? `Plan ${preview.name}` : preview.name}
+              onClick={
+                onOpenPlan
+                  ? () => onOpenPlan(preview, { toolState: item.state, error: item.error })
+                  : undefined
+              }
+            />
+          ))}
         </div>
+      ) : null}
+      {files.length > 0 ? (
+        <ToolFileList files={files} onOpenFile={onOpenFile} onOpenGit={onOpenGit} />
       ) : null}
     </div>
   );
 }
 
-// ArtifactChip 把计划和文件改动收成一行入口，点开后到右侧窗口。
+// ArtifactChip 把计划收成一行入口，点开后到右侧窗口。
 function ArtifactChip({
-  icon,
   label,
   onClick,
 }: {
-  icon: "plan" | "file";
   label: string;
   onClick?: () => void;
 }) {
@@ -373,9 +375,67 @@ function ArtifactChip({
       onClick={onClick}
       className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-muted px-2 py-1 text-[11px] text-muted-foreground hover:border-foreground/20 hover:text-foreground disabled:opacity-60"
     >
-      {icon === "plan" ? <FileText className="size-3 shrink-0" /> : <FileCode2 className="size-3 shrink-0" />}
+      <FileText className="size-3 shrink-0" />
       <span className="truncate font-mono">{label}</span>
     </button>
+  );
+}
+
+// ToolFileList 用一个框列出改过的文件；点外框打开 Git，点路径仍看单个文件。
+function ToolFileList({
+  files,
+  onOpenFile,
+  onOpenGit,
+}: {
+  files: FileChangePreview[];
+  onOpenFile?: (change: FileChangePreview) => void;
+  onOpenGit?: () => void;
+}) {
+  return (
+    <div
+      role={onOpenGit ? "button" : undefined}
+      tabIndex={onOpenGit ? 0 : undefined}
+      onClick={onOpenGit}
+      onKeyDown={
+        onOpenGit
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpenGit();
+              }
+            }
+          : undefined
+      }
+      className="mx-3 overflow-hidden rounded-md border border-border bg-card hover:border-foreground/20"
+    >
+      <div className="flex items-center gap-1.5 border-b border-border px-2.5 py-1.5 text-[11px] text-muted-foreground">
+        <GitBranch className="size-3 shrink-0" />
+        <span>改动</span>
+        <span className="ml-auto tabular-nums">{files.length}</span>
+      </div>
+      <ul>
+        {files.map((file) => (
+          <li key={file.path} className="border-b border-border last:border-b-0">
+            <button
+              type="button"
+              disabled={!onOpenFile}
+              onClick={
+                onOpenFile
+                  ? (event) => {
+                      event.stopPropagation();
+                      onOpenFile(file);
+                    }
+                  : undefined
+              }
+              className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[12px] text-muted-foreground hover:bg-accent/60 hover:text-foreground disabled:opacity-60"
+            >
+              <FileCode2 className="size-3 shrink-0" />
+              <span className="min-w-0 truncate font-mono">{file.path}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
