@@ -331,7 +331,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/core`
 
-跨端无头业务，无 UI。按业务域拆目录，文件直接放在 `packages/core/<domain>/`，不要 `src/`。现有 `chat/`：Session / Message / Run / 审批的 HTTP、SSE、Timeline reducer。Git 前端在 `git/`（`GitClient`，不扩 `AgentClient`）。Codex 前端在 `codex/`（`CodexClient`，不扩 `AgentClient`）。Claude 前端在 `claude/`（`ClaudeClient`，不扩 `AgentClient`）。看板前端在 `board/`（`BoardClient`，不扩 `AgentClient`）。`baseUrl` / `userId` 由调用方注入。不依赖 React。thinking 用 Run 状态（`queued` / `loading_context` / `running_llm` / `verifying`），不是模型 reasoning token。验证另有独立时间线卡片；跳过验证不画卡片。
+跨端无头业务，无 UI。按业务域拆目录，文件直接放在 `packages/core/<domain>/`，不要 `src/`。现有 `chat/`：Session / Message / Run / 审批的 HTTP、SSE、Timeline reducer。Git 前端在 `git/`（`GitClient`，不扩 `AgentClient`）。Codex 前端在 `codex/`（`CodexClient`，不扩 `AgentClient`）。Claude 前端在 `claude/`（`ClaudeClient`，不扩 `AgentClient`）。看板前端在 `board/`（`BoardClient`，不扩 `AgentClient`）。`baseUrl` / `userId` 由调用方注入。不依赖 React。thinking 状态字用 Run 状态（`queued` / `loading_context` / `running_llm` / `verifying`）。模型思考正文走 `assistant.delta` 的 `reasoning` 字段，落在助手消息 Content 里供下一轮回传。验证另有独立时间线卡片；跳过验证不画卡片。
 
 ### `packages/ui`
 

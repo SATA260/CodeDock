@@ -9,7 +9,13 @@ import (
 
 // TextContent 是用户与助手消息的统一文本载荷。
 type TextContent struct {
-	Text string `json:"text"`
+	Text      string `json:"text"`
+	Reasoning string `json:"reasoning,omitempty"` // 模型思考正文，不进助手可见回复
+}
+
+// ReasoningDelta 是 assistant.delta 里的思考片段。
+type ReasoningDelta struct {
+	Reasoning string `json:"reasoning"`
 }
 
 // ToolResultContent 是工具结果消息的统一载荷。
@@ -41,6 +47,27 @@ func DecodeText(content json.RawMessage) string {
 		return raw
 	}
 	return string(content)
+}
+
+// EncodeTextContent 把正文和思考一起编码为助手 Content。
+func EncodeTextContent(text, reasoning string) json.RawMessage {
+	body, err := json.Marshal(TextContent{Text: text, Reasoning: reasoning})
+	if err != nil {
+		return json.RawMessage(`{"text":""}`)
+	}
+	return body
+}
+
+// DecodeReasoning 从助手 Content 取出思考正文。
+func DecodeReasoning(content json.RawMessage) string {
+	if len(content) == 0 {
+		return ""
+	}
+	var payload TextContent
+	if err := json.Unmarshal(content, &payload); err != nil {
+		return ""
+	}
+	return payload.Reasoning
 }
 
 // assistantBlank 判断助手消息是否既无正文也无工具调用。

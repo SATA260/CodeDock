@@ -213,17 +213,20 @@ function applyRunStateChanged(state: SessionState, event: AgentEvent): SessionSt
   return next;
 }
 
+// applyAssistantStarted 占一条流式助手气泡，正文和思考都先空着。
 function applyAssistantStarted(state: SessionState, event: AgentEvent): SessionState {
   const payload = event.payload as AssistantStartedPayload;
   return upsertAssistant(state, {
     runId: event.run_id,
     messageId: payload.message_id,
     text: "",
+    reasoning: "",
     streaming: true,
     seq: event.seq,
   });
 }
 
+// applyAssistantDelta 拼接正文或思考片段；任一到达就撤掉状态字 Thinking。
 function applyAssistantDelta(state: SessionState, event: AgentEvent): SessionState {
   const payload = event.payload as AssistantDeltaPayload;
   const parsed = parseDelta(payload.delta);
@@ -242,6 +245,21 @@ function applyAssistantDelta(state: SessionState, event: AgentEvent): SessionSta
     }
     return next;
   }
+  if (parsed.kind === "reasoning") {
+    const existing = findAssistant(state, payload.message_id);
+    const reasoning = (existing?.reasoning ?? "") + parsed.text;
+    let next = upsertAssistant(state, {
+      runId: event.run_id,
+      messageId: payload.message_id,
+      reasoning,
+      streaming: true,
+      seq: event.seq,
+    });
+    if (reasoning) {
+      next = removeItem(next, thinkingId(event.run_id));
+    }
+    return next;
+  }
   if (parsed.kind === "tool") {
     return upsertTool(state, {
       runId: event.run_id,
@@ -253,12 +271,14 @@ function applyAssistantDelta(state: SessionState, event: AgentEvent): SessionSta
   return state;
 }
 
+// applyAssistantCompleted 收齐本轮正文、思考和待执行工具，并结束流式。
 function applyAssistantCompleted(state: SessionState, event: AgentEvent): SessionState {
   const payload = event.payload as AssistantCompletedPayload;
   let next = upsertAssistant(state, {
     runId: event.run_id,
     messageId: payload.message_id,
     text: decodeText(payload.text),
+    reasoning: payload.reasoning,
     streaming: false,
     seq: event.seq,
   });
@@ -559,16 +579,26 @@ function upsertThinking(
   });
 }
 
+// upsertAssistant 更新同一条助手消息；未传入的正文或思考沿用已有值。
 function upsertAssistant(
   state: SessionState,
-  input: { runId: string; messageId: string; text: string; streaming: boolean; seq: number },
+  input: {
+    runId: string;
+    messageId: string;
+    text?: string;
+    reasoning?: string;
+    streaming: boolean;
+    seq: number;
+  },
 ): SessionState {
+  const existing = findAssistant(state, input.messageId);
   return upsertItem(state, {
     kind: "assistant",
     id: assistantId(input.messageId),
     runId: input.runId,
     messageId: input.messageId,
-    text: input.text,
+    text: input.text ?? existing?.text ?? "",
+    reasoning: input.reasoning ?? existing?.reasoning,
     streaming: input.streaming,
     seq: input.seq,
   });

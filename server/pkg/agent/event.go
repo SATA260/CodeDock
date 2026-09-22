@@ -43,6 +43,7 @@ type AssistantDeltaPayload struct {
 type AssistantCompletedPayload struct {
 	MessageID string      `json:"message_id"`
 	Text      string      `json:"text"`
+	Reasoning string      `json:"reasoning,omitempty"`
 	ToolCalls []tool.Call `json:"tool_calls,omitempty"`
 }
 

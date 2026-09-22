@@ -279,6 +279,52 @@ test("assistant deltas concatenate and hide thinking after text", () => {
   assert.equal(assistant.streaming, true);
 });
 
+test("reasoning deltas concatenate and survive later text and completion", () => {
+  let state = applyEvent(
+    emptyState(),
+    ev({
+      seq: 1,
+      type: "run.state_changed",
+      payload: { from: "queued", to: "running_llm", reason: "" },
+    }),
+  );
+  state = applyEvent(state, ev({ seq: 2, type: "assistant.started", payload: { message_id: "a1" } }));
+  state = applyEvent(
+    state,
+    ev({ seq: 3, type: "assistant.delta", payload: { message_id: "a1", delta: { reasoning: "think " } } }),
+  );
+  assert.equal(state.items.some((item) => item.kind === "thinking"), false);
+  state = applyEvent(
+    state,
+    ev({ seq: 4, type: "assistant.delta", payload: { message_id: "a1", delta: { reasoning: "first" } } }),
+  );
+  state = applyEvent(
+    state,
+    ev({ seq: 5, type: "assistant.delta", payload: { message_id: "a1", delta: { text: "pong" } } }),
+  );
+  let assistant = state.items.find((item) => item.kind === "assistant");
+  assert.ok(assistant && assistant.kind === "assistant");
+  assert.equal(assistant.reasoning, "think first");
+  assert.equal(assistant.text, "pong");
+  state = applyEvent(
+    state,
+    ev({
+      seq: 6,
+      type: "assistant.completed",
+      payload: { message_id: "a1", text: "pong", reasoning: "think first" },
+    }),
+  );
+  state = applyEvent(
+    state,
+    ev({ seq: 7, type: "run.completed", payload: { status: "completed", stop_reason: "completed" } }),
+  );
+  assistant = state.items.find((item) => item.kind === "assistant");
+  assert.ok(assistant && assistant.kind === "assistant");
+  assert.equal(assistant.reasoning, "think first");
+  assert.equal(assistant.text, "pong");
+  assert.equal(assistant.streaming, false);
+});
+
 test("tool and approval lifecycle", () => {
   let state = emptyState();
   state = applyEvent(
@@ -617,6 +663,7 @@ test("decodeText and parseDelta accept backend payloads", () => {
   assert.equal(decodeText('{"text":"hi"}'), "hi");
   assert.equal(decodeText('{"text":""}'), "");
   assert.deepEqual(parseDelta({ text: "x" }), { kind: "text", text: "x" });
+  assert.deepEqual(parseDelta({ reasoning: "why" }), { kind: "reasoning", text: "why" });
   assert.equal(parseDelta({ id: "c1", name: "ping" }).kind, "tool");
 });
 

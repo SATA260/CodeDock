@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -25,6 +26,7 @@ type ReasoningContextValue = {
 
 const ReasoningContext = createContext<ReasoningContextValue | null>(null);
 
+// Reasoning 折叠模型思考。流式时展开，这一段结束后收回，避免和正文叠在一起。
 export function Reasoning({
   className,
   isStreaming = false,
@@ -37,11 +39,15 @@ export function Reasoning({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen ?? isStreaming);
+  const wasStreaming = useRef(isStreaming);
 
   useEffect(() => {
     if (isStreaming) {
       setOpen(true);
+    } else if (wasStreaming.current) {
+      setOpen(false);
     }
+    wasStreaming.current = isStreaming;
   }, [isStreaming]);
 
   const value = useMemo(() => ({ isStreaming, isOpen: open }), [isStreaming, open]);
@@ -59,6 +65,7 @@ export function Reasoning({
   );
 }
 
+// ReasoningTrigger 是思考折叠的标题，流式时显示 Thinking。
 export function ReasoningTrigger({
   children,
   className,
@@ -89,6 +96,7 @@ export function ReasoningTrigger({
   );
 }
 
+// ReasoningContent 在展开后渲染思考正文。
 export function ReasoningContent({
   className,
   children,

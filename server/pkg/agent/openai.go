@@ -38,10 +38,11 @@ type openaiChatRequest struct {
 }
 
 type openaiChatMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
-	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Role             string           `json:"role"`
+	Content          string           `json:"content,omitempty"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
+	ToolCalls        []openaiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
 }
 
 type openaiTool struct {
@@ -67,8 +68,10 @@ type openaiStreamChunk struct {
 	ID      string `json:"id"`
 	Choices []struct {
 		Delta struct {
-			Content   string           `json:"content"`
-			ToolCalls []openaiToolCall `json:"tool_calls"`
+			Content          string           `json:"content"`
+			ReasoningContent string           `json:"reasoning_content"`
+			Reasoning        string           `json:"reasoning"`
+			ToolCalls        []openaiToolCall `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
 	Usage *struct {
@@ -204,6 +207,14 @@ func developerWireRole(model ModelConfig) string {
 	return "system"
 }
 
+// reasoningDelta 取出本段思考；兼容 reasoning_content 与 reasoning 两种字段。
+func reasoningDelta(content, alt string) string {
+	if content != "" {
+		return content
+	}
+	return alt
+}
+
 // consumeOpenAI 解析 SSE 增量，拼出最终文本、工具调用和用量后关闭流。
 // 读完后若请求已取消，把空输出当成流失败，避免打断被记成一次成功的空回复。
 func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *staticStream) {
@@ -215,6 +226,7 @@ func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *s
 	stream.events <- ModelStreamEvent{Type: ModelStreamStarted, OccurredAt: now}
 
 	var text strings.Builder
+	var reasoning strings.Builder
 	var calls []tool.Call
 	usage := ProviderUsage{Provider: "openai", Model: chat.Model.Model, RequestID: chat.TurnID}
 	scanner := bufio.NewScanner(body)
@@ -240,6 +252,14 @@ func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *s
 			usage.RequestID = chunk.ID
 		}
 		for _, choice := range chunk.Choices {
+			if piece := reasoningDelta(choice.Delta.ReasoningContent, choice.Delta.Reasoning); piece != "" {
+				reasoning.WriteString(piece)
+				stream.events <- ModelStreamEvent{
+					Type:       ModelStreamReasoningDelta,
+					Delta:      MarshalPayload(ReasoningDelta{Reasoning: piece}),
+					OccurredAt: time.Now().UTC(),
+				}
+			}
 			if choice.Delta.Content != "" {
 				text.WriteString(choice.Delta.Content)
 				stream.events <- ModelStreamEvent{
@@ -303,6 +323,7 @@ func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *s
 			ToolCalls: calls,
 		},
 		ToolCalls: calls,
+		Reasoning: reasoning.String(),
 		Usage:     usage,
 	}
 	stream.events <- ModelStreamEvent{Type: ModelStreamCompleted, OccurredAt: time.Now().UTC()}
@@ -320,7 +341,11 @@ func toOpenAIMessages(chat Chat) []openaiChatMessage {
 			if assistantBlank(msg.Content, msg.ToolCalls) {
 				continue
 			}
-			item := openaiChatMessage{Role: "assistant", Content: DecodeText(msg.Content)}
+			item := openaiChatMessage{
+				Role:             "assistant",
+				Content:          DecodeText(msg.Content),
+				ReasoningContent: DecodeReasoning(msg.Content),
+			}
 			for _, call := range msg.ToolCalls {
 				item.ToolCalls = append(item.ToolCalls, openaiToolCall{
 					ID:   call.ID,
