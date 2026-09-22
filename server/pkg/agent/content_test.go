@@ -19,6 +19,20 @@ func TestDecodeTextEmptyObject(t *testing.T) {
 	}
 }
 
+// TestEncodeTextContentKeepsReasoningOutOfDecodeText 确认思考写在独立字段，DecodeText 仍只取正文。
+func TestEncodeTextContentKeepsReasoningOutOfDecodeText(t *testing.T) {
+	got := EncodeTextContent("hi", "think")
+	if DecodeText(got) != "hi" {
+		t.Fatalf("text = %q", DecodeText(got))
+	}
+	if DecodeReasoning(got) != "think" {
+		t.Fatalf("reasoning = %q", DecodeReasoning(got))
+	}
+	if DecodeReasoning(EncodeText("plain")) != "" {
+		t.Fatal("plain text should have no reasoning")
+	}
+}
+
 func TestCompleteToolResultsFillsMissingCalls(t *testing.T) {
 	messages := []Message{
 		{Role: RoleUser, Content: EncodeText("hi")},

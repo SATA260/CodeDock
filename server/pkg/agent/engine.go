@@ -211,7 +211,7 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 			return e.finish(ctx, StepInput{State: state, Job: in.Job}, finishInstructions(RunCancelled, StopCancelled)[0])
 		}
 		switch event.Type {
-		case ModelStreamTextDelta, ModelStreamToolDelta:
+		case ModelStreamTextDelta, ModelStreamReasoningDelta, ModelStreamToolDelta:
 			_ = e.appendFact(ctx, state.RunID, Fact{
 				Type:   EventAssistantDelta,
 				TurnID: state.TurnID,
@@ -242,16 +242,17 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 		}
 	}
 	blank := assistantBlank(assistant.Content, assistant.ToolCalls)
-	if !blank && len(assistant.Content) == 0 {
-		assistant.Content = EncodeText("")
-	}
 	if !blank {
+		assistant.Content = EncodeTextContent(DecodeText(assistant.Content), result.Reasoning)
+	}
+	if !blank || strings.TrimSpace(result.Reasoning) != "" {
 		_ = e.appendFact(ctx, state.RunID, Fact{
 			Type:   EventAssistantCompleted,
 			TurnID: state.TurnID,
 			Payload: MarshalPayload(AssistantCompletedPayload{
 				MessageID: msgID,
 				Text:      DecodeText(assistant.Content),
+				Reasoning: result.Reasoning,
 				ToolCalls: result.ToolCalls,
 			}),
 		})

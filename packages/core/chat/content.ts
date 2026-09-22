@@ -33,9 +33,11 @@ export function firstLine(text: string, max = 48): string {
 
 export type ParsedDelta =
   | { kind: "text"; text: string }
+  | { kind: "reasoning"; text: string }
   | { kind: "tool"; call: ToolCall }
   | { kind: "unknown" };
 
+// parseDelta 把 assistant.delta 分成正文、思考或工具调用。
 export function parseDelta(delta: unknown): ParsedDelta {
   if (!delta || typeof delta !== "object") {
     return { kind: "unknown" };
@@ -51,6 +53,9 @@ export function parseDelta(delta: unknown): ParsedDelta {
         attempt: typeof obj.attempt === "number" ? obj.attempt : undefined,
       },
     };
+  }
+  if (typeof obj.reasoning === "string") {
+    return { kind: "reasoning", text: obj.reasoning };
   }
   if (typeof obj.text === "string") {
     return { kind: "text", text: obj.text };

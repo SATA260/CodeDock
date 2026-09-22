@@ -15,10 +15,11 @@ import (
 type ModelStreamEventType string
 
 const (
-	ModelStreamStarted   ModelStreamEventType = "started"
-	ModelStreamTextDelta ModelStreamEventType = "text_delta"
-	ModelStreamToolDelta ModelStreamEventType = "tool_delta"
-	ModelStreamCompleted ModelStreamEventType = "completed"
+	ModelStreamStarted        ModelStreamEventType = "started"
+	ModelStreamTextDelta      ModelStreamEventType = "text_delta"
+	ModelStreamReasoningDelta ModelStreamEventType = "reasoning_delta"
+	ModelStreamToolDelta      ModelStreamEventType = "tool_delta"
+	ModelStreamCompleted      ModelStreamEventType = "completed"
 )
 
 // Chat 是为一次 Turn 装配的模型调用。
@@ -63,6 +64,7 @@ type ProviderUsage struct {
 type ModelStreamResult struct {
 	Message   Message
 	ToolCalls []tool.Call
+	Reasoning string // 本轮思考正文，不写进助手可见 content
 	Usage     ProviderUsage
 }
 

@@ -13,6 +13,9 @@ import {
 } from "@codedock/core/chat";
 import {
   cn,
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
   Conversation,
   ConversationContent,
   ConversationEmptyState,
@@ -20,6 +23,9 @@ import {
   Message,
   MessageContent,
   MessageResponse,
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
   Tool,
   ToolContent,
   ToolGroup,
@@ -30,9 +36,9 @@ import {
   ToolOutput,
   type ToolState,
 } from "@codedock/ui";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
-import { FileCode2, FileText, GitBranch } from "lucide-react";
+import { BrainIcon, ChevronDownIcon, FileCode2, FileText, GitBranch } from "lucide-react";
 
 import { terminalStatusCopy } from "./lib/terminal.ts";
 
@@ -88,7 +94,7 @@ export function ConversationTimeline({
     (item) =>
       !(item.kind === "approval" && item.status === "pending") &&
       !(item.kind === "user" && !item.text.trim()) &&
-      !(item.kind === "assistant" && !item.text.trim()),
+      !(item.kind === "assistant" && !item.text.trim() && !item.reasoning?.trim()),
   );
   if (items.length === 0) {
     if (loading) {
@@ -122,32 +128,152 @@ export function ConversationTimeline({
       <ConversationContent scrollKey={scrollKey} followKey={followKey} streaming={streaming}>
         {sections.map((section, sectionIndex) => (
           <section key={sectionKey(section)} className="flex w-full min-w-0 flex-col gap-5">
-            {section.map((row, rowIndex) => {
-              const latest = sectionIndex === sections.length - 1 && rowIndex === section.length - 1;
-              return row.kind === "tools" ? (
-                <ToolCallsRow
-                  key={row.id}
-                  tools={row.tools}
-                  latest={latest}
-                  live={latest && row.tools.some(isLiveTimelineItem)}
-                  latestDocIds={latestDocs}
-                  onOpenPlan={onOpenPlan}
-                  onOpenFile={onOpenFile}
-                  onOpenGit={onOpenGit}
-                />
-              ) : (
-                <TimelineRow
-                  key={row.item.id}
-                  item={row.item}
-                  latest={latest}
-                  live={latest && isLiveTimelineItem(row.item)}
-                />
-              );
-            })}
+            <SectionRows
+              section={section}
+              latestSection={sectionIndex === sections.length - 1}
+              latestDocIds={latestDocs}
+              onOpenPlan={onOpenPlan}
+              onOpenFile={onOpenFile}
+              onOpenGit={onOpenGit}
+            />
           </section>
         ))}
       </ConversationContent>
     </Conversation>
+  );
+}
+
+// SectionRows 把一轮里的思考和工具收进 Thought，正文、计划和文件改动留在外面。
+function SectionRows({
+  section,
+  latestSection,
+  latestDocIds,
+  onOpenPlan,
+  onOpenFile,
+  onOpenGit,
+}: {
+  section: TimelineRowModel[];
+  latestSection: boolean;
+  latestDocIds: Set<string>;
+  onOpenPlan?: (preview: PlanPreview, extra?: { toolState?: ToolItem["state"]; error?: string }) => void;
+  onOpenFile?: (change: FileChangePreview) => void;
+  onOpenGit?: () => void;
+}) {
+  const thought: ReactNode[] = [];
+  const users: ReactNode[] = [];
+  const body: ReactNode[] = [];
+  let thoughtLive = false;
+  let thoughtLatest = false;
+  const finished = section.some(
+    (row) => row.kind === "item" && row.item.kind === "terminal",
+  );
+
+  section.forEach((row, rowIndex) => {
+    const latest = latestSection && rowIndex === section.length - 1;
+    if (row.kind === "tools") {
+      const live = row.tools.some(isLiveTimelineItem);
+      thoughtLive = thoughtLive || live;
+      thoughtLatest = thoughtLatest || latest;
+      thought.push(
+        <ToolCallsRow
+          key={row.id}
+          tools={row.tools}
+          part="group"
+          live={live}
+          latestDocIds={latestDocIds}
+          onOpenPlan={onOpenPlan}
+          onOpenFile={onOpenFile}
+          onOpenGit={onOpenGit}
+        />,
+      );
+      body.push(
+        <ToolCallsRow
+          key={`${row.id}:artifacts`}
+          tools={row.tools}
+          part="artifacts"
+          latest={latest}
+          latestDocIds={latestDocIds}
+          onOpenPlan={onOpenPlan}
+          onOpenFile={onOpenFile}
+          onOpenGit={onOpenGit}
+        />,
+      );
+      return;
+    }
+
+    const item = row.item;
+    if (item.kind === "assistant" && item.reasoning?.trim()) {
+      thoughtLive = thoughtLive || item.streaming;
+      if (latest && !item.text.trim()) {
+        thoughtLatest = true;
+      }
+      thought.push(
+        <Reasoning key={`${item.id}:reasoning`} isStreaming={item.streaming}>
+          <ReasoningTrigger />
+          <ReasoningContent>
+            <p className="whitespace-pre-wrap break-words">{item.reasoning}</p>
+          </ReasoningContent>
+        </Reasoning>,
+      );
+    }
+    if (item.kind === "assistant" && !item.text.trim()) {
+      return;
+    }
+    const node = (
+      <TimelineRow
+        key={item.id}
+        item={item.kind === "assistant" ? { ...item, reasoning: undefined } : item}
+        latest={latest}
+        live={latest && isLiveTimelineItem(item)}
+      />
+    );
+    if (item.kind === "user") {
+      users.push(node);
+      return;
+    }
+    body.push(node);
+  });
+
+  return (
+    <>
+      {users}
+      {thought.length > 0 ? (
+        <Thought live={!finished && thoughtLive} latest={thoughtLatest}>
+          {thought}
+        </Thought>
+      ) : null}
+      {body}
+    </>
+  );
+}
+
+// Thought 是一轮的外层折叠。先点开才看到思考和 Used tools，再点才是正文和工具详情。
+function Thought({
+  live,
+  latest = false,
+  children,
+}: {
+  live: boolean;
+  latest?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(live);
+
+  useEffect(() => {
+    setOpen(live);
+  }, [live]);
+
+  return (
+    <div {...(latest ? { "data-conversation-latest": "" } : {})}>
+      <Collapsible open={open} onOpenChange={setOpen} className="w-full text-sm leading-5 text-muted-foreground">
+        <CollapsibleTrigger className="flex items-center gap-2 text-muted-foreground transition-colors hover:text-accent-foreground">
+          <BrainIcon className="size-3.5" />
+          <LiveStatus active={live}>Thought</LiveStatus>
+          <ChevronDownIcon className={cn("size-3.5 transition-transform", open && "rotate-180")} />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-1.5 space-y-2 pl-6">{children}</CollapsibleContent>
+      </Collapsible>
+    </div>
   );
 }
 
@@ -173,12 +299,17 @@ function TimelineRow({
         </div>
       );
     case "assistant":
+      if (!item.text.trim()) {
+        return null;
+      }
       return (
-        <Message from="assistant" {...latestProps}>
-          <MessageContent>
-            <MessageResponse isAnimating={item.streaming}>{item.text}</MessageResponse>
-          </MessageContent>
-        </Message>
+        <div {...latestProps}>
+          <Message from="assistant">
+            <MessageContent>
+              <MessageResponse isAnimating={item.streaming}>{item.text}</MessageResponse>
+            </MessageContent>
+          </Message>
+        </div>
       );
     case "approval":
       return (
@@ -268,8 +399,10 @@ function rollupToolState(tools: ToolItem[]): ToolState {
 }
 
 // ToolCallsRow 把连续工具收成一组；计划仍用芯片，文件改动排成竖向列表。
+// part 为 group 时只留 Used tools，为 artifacts 时只留计划和文件。
 function ToolCallsRow({
   tools,
+  part = "all",
   latest = false,
   live = false,
   latestDocIds,
@@ -278,6 +411,7 @@ function ToolCallsRow({
   onOpenGit,
 }: {
   tools: ToolItem[];
+  part?: "all" | "group" | "artifacts";
   latest?: boolean;
   live?: boolean;
   latestDocIds: Set<string>;
@@ -299,49 +433,64 @@ function ToolCallsRow({
     }
   }
   const files = [...filesByPath.values()];
+  const group = (
+    <ToolGroup>
+      <ToolGroupHeader count={tools.length} state={rollupToolState(tools)} live={live} />
+      <ToolGroupContent>
+        {tools.map((item) => {
+          if (item.name === "explore") {
+            return <ExploreCard key={item.id} item={item} live={live} />;
+          }
+          const dump = compactToolDump(item);
+          return (
+            <Tool key={item.id}>
+              <ToolHeader type={`tool-${item.name}`} state={item.state} live={live} />
+              <ToolContent>
+                <ToolInput input={dump.input} />
+                <ToolOutput output={dump.output} errorText={item.error} />
+              </ToolContent>
+            </Tool>
+          );
+        })}
+      </ToolGroupContent>
+    </ToolGroup>
+  );
+  const artifacts =
+    plans.length > 0 || files.length > 0 ? (
+      <div className="flex flex-col gap-2" {...(latest ? { "data-conversation-latest": "" } : {})}>
+        {plans.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5 px-3">
+            {plans.map(({ item, preview }) => (
+              <ArtifactChip
+                key={`plan:${item.id}`}
+                label={latestDocIds.has(item.id) ? `Plan ${preview.name}` : preview.name}
+                onClick={
+                  onOpenPlan
+                    ? () => onOpenPlan(preview, { toolState: item.state, error: item.error })
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        ) : null}
+        {files.length > 0 ? (
+          <ToolFileList files={files} onOpenFile={onOpenFile} onOpenGit={onOpenGit} />
+        ) : null}
+      </div>
+    ) : null;
+  if (part === "group") {
+    return group;
+  }
+  if (part === "artifacts") {
+    return artifacts;
+  }
   return (
     <div
       className={plans.length > 0 || files.length > 0 ? "flex flex-col gap-2" : undefined}
       {...(latest ? { "data-conversation-latest": "" } : {})}
     >
-      <ToolGroup>
-        <ToolGroupHeader count={tools.length} state={rollupToolState(tools)} live={live} />
-        <ToolGroupContent>
-          {tools.map((item) => {
-            if (item.name === "explore") {
-              return <ExploreCard key={item.id} item={item} live={live} />;
-            }
-            const dump = compactToolDump(item);
-            return (
-              <Tool key={item.id}>
-                <ToolHeader type={`tool-${item.name}`} state={item.state} live={live} />
-                <ToolContent>
-                  <ToolInput input={dump.input} />
-                  <ToolOutput output={dump.output} errorText={item.error} />
-                </ToolContent>
-              </Tool>
-            );
-          })}
-        </ToolGroupContent>
-      </ToolGroup>
-      {plans.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5 px-3">
-          {plans.map(({ item, preview }) => (
-            <ArtifactChip
-              key={`plan:${item.id}`}
-              label={latestDocIds.has(item.id) ? `Plan ${preview.name}` : preview.name}
-              onClick={
-                onOpenPlan
-                  ? () => onOpenPlan(preview, { toolState: item.state, error: item.error })
-                  : undefined
-              }
-            />
-          ))}
-        </div>
-      ) : null}
-      {files.length > 0 ? (
-        <ToolFileList files={files} onOpenFile={onOpenFile} onOpenGit={onOpenGit} />
-      ) : null}
+      {group}
+      {artifacts}
     </div>
   );
 }

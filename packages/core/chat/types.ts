@@ -180,6 +180,7 @@ export interface AssistantDeltaPayload {
 export interface AssistantCompletedPayload {
   message_id: string;
   text: string;
+  reasoning?: string;
   tool_calls?: ToolCall[];
 }
 
@@ -319,6 +320,7 @@ export type TimelineItem =
       runId: string;
       messageId: string;
       text: string;
+      reasoning?: string;
       streaming: boolean;
       seq: number;
     }

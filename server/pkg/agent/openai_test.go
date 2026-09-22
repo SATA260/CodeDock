@@ -159,6 +159,36 @@ func TestStreamOpenAI(t *testing.T) {
 			t.Fatalf("%+v %v", got, err)
 		}
 	})
+	t.Run("sse reasoning and text", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"think \"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"first\"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		}))
+		defer server.Close()
+		opts, _ := json.Marshal(map[string]string{"api_key": "k", "base_url": server.URL})
+		stream, err := Stream(context.Background(), Chat{
+			TurnID: "t-reason",
+			Model:  ModelConfig{Provider: "openai", Model: "gpt", Options: opts},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Close()
+		var kinds []string
+		for event := range stream.Events() {
+			kinds = append(kinds, string(event.Type))
+		}
+		got, err := stream.Result(context.Background())
+		if err != nil || DecodeText(got.Message.Content) != "pong" || got.Reasoning != "think first" {
+			t.Fatalf("%+v %v kinds=%v", got, err, kinds)
+		}
+		if len(kinds) < 3 || kinds[1] != string(ModelStreamReasoningDelta) {
+			t.Fatalf("kinds=%v", kinds)
+		}
+	})
 	t.Run("http error", func(t *testing.T) {
 		opts, _ := json.Marshal(map[string]string{"api_key": "k", "base_url": "http://127.0.0.1:1"})
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -240,6 +270,19 @@ func TestToOpenAIMessagesSkipsBlankAssistant(t *testing.T) {
 		},
 	})
 	if len(msgs) != 2 || msgs[0].Role != "assistant" || msgs[0].Content != "" || len(msgs[0].ToolCalls) != 1 || msgs[1].Role != "user" {
+		t.Fatalf("%+v", msgs)
+	}
+}
+
+// TestToOpenAIMessagesSendsReasoningContent 确认思考回传在 reasoning_content，不拼进 content。
+func TestToOpenAIMessagesSendsReasoningContent(t *testing.T) {
+	msgs := toOpenAIMessages(Chat{
+		Messages: []Message{
+			{Role: RoleAssistant, Content: EncodeTextContent("pong", "think first"), ToolCalls: []tool.Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}}},
+			{Role: RoleUser, Content: EncodeText("again")},
+		},
+	})
+	if len(msgs) != 2 || msgs[0].Content != "pong" || msgs[0].ReasoningContent != "think first" || msgs[1].Role != "user" {
 		t.Fatalf("%+v", msgs)
 	}
 }

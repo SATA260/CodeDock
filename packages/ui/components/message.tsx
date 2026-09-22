@@ -37,20 +37,22 @@ export function Message({
   );
 }
 
+// MessageContent 包住一条消息的正文，行高是字号的 1.5 倍。
 export function MessageContent({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("text-sm leading-5", className)} {...props} />;
+  return <div className={cn("text-sm leading-[1.6]", className)} {...props} />;
 }
 
 const plugins = { cjk, code, math, mermaid };
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
+// MessageResponse 渲染助手的 Markdown 正文，行高与消息正文一致。
 export const MessageResponse = memo(
   function MessageResponse({ className, plugins: extra, ...props }: MessageResponseProps) {
     return (
       <Streamdown
         className={cn(
-          "size-full space-y-1 leading-5 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          "size-full space-y-1 leading-[1.6] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
           "[&_[data-streamdown^='heading']]:mt-2.5 [&_[data-streamdown^='heading']]:mb-1",
           "[&_li]:py-0",
           "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
