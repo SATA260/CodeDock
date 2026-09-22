@@ -20,6 +20,7 @@ export function ClaudePane({
   pickFiles,
   onOpenSession,
   onCreated,
+  onPrepare,
   onNewConversation,
   onListChange,
   composeOnly = false,
@@ -30,6 +31,8 @@ export function ClaudePane({
   onOpenSession: (id: string) => void;
   /** 第一条消息已经发出、会话刚建好时调用，用来挂到 Work。 */
   onCreated?: (id: string) => Promise<void>;
+  /** 会话刚建好、第一条消息发出前调用，用来先挂上 Issue/PR。 */
+  onPrepare?: (id: string) => Promise<void>;
   onNewConversation: () => void;
   onListChange?: () => Promise<void>;
   composeOnly?: boolean;
@@ -76,6 +79,7 @@ export function ClaudePane({
     if (patch.model || patch.effort || patch.permission_mode || patch.cwd) {
       await client.applySettings(created.id, patch);
     }
+    await onPrepare?.(created.id);
     return created.id;
   };
 

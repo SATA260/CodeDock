@@ -32,6 +32,7 @@ export function SessionSidebar({
   onRecover,
   onArchive,
   onOpenBoard,
+  boardOpen = false,
   onAttach,
   canRecoverCurrent = false,
   brandSrc,
@@ -55,7 +56,10 @@ export function SessionSidebar({
   onSelect: (id: string, engine?: SessionEngine) => void;
   onRecover?: (runId: string) => Promise<void>;
   onArchive?: (session: SidebarSession) => Promise<void>;
-  onOpenBoard?: () => void;
+  /** 点开看板。origin 是按钮本身，黑点从它的中心铺开。看板已开时再点一次回到会话列表。 */
+  onOpenBoard?: (origin: HTMLButtonElement) => void;
+  /** 看板态只留这排顶栏，logo 和切换按钮停在会话列表时的位置。 */
+  boardOpen?: boolean;
   onAttach?: (session: SidebarSession, workId: string) => Promise<void>;
   canRecoverCurrent?: boolean;
   brandSrc?: string;
@@ -64,61 +68,74 @@ export function SessionSidebar({
   width?: number;
 }) {
   const rendered = groups ?? [{ id: null, title: "未分组", updatedAt: "", sessions }];
+  const boardLabel = boardOpen ? "返回会话" : "打开看板";
   return (
     <aside
-      className="flex h-full shrink-0 flex-col bg-background"
+      className={cn("flex shrink-0 flex-col bg-background", boardOpen ? "h-11" : "h-full")}
       style={width ? { width, minWidth: width, maxWidth: width } : { width: "15rem" }}
     >
-      <div className="flex items-center justify-between gap-2 px-3 py-2">
+      <div className="flex h-11 shrink-0 items-center gap-3 px-3">
         <div className="flex min-w-0 items-center gap-2">
           {brandSrc ? (
             <img src={brandSrc} alt="" className="size-6 shrink-0" />
           ) : null}
           <div className="truncate text-sm font-semibold tracking-tight">CodeDock</div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {onOpenBoard ? (
-            <Button size="sm" variant="ghost" className="px-1.5" title="打开看板" aria-label="打开看板" onClick={onOpenBoard}>
-              <LayoutGrid className="size-3.5" />
-            </Button>
-          ) : null}
-          <Button size="sm" variant="secondary" disabled={busy} onClick={onCreate}>
+        {onOpenBoard ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className={cn("px-1.5", boardOpen && "bg-accent text-accent-foreground")}
+            title={boardLabel}
+            aria-label={boardLabel}
+            aria-pressed={boardOpen}
+            onClick={(event) => onOpenBoard?.(event.currentTarget)}
+          >
+            <LayoutGrid className="size-3.5" />
+          </Button>
+        ) : null}
+        {boardOpen ? null : (
+          <Button className="ml-auto" size="sm" variant="secondary" disabled={busy} onClick={onCreate}>
             <PlusIcon className="size-3.5" />
             新对话
           </Button>
-        </div>
-      </div>
-      {error ? <p className="px-3 pb-2 text-xs text-destructive">{error}</p> : null}
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        {rendered.every((group) => group.id === null && group.sessions.length === 0) ? (
-          <p className="px-2 py-6 text-xs text-muted-foreground">还没有会话</p>
-        ) : (
-          rendered.map((group) => (
-            <WorkGroupSection
-              key={group.id ?? "ungrouped"}
-              group={group}
-              currentId={currentId}
-              works={works}
-              busy={busy}
-              onSelect={onSelect}
-              onRecover={onRecover}
-              onArchive={onArchive}
-              onAttach={onAttach}
-              onCreateInWork={onCreateInWork}
-              pendingWorkId={pendingWorkId}
-              canRecoverCurrent={canRecoverCurrent}
-              brandSrc={brandSrc}
-              codexIconSrc={codexIconSrc}
-              claudeIconSrc={claudeIconSrc}
-            />
-          ))
         )}
-        {hasMore && onLoadMore ? (
-          <Button className="mt-2 w-full" size="sm" variant="ghost" onClick={onLoadMore}>
-            加载更多
-          </Button>
-        ) : null}
-      </nav>
+      </div>
+      {boardOpen ? null : (
+        <>
+          {error ? <p className="px-3 pb-2 text-xs text-destructive">{error}</p> : null}
+          <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+            {rendered.every((group) => group.id === null && group.sessions.length === 0) ? (
+              <p className="px-2 py-6 text-xs text-muted-foreground">还没有会话</p>
+            ) : (
+              rendered.map((group) => (
+                <WorkGroupSection
+                  key={group.id ?? "ungrouped"}
+                  group={group}
+                  currentId={currentId}
+                  works={works}
+                  busy={busy}
+                  onSelect={onSelect}
+                  onRecover={onRecover}
+                  onArchive={onArchive}
+                  onAttach={onAttach}
+                  onCreateInWork={onCreateInWork}
+                  pendingWorkId={pendingWorkId}
+                  canRecoverCurrent={canRecoverCurrent}
+                  brandSrc={brandSrc}
+                  codexIconSrc={codexIconSrc}
+                  claudeIconSrc={claudeIconSrc}
+                />
+              ))
+            )}
+            {hasMore && onLoadMore ? (
+              <Button className="mt-2 w-full" size="sm" variant="ghost" onClick={onLoadMore}>
+                加载更多
+              </Button>
+            ) : null}
+          </nav>
+        </>
+      )}
     </aside>
   );
 }

@@ -7,27 +7,42 @@ import { useEffect, useState } from "react";
 
 import { useBoard } from "./provider.tsx";
 
-// SessionLinkEditor 按行编辑会话上的 GitHub 链接，不让用户选择 Issue 还是 PR。
+// SessionLinkEditor 按行编辑会话上的 GitHub 链接，不让用户选择 Issue 还是 PR。没有会话时先记在本地。
 export function SessionLinkEditor({
   engine,
   sessionId,
+  draft,
+  onDraft,
 }: {
-  engine: BoardEngine;
-  sessionId: string;
+  engine?: BoardEngine;
+  sessionId?: string;
+  /** 还没有会话时已经记下的链接。 */
+  draft?: string[];
+  /** 本地草稿保存后回写；发出第一条消息时再挂到会话上。 */
+  onDraft?: (links: string[]) => void;
 }) {
   const { client } = useBoard();
-  const [rows, setRows] = useState<string[]>([""]);
+  const [rows, setRows] = useState<string[]>(() => (draft && draft.length > 0 ? draft : [""]));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!engine || !sessionId) {
+      return;
+    }
     let cancelled = false;
     void client
       .getLinks(engine, sessionId)
       .then((links) => {
-        if (!cancelled) {
-          setRows(rowsFromLinks(links));
+        if (cancelled) {
+          return;
         }
+        const next = rowsFromLinks(links);
+        if (!next.some((row) => row.trim()) && draft?.some((row) => row.trim())) {
+          setRows(draft);
+          return;
+        }
+        setRows(next);
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -37,18 +52,21 @@ export function SessionLinkEditor({
     return () => {
       cancelled = true;
     };
-  }, [client, engine, sessionId]);
+  }, [client, draft, engine, sessionId]);
 
-  // save 把非空行整批换上去。
+  // save 把非空行整批换上去；还没有会话时只记在本地。
   const save = async () => {
+    const links = rows.map((row) => row.trim()).filter(Boolean);
+    if (!engine || !sessionId) {
+      onDraft?.(links);
+      setRows(links.length > 0 ? links : [""]);
+      setError(null);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const saved = await client.replaceLinks(
-        engine,
-        sessionId,
-        rows.map((row) => row.trim()).filter(Boolean),
-      );
+      const saved = await client.replaceLinks(engine, sessionId, links);
       setRows(rowsFromLinks(saved));
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败");
@@ -59,6 +77,7 @@ export function SessionLinkEditor({
 
   return (
     <div className="shrink-0 border-b border-border px-2 py-2">
+      <p className="mb-1.5 text-xs text-muted-foreground">加在对话前面。Issue 和 PR 贴 GitHub 链接。</p>
       <div className="flex flex-col gap-1">
         {rows.map((row, index) => (
           <div key={index} className="flex items-center gap-1">

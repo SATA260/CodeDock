@@ -345,7 +345,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/views`
 
-组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage` 两态。会话模式是三栏（左侧按 Work 分组、中间对话、右侧 Plan / 文件 / Git）。看板模式藏左栏与中间对话，中间是横向 Work 列（列宽固定、列内纵向滚动，横向滑到末尾再挂下一列），完整对话用可拖悬浮窗，右侧窗口栏不加 `chat` 种类。新建会话可选 Local / Codex / Claude，可先聊再补挂。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` / `boardMode` 与导航回调。Git 在 `git/`：`GitProvider` 只注入 `GitClient`。Codex / Claude 同上。看板在 `board/`：`BoardProvider` 只注入 `BoardClient`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
+组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage` 两态。会话模式是三栏（左侧按 Work 分组、中间对话、右侧 Plan / 文件 / Git）。看板模式藏中间对话，左上角仍是同一排 logo 和切换按钮，再点一次回到会话列表；中间是横向 Work 列（列宽固定、列内纵向滚动，横向滑到末尾再挂下一列）。来回切换都从打开按钮长出黑点盖住屏幕，再褪开露出另一态。看板顶栏不放「新对话」。完整对话用可拖悬浮窗，右侧窗口栏不加 `chat` 种类。新建会话可选 Local / Codex / Claude，可先聊再补挂。对话顶栏的设置可在发出前挂上 Issue/PR，随 Packet 加在对话前面。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` / `boardMode` 与导航回调。Git 在 `git/`：`GitProvider` 只注入 `GitClient`。Codex / Claude 同上。看板在 `board/`：`BoardProvider` 只注入 `BoardClient`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
 
 ### `apps/web`
 
