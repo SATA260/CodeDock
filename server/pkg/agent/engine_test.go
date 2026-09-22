@@ -834,9 +834,9 @@ func (failGate) Acquire(context.Context) error { return context.Canceled }
 // Release 空实现，满足 Gate 接口。
 func (failGate) Release() {}
 
-// TestEngineLLMGateAcquireCancelAndEmptyText 覆盖 LLM 占槽失败收束，以及空文本回复补 StepIndex。
+// TestEngineLLMGateAcquireCancelAndEmptyText 覆盖 LLM 占槽失败收束，以及空文本回复不落库。
 func TestEngineLLMGateAcquireCancelAndEmptyText(t *testing.T) {
-	engine, _, _ := testEngine(t)
+	engine, facts, _ := testEngine(t)
 	engine.SetGates(failGate{}, nil)
 	got, err := engine.callLLM(context.Background(), StepInput{
 		State: AgentState{
@@ -869,6 +869,31 @@ func TestEngineLLMGateAcquireCancelAndEmptyText(t *testing.T) {
 	}
 	if got.State.Status != RunRunningLLM || got.State.StepIndex != 1 {
 		t.Fatalf("empty text %+v", got.State)
+	}
+	if len(got.Messages) != 0 {
+		t.Fatalf("blank assistant persisted: %+v", got.Messages)
+	}
+	for _, fact := range facts.facts {
+		if fact.Type == EventAssistantCompleted {
+			t.Fatal("blank assistant should not complete")
+		}
+	}
+
+	engine, _, _ = testEngine(t)
+	got, err = engine.callLLM(context.Background(), StepInput{
+		State: AgentState{
+			SessionID: "sess-1",
+			RunID:     "run-1",
+			Config:    DefaultYoloConfig(ModelConfig{Provider: "fake", Model: "fake", Options: mustRaw(FakeOptions{Turns: []FakeTurn{{ToolCalls: []FakeToolCall{{Name: "ping"}}}}})}),
+		},
+		Job:     StepJob{RunID: "run-1", StepIndex: 0, Phase: PhaseUserInput},
+		History: fakeHistory("run-1", FakeOptions{Turns: []FakeTurn{{ToolCalls: []FakeToolCall{{Name: "ping"}}}}}),
+	}, Instruction{Type: InstructionCallLLM})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Messages) != 1 || len(got.Messages[0].ToolCalls) != 1 || DecodeText(got.Messages[0].Content) != "" {
+		t.Fatalf("empty text with tools should persist: %+v", got.Messages)
 	}
 }
 

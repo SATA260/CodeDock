@@ -15,7 +15,7 @@ const (
 	defaultExploreMaxTurns     = 6
 	defaultExploreMaxTools     = 12
 	defaultExploreTimeout      = 60 * time.Second
-	defaultExploreOutputTokens = 2000
+	defaultExploreOutputTokens = 16384
 )
 
 // ExploreInput 只读探索子任务的输入。
@@ -44,15 +44,24 @@ type ExploreOutput struct {
 
 // ExploreRequest 是底座小循环的完整入参。
 type ExploreRequest struct {
-	Input          ExploreInput
-	Model          ModelConfig
-	Registry       tool.Registry
-	WorkspaceRoot  string
-	SessionID      string
-	RunID          string
-	BoundNames     []string
-	ActivePlan     string   // 本会话已绑定的计划；探索时也不读其他计划
-	MentionedPlans []string // 用户点名的计划
+	Input           ExploreInput
+	Model           ModelConfig
+	Registry        tool.Registry
+	WorkspaceRoot   string
+	SessionID       string
+	RunID           string
+	BoundNames      []string
+	ActivePlan      string   // 本会话已绑定的计划；探索时也不读其他计划
+	MentionedPlans  []string // 用户点名的计划
+	MaxOutputTokens int64    // 单次子代理回复上限；0 用默认值。思考和正文共用这份预算
+}
+
+// exploreOutputTokens 取子代理单次回复上限，未指定时用默认可容纳思考的额度。
+func exploreOutputTokens(n int64) int64 {
+	if n <= 0 {
+		return defaultExploreOutputTokens
+	}
+	return n
 }
 
 // Explore 用便宜模型跑一个只读小循环，返回带引用的摘要。
@@ -97,7 +106,7 @@ func Explore(ctx context.Context, req ExploreRequest) (ExploreOutput, error) {
 			SystemPrompt:    exploreSystemPrompt(),
 			Messages:        messages,
 			Tools:           defs,
-			MaxOutputTokens: 1024,
+			MaxOutputTokens: exploreOutputTokens(req.MaxOutputTokens),
 		}
 		stream, err := Stream(ctx, chat)
 		if err != nil {

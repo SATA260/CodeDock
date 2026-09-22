@@ -70,7 +70,7 @@ func reviewOpenAI(ctx context.Context, model ModelConfig, calls []ApprovalToolCa
 			Role:    RoleUser,
 			Content: EncodeText(reviewerUserText(calls)),
 		}},
-		MaxOutputTokens: 1024,
+		MaxOutputTokens: 8192,
 	}
 	reqBody := openaiChatRequest{
 		Model:    model.Model,

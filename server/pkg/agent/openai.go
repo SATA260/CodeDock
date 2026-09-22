@@ -205,6 +205,7 @@ func developerWireRole(model ModelConfig) string {
 }
 
 // consumeOpenAI 解析 SSE 增量，拼出最终文本、工具调用和用量后关闭流。
+// 读完后若请求已取消，把空输出当成流失败，避免打断被记成一次成功的空回复。
 func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *staticStream) {
 	defer close(stream.done)
 	defer close(stream.events)
@@ -278,6 +279,10 @@ func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *s
 		stream.err = err
 		return
 	}
+	if err := ctx.Err(); err != nil {
+		stream.err = err
+		return
+	}
 	if usage.TotalTokens == 0 {
 		usage.OutputTokens = CountTokens(text.String())
 		usage.TotalTokens = usage.OutputTokens + CountTokens(chat.SystemPrompt)
@@ -305,12 +310,16 @@ func consumeOpenAI(ctx context.Context, chat Chat, body io.ReadCloser, stream *s
 
 // toOpenAIMessages 把系统提示、历史消息和工具结果映射成 OpenAI chat 消息。
 // 模式规则紧跟底座 system：DeepSeek 等网关会丢掉插在对话历史后面的 system。
+// 已落库的空助手消息（无正文且无 tool_calls）在这里丢掉，避免下一轮被网关拒绝。
 func toOpenAIMessages(chat Chat) []openaiChatMessage {
 	var mode *openaiChatMessage
 	rest := make([]openaiChatMessage, 0, len(chat.Messages))
 	for _, msg := range chat.Messages {
 		switch msg.Role {
 		case RoleAssistant:
+			if assistantBlank(msg.Content, msg.ToolCalls) {
+				continue
+			}
 			item := openaiChatMessage{Role: "assistant", Content: DecodeText(msg.Content)}
 			for _, call := range msg.ToolCalls {
 				item.ToolCalls = append(item.ToolCalls, openaiToolCall{

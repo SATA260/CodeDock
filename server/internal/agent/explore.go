@@ -26,6 +26,7 @@ func (r *Runtime) explore(ctx context.Context, input pkgagent.ExploreInput, work
 			scope := pkgagent.ResolvePlanScope(state.ActivePlan, hist.Messages)
 			req.ActivePlan = scope.ActivePlan
 			req.MentionedPlans = scope.Mentioned
+			req.MaxOutputTokens = state.Config.Limits.MaxOutputTokens
 		}
 	}
 	return pkgagent.Explore(ctx, req)

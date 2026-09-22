@@ -18,6 +18,12 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("LLM_MODEL", "")
 	t.Setenv("LLM_API_KEY", "")
 	t.Setenv("LLM_BASE_URL", "")
+	t.Setenv("LLM_THINKING", "")
+	t.Setenv("LLM_MAX_INPUT_TOKENS", "")
+	t.Setenv("LLM_MAX_OUTPUT_TOKENS", "")
+	t.Setenv("LLM_MAX_TURNS", "")
+	t.Setenv("LLM_MAX_TOOL_CALLS", "")
+	t.Setenv("LLM_MAX_WALL_TIME", "")
 	t.Setenv("GIT_REPO", "")
 	t.Setenv("PLUGIN_DIR", "")
 	t.Setenv("PLUGIN_RPC_TIMEOUT", "")
@@ -42,6 +48,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.LLMModel != "fake" {
 		t.Fatalf("LLMModel = %q, want fake", cfg.LLMModel)
+	}
+	if cfg.LLMThinking != "" || cfg.LLMMaxInputTokens != 256000 || cfg.LLMMaxOutputTokens != 65536 || cfg.LLMMaxTurns != 32 || cfg.LLMMaxToolCalls != 64 || cfg.LLMMaxWallTime != 20*time.Minute {
+		t.Fatalf("llm limits = %+v", cfg)
 	}
 	if cfg.GitRepo != "" {
 		t.Fatalf("GitRepo = %q, want empty", cfg.GitRepo)
@@ -73,6 +82,12 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("LLM_MODEL", "gpt-4o")
 	t.Setenv("LLM_API_KEY", "sk-test")
 	t.Setenv("LLM_BASE_URL", "https://api.example.com/v1")
+	t.Setenv("LLM_THINKING", "disabled")
+	t.Setenv("LLM_MAX_INPUT_TOKENS", "1000")
+	t.Setenv("LLM_MAX_OUTPUT_TOKENS", "2000")
+	t.Setenv("LLM_MAX_TURNS", "3")
+	t.Setenv("LLM_MAX_TOOL_CALLS", "4")
+	t.Setenv("LLM_MAX_WALL_TIME", "1m")
 	t.Setenv("GIT_REPO", "/tmp/repo")
 	t.Setenv("PLUGIN_DIR", "/tmp/plugins")
 	t.Setenv("PLUGIN_RPC_TIMEOUT", "2s")
@@ -84,6 +99,9 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.LLMProvider != "openai" || cfg.LLMModel != "gpt-4o" || cfg.LLMAPIKey != "sk-test" || cfg.LLMBaseURL != "https://api.example.com/v1" {
 		t.Fatalf("Load() LLM = %+v", cfg)
+	}
+	if cfg.LLMThinking != "disabled" || cfg.LLMMaxInputTokens != 1000 || cfg.LLMMaxOutputTokens != 2000 || cfg.LLMMaxTurns != 3 || cfg.LLMMaxToolCalls != 4 || cfg.LLMMaxWallTime != time.Minute {
+		t.Fatalf("llm limits = %+v", cfg)
 	}
 	if cfg.GitRepo != "/tmp/repo" {
 		t.Fatalf("GitRepo = %q, want /tmp/repo", cfg.GitRepo)

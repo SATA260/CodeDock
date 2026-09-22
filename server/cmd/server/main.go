@@ -95,8 +95,14 @@ func main() {
 	runtime.Start(ctx)
 
 	defaults := pkgagent.DefaultRunConfig(pkgagent.WorkAgent, model)
-	defaults.EvaluatorModel = sideModel(cfg.EvaluatorProvider, cfg.EvaluatorModel, cfg.EvaluatorAPIKey, cfg.EvaluatorBaseURL, model)
-	defaults.SubagentModel = sideModel(cfg.SubagentProvider, cfg.SubagentModel, cfg.SubagentAPIKey, cfg.SubagentBaseURL, defaults.EvaluatorModel)
+	defaults.Limits.MaxInputTokens = cfg.LLMMaxInputTokens
+	defaults.Limits.MaxOutputTokens = cfg.LLMMaxOutputTokens
+	defaults.Limits.MaxTurns = cfg.LLMMaxTurns
+	defaults.Limits.MaxToolCalls = cfg.LLMMaxToolCalls
+	defaults.Limits.MaxWallTime = cfg.LLMMaxWallTime
+	log.Info("llm limits", "max_input_tokens", cfg.LLMMaxInputTokens, "max_output_tokens", cfg.LLMMaxOutputTokens, "max_turns", cfg.LLMMaxTurns, "max_tool_calls", cfg.LLMMaxToolCalls, "max_wall_time", cfg.LLMMaxWallTime.String(), "thinking", cfg.LLMThinking)
+	defaults.EvaluatorModel = sideModel(cfg.EvaluatorProvider, cfg.EvaluatorModel, cfg.EvaluatorAPIKey, cfg.EvaluatorBaseURL, cfg.LLMThinking, model)
+	defaults.SubagentModel = sideModel(cfg.SubagentProvider, cfg.SubagentModel, cfg.SubagentAPIKey, cfg.SubagentBaseURL, cfg.LLMThinking, defaults.EvaluatorModel)
 	api := handler.New(client, queries, runtime, bus, defaults, cfg, logger.NewLogger("handler"))
 	codexRT := intcodex.New(intcodex.Options{Bin: cfg.CodexBin})
 	defer func() { _ = codexRT.Close() }()
@@ -144,13 +150,13 @@ func main() {
 	}
 }
 
-// modelOptions 把 LLM API Key 与 BaseURL 编进 ModelConfig.Options。
+// modelOptions 把 LLM API Key、BaseURL 和思考开关编进 ModelConfig.Options。
 func modelOptions(cfg config.Config) json.RawMessage {
-	return encodeModelOptions(cfg.LLMAPIKey, cfg.LLMBaseURL)
+	return encodeModelOptions(cfg.LLMAPIKey, cfg.LLMBaseURL, cfg.LLMThinking)
 }
 
 // sideModel 组装复审或子代理模型；未配置时回落 fallback。
-func sideModel(provider, name, apiKey, baseURL string, fallback pkgagent.ModelConfig) pkgagent.ModelConfig {
+func sideModel(provider, name, apiKey, baseURL, thinking string, fallback pkgagent.ModelConfig) pkgagent.ModelConfig {
 	out := fallback
 	if strings.TrimSpace(provider) != "" {
 		out.Provider = provider
@@ -158,7 +164,10 @@ func sideModel(provider, name, apiKey, baseURL string, fallback pkgagent.ModelCo
 	if strings.TrimSpace(name) != "" {
 		out.Model = name
 	}
-	if strings.TrimSpace(apiKey) != "" || strings.TrimSpace(baseURL) != "" {
+	if strings.TrimSpace(thinking) == "" {
+		thinking = optionString(fallback.Options, "thinking")
+	}
+	if strings.TrimSpace(apiKey) != "" || strings.TrimSpace(baseURL) != "" || strings.TrimSpace(thinking) != "" {
 		key := apiKey
 		if key == "" {
 			key = optionString(fallback.Options, "api_key")
@@ -167,17 +176,21 @@ func sideModel(provider, name, apiKey, baseURL string, fallback pkgagent.ModelCo
 		if url == "" {
 			url = optionString(fallback.Options, "base_url")
 		}
-		out.Options = encodeModelOptions(key, url)
+		out.Options = encodeModelOptions(key, url, thinking)
 	}
 	return out
 }
 
-// encodeModelOptions 把 Key 与 BaseURL 编成模型 Options。
-func encodeModelOptions(apiKey, baseURL string) json.RawMessage {
-	body, err := json.Marshal(map[string]string{
+// encodeModelOptions 把 Key、BaseURL 和思考开关编成模型 Options。
+func encodeModelOptions(apiKey, baseURL, thinking string) json.RawMessage {
+	fields := map[string]string{
 		"api_key":  apiKey,
 		"base_url": baseURL,
-	})
+	}
+	if strings.TrimSpace(thinking) != "" {
+		fields["thinking"] = thinking
+	}
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return json.RawMessage("{}")
 	}

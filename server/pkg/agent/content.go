@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 
 	"codedock/pkg/agent/tool"
 )
@@ -40,6 +41,12 @@ func DecodeText(content json.RawMessage) string {
 		return raw
 	}
 	return string(content)
+}
+
+// assistantBlank 判断助手消息是否既无正文也无工具调用。
+// 空 content 且没有 tool_calls 的助手消息会被兼容网关拒绝。
+func assistantBlank(content json.RawMessage, calls []tool.Call) bool {
+	return strings.TrimSpace(DecodeText(content)) == "" && len(calls) == 0
 }
 
 // EncodeToolResult 将工具结果编码为消息 Content。
