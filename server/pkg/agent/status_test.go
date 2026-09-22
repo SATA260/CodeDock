@@ -50,6 +50,9 @@ func TestNeedsUserRecover(t *testing.T) {
 		{RunFailed, false, false},
 		{RunCancelled, false, false},
 	}
+	if IsExecuting(RunRunningLLM) != true || IsExecuting(RunWaitingApproval) || IsExecuting(RunCompleted) {
+		t.Fatal("executing should exclude approval and terminal")
+	}
 	for _, tc := range cases {
 		if got := NeedsUserRecover(tc.status, tc.busy); got != tc.want {
 			t.Fatalf("NeedsUserRecover(%s, busy=%v)=%v want %v", tc.status, tc.busy, got, tc.want)

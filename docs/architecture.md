@@ -278,7 +278,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `internal/board`
 
-产品工作流：Work / Info / Placement / Board 聚合 / Inbox 编排 / Packet。同一用户下标题不能重复；新建时标题为空则取最小的空号，从 `未命名(1)` 起。一张卡可挂多路会话。目录绑在会话上，不挂在卡上；已有会话可以事后绑定或更换目录。旧会话不自动建卡；可先聊再补挂。删卡只断开归属，不删会话、不删磁盘。看板只聚合摘要，不加载对话正文。目录 Git 状态现问 `pkg/git`。不写记忆正文、不 spawn CLI、不建 worktree。
+产品工作流：Work / Info / Placement / Board 聚合 / Inbox 编排 / Packet。同一用户下标题不能重复；新建时标题为空则取最小的空号，从 `未命名(1)` 起。一张卡可挂多路会话。目录绑在会话上，不挂在卡上；只在创建会话时绑定，之后不能改、不能解绑。看板待审批和会话窗口一样一条一条看摘要，选齐同一张票才提交。旧会话不自动建卡；可先聊再补挂。删卡只断开归属，不删会话、不删磁盘。看板只聚合摘要，不加载对话正文。进行中只表示引擎还在执行；等审批单独计，不记成进行中。看板开着且有进行中或待审批时会重拉这两项。目录 Git 状态现问 `pkg/git`。不写记忆正文、不 spawn CLI、不建 worktree。
 
 ### `pkg/git`
 
@@ -345,7 +345,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/views`
 
-组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage` 两态。会话模式是三栏（左侧按 Work 分组、中间对话、右侧 Plan / 文件 / Git）。看板模式藏中间对话，左上角仍是同一排 logo 和切换按钮，再点一次回到会话列表；中间是横向 Work 列（列宽固定、列内纵向滚动，横向滑到末尾再挂下一列）。来回切换都从打开按钮长出黑点盖住屏幕，再褪开露出另一态。看板顶栏不放「新对话」。完整对话用可拖悬浮窗，右侧窗口栏不加 `chat` 种类。新建会话可选 Local / Codex / Claude，可先聊再补挂。对话顶栏的设置可在发出前挂上 Issue/PR，随 Packet 加在对话前面。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` / `boardMode` 与导航回调。Git 在 `git/`：`GitProvider` 只注入 `GitClient`。Codex / Claude 同上。看板在 `board/`：`BoardProvider` 只注入 `BoardClient`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
+组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage` 两态。会话模式是三栏（左侧按 Work 分组、中间对话、右侧 Plan / 文件 / Git）。看板模式藏中间对话，左上角仍是同一排 logo 和切换按钮，旁边是「新建分组」（不填标题，空号由服务端取）；再点切换按钮回到会话列表。列头标题可直接改。中间是横向 Work 列（列宽固定、列内纵向滚动，横向滑到末尾再挂下一列）。来回切换都从打开按钮长出黑点盖住屏幕，再褪开露出另一态。看板顶栏不放「新对话」。完整对话用可拖悬浮窗，右侧窗口栏不加 `chat` 种类。新建会话可选 Local / Codex / Claude，可先聊再补挂。发出第一条消息前就能打开设置；保存 Issue 或 PR 链接即创建会话，不必先发消息，关掉新建窗仍不建会话。链接随 Packet 加在对话前面。看板新建悬浮窗同样有这个按钮。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` / `boardMode` 与导航回调。Git 在 `git/`：`GitProvider` 只注入 `GitClient`。Codex / Claude 同上。看板在 `board/`：`BoardProvider` 只注入 `BoardClient`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
 
 ### `apps/web`
 

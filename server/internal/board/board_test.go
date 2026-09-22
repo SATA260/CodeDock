@@ -59,18 +59,21 @@ func TestWorkCheckoutPlacement(t *testing.T) {
 	}
 	bound, err := SetSessionDirectory(ctx, q, EngineNative, "s-talk", dir)
 	if err != nil || bound == "" {
-		t.Fatalf("talk session should bind a directory later: %q %v", bound, err)
+		t.Fatalf("talk session should bind a directory at creation: %q %v", bound, err)
 	}
 	talk, err = GetPlacement(ctx, q, EngineNative, "s-talk")
 	if err != nil || talk.Checkout != bound {
 		t.Fatalf("bound talk %+v %v", talk, err)
 	}
-	if _, err := SetSessionDirectory(ctx, q, EngineNative, "s-talk", ""); err != nil {
-		t.Fatal(err)
+	if _, err := SetSessionDirectory(ctx, q, EngineNative, "s-talk", ""); err == nil {
+		t.Fatal("directory cannot be unbound")
+	}
+	if _, err := SetSessionDirectory(ctx, q, EngineNative, "s-talk", t.TempDir()); err == nil {
+		t.Fatal("directory cannot be replaced")
 	}
 	talk, err = GetPlacement(ctx, q, EngineNative, "s-talk")
-	if err != nil || talk.Checkout != "" {
-		t.Fatalf("unbound talk %+v %v", talk, err)
+	if err != nil || talk.Checkout != bound {
+		t.Fatalf("directory should stay %+v %v", talk, err)
 	}
 	if err := DetachCheckout(ctx, q, work.ID, co.Path); err != nil {
 		t.Fatal(err)
@@ -125,6 +128,16 @@ func TestStartTalkAndInDir(t *testing.T) {
 	}
 	if _, _, err := svc.StartInDir(ctx, work.ID, filepath.Join(os.TempDir(), "missing-codedock-dir"), StartSpec{Engine: EngineNative}); err == nil {
 		t.Fatal("missing checkout must fail")
+	}
+}
+
+func TestApprovalSummary(t *testing.T) {
+	got := approvalSummary("tools", `[{"name":"bash","arguments":{"command":"ls packages"}}]`)
+	if got != "bash\nls packages" {
+		t.Fatalf("summary %q", got)
+	}
+	if approvalSummary("verify", "") != "verify" {
+		t.Fatal("empty calls should keep the kind")
 	}
 }
 

@@ -32,6 +32,8 @@ export function SessionSidebar({
   onRecover,
   onArchive,
   onOpenBoard,
+  onCreateGroup,
+  creatingGroup = false,
   boardOpen = false,
   onAttach,
   canRecoverCurrent = false,
@@ -58,6 +60,9 @@ export function SessionSidebar({
   onArchive?: (session: SidebarSession) => Promise<void>;
   /** 点开看板。origin 是按钮本身，黑点从它的中心铺开。看板已开时再点一次回到会话列表。 */
   onOpenBoard?: (origin: HTMLButtonElement) => void;
+  /** 看板已开时，在切换按钮旁一键建分组，标题由服务端取空号。 */
+  onCreateGroup?: () => void;
+  creatingGroup?: boolean;
   /** 看板态只留这排顶栏，logo 和切换按钮停在会话列表时的位置。 */
   boardOpen?: boolean;
   onAttach?: (session: SidebarSession, workId: string) => Promise<void>;
@@ -72,7 +77,13 @@ export function SessionSidebar({
   return (
     <aside
       className={cn("flex shrink-0 flex-col bg-background", boardOpen ? "h-11" : "h-full")}
-      style={width ? { width, minWidth: width, maxWidth: width } : { width: "15rem" }}
+      style={
+        width
+          ? boardOpen
+            ? { minWidth: width }
+            : { width, minWidth: width, maxWidth: width }
+          : { width: "15rem" }
+      }
     >
       <div className="flex h-11 shrink-0 items-center gap-3 px-3">
         <div className="flex min-w-0 items-center gap-2">
@@ -92,6 +103,12 @@ export function SessionSidebar({
             onClick={(event) => onOpenBoard?.(event.currentTarget)}
           >
             <LayoutGrid className="size-3.5" />
+          </Button>
+        ) : null}
+        {boardOpen && onCreateGroup ? (
+          <Button size="sm" variant="secondary" className="shrink-0" disabled={creatingGroup} onClick={onCreateGroup}>
+            <PlusIcon className="size-3.5" />
+            新建分组
           </Button>
         ) : null}
         {boardOpen ? null : (

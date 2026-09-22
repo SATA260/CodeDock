@@ -131,6 +131,21 @@ func (a *API) startCodexBoard(ctx context.Context, spec board.StartSpec) (board.
 	}, nil
 }
 
+// nativeSessionLive 只有 Worker 还在执行的 active Run 才算进行中。等审批、已结束、需要恢复都不算。
+func (a *API) nativeSessionLive(ctx context.Context, activeRunID string) bool {
+	if a == nil || activeRunID == "" {
+		return false
+	}
+	if a.runNeedsRecover(ctx, activeRunID) {
+		return false
+	}
+	row, err := a.q(ctx).GetRun(ctx, activeRunID)
+	if err != nil {
+		return false
+	}
+	return pkgagent.IsExecuting(pkgagent.RunStatus(row.Status))
+}
+
 // lookupBoardSession 读三引擎会话摘要。
 func (a *API) lookupBoardSession(ctx context.Context, engine board.Engine, sessionID string) (board.SessionMeta, error) {
 	switch engine {
@@ -140,11 +155,15 @@ func (a *API) lookupBoardSession(ctx context.Context, engine board.Engine, sessi
 			return board.SessionMeta{}, wrapHandlerDB(err)
 		}
 		pending, _ := a.q(ctx).CountPendingApprovals(ctx, sessionID)
+		active := ""
+		if row.ActiveRunID.Valid {
+			active = row.ActiveRunID.String
+		}
 		return board.SessionMeta{
 			ID:        row.ID,
 			Summary:   row.Summary,
 			UpdatedAt: row.UpdatedAt,
-			Running:   row.ActiveRunID.Valid && row.ActiveRunID.String != "",
+			Running:   a.nativeSessionLive(ctx, active),
 			Pending:   int(pending),
 			Archived:  row.Status == string(pkgagent.SessionArchived),
 		}, nil
@@ -153,12 +172,13 @@ func (a *API) lookupBoardSession(ctx context.Context, engine board.Engine, sessi
 		if err != nil {
 			return board.SessionMeta{}, err
 		}
+		pending := len(claude.PendingAsks(sess.ID))
 		return board.SessionMeta{
 			ID:        sess.ID,
 			Summary:   firstNonEmpty(sess.Title, sess.ClaudeSessionID),
 			UpdatedAt: stampRFC(sess.UpdatedAt),
-			Running:   sess.ActiveTurnID != "",
-			Pending:   len(claude.PendingAsks(sess.ID)),
+			Running:   sess.ActiveTurnID != "" && pending == 0,
+			Pending:   pending,
 			Archived:  sess.Archived,
 		}, nil
 	case board.EngineCodex:
@@ -169,12 +189,13 @@ func (a *API) lookupBoardSession(ctx context.Context, engine board.Engine, sessi
 		if err != nil {
 			return board.SessionMeta{}, err
 		}
+		pending := len(a.codex.PendingAsks(sessionID))
 		return board.SessionMeta{
 			ID:        sess.ID,
 			Summary:   firstNonEmpty(sess.Title, sess.Preview),
 			UpdatedAt: stampRFC(sess.UpdatedAt),
-			Running:   sess.ActiveTurnID != "",
-			Pending:   len(a.codex.PendingAsks(sessionID)),
+			Running:   sess.ActiveTurnID != "" && pending == 0,
+			Pending:   pending,
 			Archived:  sess.Archived,
 		}, nil
 	default:
@@ -192,12 +213,13 @@ func (a *API) listBoardEngine(ctx context.Context, engine board.Engine) ([]board
 		}
 		out := make([]board.SessionMeta, 0, len(sessions))
 		for _, sess := range sessions {
+			pending := len(claude.PendingAsks(sess.ID))
 			out = append(out, board.SessionMeta{
 				ID:        sess.ID,
 				Summary:   firstNonEmpty(sess.Title, sess.ClaudeSessionID),
 				UpdatedAt: stampRFC(sess.UpdatedAt),
-				Running:   sess.ActiveTurnID != "",
-				Pending:   len(claude.PendingAsks(sess.ID)),
+				Running:   sess.ActiveTurnID != "" && pending == 0,
+				Pending:   pending,
 				Archived:  sess.Archived,
 			})
 		}
@@ -212,12 +234,13 @@ func (a *API) listBoardEngine(ctx context.Context, engine board.Engine) ([]board
 		}
 		out := make([]board.SessionMeta, 0, len(page.Sessions))
 		for _, sess := range page.Sessions {
+			pending := len(a.codex.PendingAsks(sess.ID))
 			out = append(out, board.SessionMeta{
 				ID:        sess.ID,
 				Summary:   firstNonEmpty(sess.Title, sess.Preview),
 				UpdatedAt: stampRFC(sess.UpdatedAt),
-				Running:   sess.ActiveTurnID != "",
-				Pending:   len(a.codex.PendingAsks(sess.ID)),
+				Running:   sess.ActiveTurnID != "" && pending == 0,
+				Pending:   pending,
 				Archived:  sess.Archived,
 			})
 		}

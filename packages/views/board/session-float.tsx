@@ -15,7 +15,9 @@ import { createSessionError } from "../chat/lib/workspace.ts";
 import { PendingDock } from "../chat/pending-dock.tsx";
 import { PromptBar } from "../chat/prompt-bar.tsx";
 import { ClaudePane } from "../claude/claude-pane.tsx";
+import { useClaude } from "../claude/provider.tsx";
 import { CodexPane } from "../codex/codex-pane.tsx";
+import { useCodex } from "../codex/provider.tsx";
 import { useAgent } from "../provider.tsx";
 import { useBoard } from "./provider.tsx";
 import { SessionLinkEditor } from "./session-links.tsx";
@@ -47,12 +49,15 @@ export function SessionFloat({
   onOpenPlan,
   onOpenFile,
   onOpenGit,
+  initialLinksOpen = false,
 }: {
   session: FloatSession;
   onClose: () => void;
   onOpenPlan: Parameters<typeof ConversationTimeline>[0]["onOpenPlan"];
   onOpenFile: Parameters<typeof ConversationTimeline>[0]["onOpenFile"];
   onOpenGit: () => void;
+  /** 刚靠链接建好会话时，设置面板保持打开。 */
+  initialLinksOpen?: boolean;
 }) {
   const { pickFiles } = useAgent();
   const timeline = useSessionTimeline(session.engine === "agent" ? session.id : undefined);
@@ -64,9 +69,15 @@ export function SessionFloat({
       ),
     [timeline.state.items],
   );
-  const [linksOpen, setLinksOpen] = useState(false);
+  const [linksOpen, setLinksOpen] = useState(initialLinksOpen);
+  const seenSession = useRef(`${session.engine}:${session.id}`);
 
   useEffect(() => {
+    const key = `${session.engine}:${session.id}`;
+    if (seenSession.current === key) {
+      return;
+    }
+    seenSession.current = key;
     setLinksOpen(false);
   }, [session.id, session.engine]);
 
@@ -153,7 +164,7 @@ export type ComposeDraft = {
   directory: string;
 };
 
-// ComposeFloat 在看板上弹出输入窗。关掉不建会话，发出第一条消息才创建并挂到这张卡。
+// ComposeFloat 在看板上弹出输入窗。关掉不建会话。发出消息，或保存 Issue/PR 链接，才创建并挂到这张卡。
 export function ComposeFloat({
   draft,
   onClose,
@@ -161,22 +172,101 @@ export function ComposeFloat({
 }: {
   draft: ComposeDraft;
   onClose: () => void;
-  onSent: (id: string, engine: SessionEngine) => void;
+  /** source 为 links 时，会话是靠保存链接建的，设置面板保持打开。 */
+  onSent: (id: string, engine: SessionEngine, source?: "links") => void;
 }) {
   const { client, userId, pickFiles } = useAgent();
+  const { client: codex } = useCodex();
+  const { client: claude } = useClaude();
   const { client: board } = useBoard();
   const [sending, setSending] = useState(false);
+  const [linksOpen, setLinksOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const engineLabel = draft.engine === "codex" ? "Codex" : draft.engine === "claude" ? "Claude" : "Local";
   const directory = draft.directory.trim();
 
-  // attach 把刚建好的会话挂到这张卡。
+  // attach 把刚建好的会话挂到这张卡。选过目录时在这里记下，之后不能再改。
   const attach = async (id: string) => {
+    if (directory) {
+      await board.bindDirectory(draft.engine, id, directory);
+    }
     await board.attachPlacement(draft.workId, draft.engine, id);
   };
 
+  // discard 链接没挂上时清掉刚建的空会话。
+  const discard = async (id: string) => {
+    if (draft.engine === "codex") {
+      await codex.archiveSession(id);
+    } else if (draft.engine === "claude") {
+      await claude.archiveSession(id);
+    } else {
+      await client.archiveSession(id);
+    }
+  };
+
+  // createFromLinks 保存非空 Issue/PR 时建会话，不必先发消息。
+  const createFromLinks = async (links: string[]) => {
+    if (links.length === 0) {
+      return;
+    }
+    setError(null);
+    let createdId = "";
+    try {
+      if (draft.engine === "codex") {
+        const session = await codex.createSession(directory ? { cwd: directory } : {});
+        createdId = session.id;
+      } else if (draft.engine === "claude") {
+        const session = await claude.createSession();
+        createdId = session.id;
+        if (directory) {
+          await claude.applySettings(createdId, { cwd: directory });
+        }
+      } else {
+        const session = await client.createSession({
+          user_id: userId,
+          workspace_id: directory || undefined,
+        });
+        createdId = session.id;
+      }
+      await board.replaceLinks(draft.engine, createdId, links);
+      try {
+        await attach(createdId);
+      } catch (err) {
+        setError(createSessionError(err, "会话已创建，但没能放到分组"));
+      }
+      onSent(createdId, draft.engine, "links");
+    } catch (err) {
+      if (createdId) {
+        try {
+          await discard(createdId);
+        } catch {
+          // 链接没挂上时尽量清掉空会话
+        }
+      }
+      throw err instanceof Error ? err : new Error("无法创建会话");
+    }
+  };
+
   return (
-    <FloatShell title={`新建 · ${engineLabel} · ${draft.title || "未命名"}`} onClose={onClose}>
+    <FloatShell
+      title={`新建 · ${engineLabel} · ${draft.title || "未命名"}`}
+      onClose={onClose}
+      actions={
+        <Button
+          size="sm"
+          variant="ghost"
+          className="px-1.5"
+          aria-label="设置链接"
+          aria-pressed={linksOpen}
+          onClick={() => setLinksOpen((open) => !open)}
+        >
+          <Settings className="size-3.5" />
+        </Button>
+      }
+    >
+      {linksOpen ? (
+        <SessionLinkEditor engine={draft.engine} onDraft={createFromLinks} />
+      ) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 text-center text-xs text-muted-foreground">
           <p>发送后放到 {draft.title || "未命名"}</p>

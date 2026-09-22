@@ -2,7 +2,7 @@
 
 import type { BoardEngine, InboxItem, SessionView } from "@codedock/core/board";
 import { Button, MessageResponse } from "@codedock/ui";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useClaude } from "../claude/provider.tsx";
 import type { SessionEngine } from "../chat/chat-page.tsx";
@@ -38,9 +38,13 @@ export function WorkColumn({
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const workId = column.card?.work.id;
+  const titleFocused = useRef(false);
+  const skipTitleSave = useRef(false);
 
   useEffect(() => {
-    setTitle(column.title);
+    if (!titleFocused.current) {
+      setTitle(column.title);
+    }
     setInfo(column.card?.info.body ?? "");
   }, [column.card?.info.body, column.title]);
 
@@ -52,19 +56,33 @@ export function WorkColumn({
     void client.listInbox(workId).then(setInbox).catch(() => setInbox([]));
   }, [client, workId, column.card?.pending, column.sessions]);
 
-  // saveTitle 改列头标题。重名时改回去并提示。
-  const saveTitle = async () => {
-    if (!workId || title.trim() === "" || title === column.title) {
+  // saveTitle 离开输入框时改列头标题。用输入框里的字，避免回车时状态还没提交。空白改回去；重名时改回去并提示。
+  const saveTitle = async (raw: string) => {
+    titleFocused.current = false;
+    if (skipTitleSave.current) {
+      skipTitleSave.current = false;
+      return;
+    }
+    const next = raw.trim();
+    if (!workId || next === "" || next === column.title) {
+      setTitle(column.title);
       return;
     }
     setError(null);
     try {
-      await client.updateWork(workId, title.trim());
+      await client.updateWork(workId, next);
       await onRefresh();
     } catch (err) {
       setTitle(column.title);
       setError(workTitleError(err));
     }
+  };
+
+  // revertTitle 放弃这次修改，不提交。
+  const revertTitle = () => {
+    skipTitleSave.current = true;
+    titleFocused.current = false;
+    setTitle(column.title);
   };
 
   // saveInfo 从编辑框覆盖写入这张卡的说明。
@@ -112,9 +130,21 @@ export function WorkColumn({
         ) : (
           <input
             value={title}
+            aria-label="分组标题"
             onChange={(event) => setTitle(event.target.value)}
-            onBlur={() => void saveTitle()}
-            className="w-full bg-transparent text-sm font-semibold outline-none"
+            onFocus={() => {
+              titleFocused.current = true;
+            }}
+            onBlur={(event) => void saveTitle(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              } else if (event.key === "Escape") {
+                revertTitle();
+                event.currentTarget.blur();
+              }
+            }}
+            className="h-7 w-full cursor-text rounded border border-border bg-background px-1.5 text-sm font-semibold text-foreground outline-none focus:border-foreground/40"
           />
         )}
         {column.card ? (
@@ -136,8 +166,8 @@ export function WorkColumn({
             <InfoEditor open={editingInfo} value={info} onClose={() => setEditingInfo(false)} onSave={saveInfo} />
             <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
               <span>{column.sessions.length} 会话</span>
-              <span>进行中 {column.card.running}</span>
-              <span>待审批 {column.card.pending}</span>
+              <span>进行中 {executingCount(column.sessions)}</span>
+              <span>待审批 {pendingCount(column.sessions)}</span>
             </div>
             <div className="flex items-center gap-1 text-[11px]">
               <button
@@ -190,27 +220,29 @@ export function WorkColumn({
         ) : (
           column.sessions.map((session) => {
             const sessionInbox = inbox.filter((item) => item.session_id === session.session_id);
+            const waiting = session.pending > 0;
+            const executing = session.running && !waiting;
             return (
               <li key={`${session.engine}:${session.session_id}`} className="rounded-md border border-border/70 px-2 py-1.5">
                 <div className="flex items-start gap-2">
                   <div className="min-w-0 flex-1">
                     <button
                       type="button"
-                      className={`block w-full truncate text-left text-sm font-medium hover:text-foreground${session.running ? " live-status-active" : ""}`}
+                      className={`block w-full truncate text-left text-sm font-medium hover:text-foreground${executing ? " live-status-active" : ""}${waiting ? " live-status-waiting" : ""}`}
                       onClick={() => onOpenSession(session.session_id, session.engine)}
                     >
                       {session.summary || session.session_id}
                     </button>
                     <p className="mt-0.5 text-[11px] text-muted-foreground">
                       {engineLabel(session.engine)}
-                      {session.running ? <span className="live-status-active"> · 进行中</span> : ""}
-                      {session.pending ? ` · 待审批 ${session.pending}` : ""}
+                      {executing ? <span className="live-status-active"> · 进行中</span> : ""}
+                      {waiting ? <span className="live-status-waiting"> · 待审批</span> : ""}
                       {session.updated_at ? ` · ${relativeTime(session.updated_at)}` : ""}
                     </p>
                   </div>
                   <SessionArchive session={session} onRefresh={onRefresh} onArchived={onArchived} />
                 </div>
-                <SessionDirectory session={session} onRefresh={onRefresh} />
+                <SessionDirectory session={session} />
                 <InboxActions
                   items={sessionInbox}
                   onDone={async () => {
@@ -298,38 +330,10 @@ function SessionArchive({
   );
 }
 
-// SessionDirectory 在会话上绑定或解绑目录。
-function SessionDirectory({
-  session,
-  onRefresh,
-}: {
-  session: SessionView;
-  onRefresh: () => Promise<void> | void;
-}) {
-  const { client } = useBoard();
-  const { pickDirectory } = useAgent();
-  const [error, setError] = useState<string | null>(null);
-
-  // bind 弹出系统目录选择框，把选中的目录记到这路会话上。
-  const bind = async () => {
-    if (!pickDirectory) {
-      return;
-    }
-    const path = await pickDirectory();
-    if (!path) {
-      return;
-    }
-    setError(null);
-    try {
-      await client.bindDirectory(session.engine, session.session_id, path);
-      await onRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "无法绑定目录");
-    }
-  };
-
+// SessionDirectory 只展示创建会话时绑上的目录。之后不能改，也不能解绑。
+function SessionDirectory({ session }: { session: SessionView }) {
   return (
-    <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+    <div className="mt-1 text-[11px] text-muted-foreground">
       {session.checkout ? (
         <p className="truncate font-mono" title={session.checkout}>
           {shortWorkspace(session.checkout)}
@@ -339,26 +343,6 @@ function SessionDirectory({
       ) : (
         <p>还没有目录</p>
       )}
-      <div className="flex gap-2">
-        <button type="button" className="hover:text-foreground" disabled={!pickDirectory} onClick={() => void bind()}>
-          绑定目录
-        </button>
-        {session.checkout ? (
-          <button
-            type="button"
-            className="hover:text-foreground"
-            onClick={() => {
-              setError(null);
-              void client.clearDirectory(session.engine, session.session_id).then(onRefresh).catch((err: unknown) => {
-                setError(err instanceof Error ? err.message : "无法解绑");
-              });
-            }}
-          >
-            解绑
-          </button>
-        ) : null}
-      </div>
-      {error ? <p className="text-destructive">{error}</p> : null}
     </div>
   );
 }
@@ -401,6 +385,16 @@ function AttachMenu({
       ))}
     </select>
   );
+}
+
+// executingCount 只数还在执行的会话。等审批的不记成进行中。
+function executingCount(sessions: { running: boolean; pending: number }[]): number {
+  return sessions.filter((session) => session.running && session.pending === 0).length;
+}
+
+// pendingCount 把列内待审批条数加总。
+function pendingCount(sessions: { pending: number }[]): number {
+  return sessions.reduce((sum, session) => sum + session.pending, 0);
 }
 
 // workTitleError 把重名失败说成界面上的短句。

@@ -9,6 +9,7 @@ import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, PlusIcon, Setti
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { BoardGrid } from "../board/board-grid.tsx";
+import { workTitleError } from "../board/work-column.tsx";
 import { groupSessionsByWork } from "../board/group.ts";
 import { useBoard } from "../board/provider.tsx";
 import { ComposeFloat, SessionFloat, type ComposeDraft, type FloatSession } from "../board/session-float.tsx";
@@ -77,7 +78,7 @@ export type ChatPageProps = {
   headerActions?: ReactNode;
 };
 
-// ChatPage 组两态：会话三栏，看板藏中间对话、右侧仍是 Plan / 文件 / Git。左上角 logo 和切换按钮两边都在。来回切换都从按钮长出黑点盖住屏幕，再褪开露出另一态。
+// ChatPage 组两态：会话三栏，看板藏中间对话、右侧仍是 Plan / 文件 / Git。左上角 logo 和切换按钮两边都在，看板时旁边可一键新建分组。来回切换都从按钮长出黑点盖住屏幕，再褪开露出另一态。
 export function ChatPage({
   sessionId,
   engine,
@@ -115,8 +116,11 @@ export function ChatPage({
   const [works, setWorks] = useState<Work[]>([]);
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [float, setFloat] = useState<FloatSession | null>(null);
+  const [floatLinksOpen, setFloatLinksOpen] = useState(false);
   const [compose, setCompose] = useState<ComposeDraft | null>(null);
   const [boardRevision, setBoardRevision] = useState(0);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [groupError, setGroupError] = useState<string | null>(null);
   const [pendingWorkId, setPendingWorkId] = useState<string | null>(null);
   const [linksOpen, setLinksOpen] = useState(false);
   const [draftLinks, setDraftLinks] = useState<string[]>([]);
@@ -244,6 +248,25 @@ export function ChatPage({
     };
   }, [cover?.phase]);
 
+  // createGroup 不填标题，由服务端取最小的未命名序号，然后重拉看板。
+  const createGroup = () => {
+    setCreatingGroup(true);
+    setGroupError(null);
+    void boardClient
+      .createWork("")
+      .then(() => boardClient.listWorks())
+      .then((nextWorks) => {
+        setWorks(nextWorks);
+        setBoardRevision((value) => value + 1);
+      })
+      .catch((err: unknown) => {
+        setGroupError(workTitleError(err));
+      })
+      .finally(() => {
+        setCreatingGroup(false);
+      });
+  };
+
   // 看板里会新建、归组、绑目录；回到会话时重拉左侧列表，避免还显示离开前的分组。
   useEffect(() => {
     const leaving = wasBoard.current && !boardMode;
@@ -349,6 +372,73 @@ export function ChatPage({
       item.kind === "approval" && item.status === "pending",
   );
 
+  // commitDraftLinks 还没有会话时，保存非空 Issue/PR 就建会话并打开，不必先发消息。
+  const commitDraftLinks = async (links: string[]) => {
+    draftLinksRef.current = links;
+    setDraftLinks(links);
+    if (sessionId || links.length === 0) {
+      return;
+    }
+    setComposerError(null);
+    setStarting(true);
+    let createdId = "";
+    try {
+      if (activeEngine === "codex") {
+        const session = await codexClient.createSession(workspaceDraft.trim() ? { cwd: workspaceDraft.trim() } : {});
+        createdId = session.id;
+      } else if (activeEngine === "claude") {
+        const session = await claudeClient.createSession();
+        createdId = session.id;
+        if (workspaceDraft.trim()) {
+          await claudeClient.applySettings(createdId, { cwd: workspaceDraft.trim() });
+        }
+      } else {
+        const session = await list.createSession(workspaceDraft);
+        createdId = session.id;
+        writeLastWorkspace(session.workspace_id);
+        setWorkspaceDraft(session.workspace_id);
+      }
+      if (workspaceDraft.trim()) {
+        await boardClient.bindDirectory(activeEngine, createdId, workspaceDraft.trim());
+      }
+      await boardClient.replaceLinks(activeEngine, createdId, links);
+      draftLinksRef.current = [];
+      setDraftLinks([]);
+      if (activeEngine === "codex") {
+        await codexList.refresh();
+      } else if (activeEngine === "claude") {
+        await claudeList.refresh();
+      } else {
+        await list.refresh();
+      }
+      try {
+        await placePending(createdId, activeEngine);
+      } catch (err) {
+        setComposerError(createSessionError(err, "会话已创建，但没能放到分组"));
+      }
+      onOpenSession(createdId, activeEngine);
+    } catch (err) {
+      if (createdId) {
+        try {
+          if (activeEngine === "codex") {
+            await codexClient.archiveSession(createdId);
+          } else if (activeEngine === "claude") {
+            await claudeClient.archiveSession(createdId);
+          } else {
+            await client.archiveSession(createdId);
+          }
+        } catch {
+          // 链接没挂上时尽量清掉空会话
+        }
+      }
+      const message = createSessionError(err, "无法创建会话");
+      setComposerError(message);
+      throw new Error(message);
+    } finally {
+      setStarting(false);
+    }
+  };
+
   // attachDraftLinks 把对话开始前记下的 Issue/PR 挂到刚建好的会话上。
   const attachDraftLinks = async (id: string, engine: SessionEngine) => {
     const links = draftLinksRef.current.map((row) => row.trim()).filter(Boolean);
@@ -369,9 +459,13 @@ export function ChatPage({
     }
     setStarting(true);
     try {
+      const chosenDirectory = workspaceDraft.trim();
       const session = await list.createSession(workspaceDraft);
       writeLastWorkspace(session.workspace_id);
       setWorkspaceDraft(session.workspace_id);
+      if (chosenDirectory) {
+        await boardClient.bindDirectory("agent", session.id, chosenDirectory);
+      }
       try {
         await attachDraftLinks(session.id, "agent");
       } catch (err) {
@@ -543,6 +637,8 @@ export function ChatPage({
         onNewConversation();
       }}
       onOpenBoard={onOpenBoard ? openBoardFromSidebar : undefined}
+      onCreateGroup={boardMode ? createGroup : undefined}
+      creatingGroup={creatingGroup}
       onAttach={async (session, workId) => {
         await boardClient.attachPlacement(workId, session.engine ?? "agent", session.id);
         const [nextWorks, nextPlaces] = await Promise.all([
@@ -588,8 +684,10 @@ export function ChatPage({
           </div>
           <BoardGrid
             revision={boardRevision}
+            notice={groupError}
             onOpenSession={(id, nextEngine) => {
               setCompose(null);
+              setFloatLinksOpen(false);
               setFloat({ id, engine: nextEngine });
             }}
             onDraftSession={(workId, nextEngine, directory, title) => {
@@ -609,8 +707,9 @@ export function ChatPage({
           <ComposeFloat
             draft={compose}
             onClose={() => setCompose(null)}
-            onSent={(id, nextEngine) => {
+            onSent={(id, nextEngine, source) => {
               setCompose(null);
+              setFloatLinksOpen(source === "links");
               setFloat({ id, engine: nextEngine });
               setBoardRevision((value) => value + 1);
               void boardClient.listPlacements().then(setPlacements).catch(() => undefined);
@@ -618,6 +717,8 @@ export function ChatPage({
           />
         ) : float ? (
           <SessionFloat
+            key={`${float.engine}:${float.id}`}
+            initialLinksOpen={floatLinksOpen}
             session={float}
             onClose={() => setFloat(null)}
             onOpenPlan={openPlan}
@@ -724,7 +825,7 @@ export function ChatPage({
             engine={activeEngine}
             sessionId={sessionId}
             draft={draftLinks}
-            onDraft={setDraftLinks}
+            onDraft={commitDraftLinks}
           />
         ) : null}
         {sessionId ? (
@@ -832,6 +933,9 @@ export function ChatPage({
                   onPrepare={(id) => attachDraftLinks(id, "codex")}
                   onCreated={async (id) => {
                     try {
+                      if (workspaceDraft.trim()) {
+                        await boardClient.bindDirectory("codex", id, workspaceDraft.trim());
+                      }
                       await placePending(id, "codex");
                     } catch (err) {
                       setComposerError(createSessionError(err, "会话已发出，但没能放到分组"));
@@ -849,6 +953,9 @@ export function ChatPage({
                   onPrepare={(id) => attachDraftLinks(id, "claude")}
                   onCreated={async (id) => {
                     try {
+                      if (workspaceDraft.trim()) {
+                        await boardClient.bindDirectory("claude", id, workspaceDraft.trim());
+                      }
                       await placePending(id, "claude");
                     } catch (err) {
                       setComposerError(createSessionError(err, "会话已发出，但没能放到分组"));

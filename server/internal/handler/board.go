@@ -345,15 +345,19 @@ func (a *API) GetPlacement(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// BindSessionDirectory 把目录绑到会话上。DELETE 或空 path 为解绑。
+// BindSessionDirectory 在创建会话时记下目录。不能解绑。
 func (a *API) BindSessionDirectory(w http.ResponseWriter, r *http.Request) {
 	engine, err := board.ParseEngine(chi.URLParam(r, "engine"))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	if r.Method == http.MethodDelete {
+		writeError(w, cderr.Invalid("directory cannot be unbound"))
+		return
+	}
 	path := ""
-	if r.Method != http.MethodDelete && r.Body != nil {
+	if r.Body != nil {
 		var req BindDirectoryRequest
 		if err := decodeJSON(r, &req); err != nil {
 			writeError(w, err)

@@ -74,7 +74,7 @@ func (s *Service) StartInDir(ctx context.Context, workID, path string, spec Star
 	return place, started, err
 }
 
-// BindSessionDirectory 把目录绑到已有会话上。path 为空则解绑。非空时再交给引擎改工作目录。
+// BindSessionDirectory 在创建会话时记下目录，并交给引擎改工作目录。不能解绑，也不能换成另一个目录。
 func (s *Service) BindSessionDirectory(ctx context.Context, engine Engine, sessionID, path string) (string, error) {
 	if s == nil || s.q == nil {
 		return "", cderr.Invalid("board service required")
@@ -198,7 +198,7 @@ func (s *Service) sessionView(ctx context.Context, place Placement) (SessionView
 			}
 			view.Summary = row.Summary
 			view.UpdatedAt = row.UpdatedAt
-			view.Running = row.ActiveRunID.Valid && row.ActiveRunID.String != ""
+			view.Running = nativeExecuting(ctx, s.q, row.ActiveRunID.String)
 			if n, err := s.q.CountPendingApprovalsBySession(ctx, place.SessionID); err == nil {
 				view.Pending = int(n)
 			}
@@ -206,6 +206,18 @@ func (s *Service) sessionView(ctx context.Context, place Placement) (SessionView
 	}
 	s.annotateDirectory(ctx, place.Engine, &view)
 	return view, true
+}
+
+// nativeExecuting 用 Run 状态判断是否还在执行。没有 Run、在等审批或已结束时为 false。
+func nativeExecuting(ctx context.Context, q *sqlite.Queries, activeRunID string) bool {
+	if q == nil || activeRunID == "" {
+		return false
+	}
+	row, err := q.GetRun(ctx, activeRunID)
+	if err != nil {
+		return false
+	}
+	return agent.IsExecuting(agent.RunStatus(row.Status))
 }
 
 // annotateDirectory 用会话目录盖过归属上的路径，并现问 Git 状态。
@@ -234,8 +246,22 @@ func (s *Service) listUngrouped(ctx context.Context, tenantID, userID string, pl
 	for _, row := range rows {
 		view := SessionView{
 			Engine: PublicEngine(EngineNative), SessionID: row.ID, Summary: row.Summary, UpdatedAt: row.UpdatedAt,
-			Running: row.ActiveRunID.Valid && row.ActiveRunID.String != "",
 		}
+		if s.ports.Lookup != nil {
+			if meta, err := s.ports.Lookup(ctx, EngineNative, row.ID); err == nil {
+				if meta.Archived {
+					continue
+				}
+				view.Summary = meta.Summary
+				view.UpdatedAt = meta.UpdatedAt
+				view.Running = meta.Running
+				view.Pending = meta.Pending
+				s.annotateDirectory(ctx, EngineNative, &view)
+				out = append(out, view)
+				continue
+			}
+		}
+		view.Running = nativeExecuting(ctx, s.q, row.ActiveRunID.String)
 		if n, err := s.q.CountPendingApprovalsBySession(ctx, row.ID); err == nil {
 			view.Pending = int(n)
 		}
@@ -322,10 +348,74 @@ func (s *Service) nativeInbox(ctx context.Context, sessionID string) []InboxItem
 		})
 		items = append(items, InboxItem{
 			Engine: PublicEngine(EngineNative), SessionID: sessionID, TicketID: row.ID,
-			Summary: string(agent.ApprovalKind(row.Kind)), Payload: raw,
+			Summary: approvalSummary(row.Kind, row.ToolCalls), Payload: raw,
 		})
 	}
 	return items
+}
+
+// approvalSummary 把待批工具收成看板能看懂的短句：工具名加命令、路径或搜索词。
+func approvalSummary(kind, toolCalls string) string {
+	var calls []struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal([]byte(toolCalls), &calls); err != nil || len(calls) == 0 {
+		if strings.TrimSpace(kind) == "" {
+			return "审批"
+		}
+		return kind
+	}
+	parts := make([]string, 0, len(calls))
+	for _, call := range calls {
+		name := strings.TrimSpace(call.Name)
+		if name == "" {
+			name = "工具"
+		}
+		detail := argumentDetail(call.Arguments)
+		if detail == "" {
+			parts = append(parts, name)
+			continue
+		}
+		parts = append(parts, name+"\n"+detail)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// argumentDetail 从工具参数里取出命令、路径或搜索词。
+func argumentDetail(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		return argumentDetail(json.RawMessage(asString))
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return strings.Trim(string(raw), `"`)
+	}
+	if command, _ := fields["command"].(string); strings.TrimSpace(command) != "" {
+		return strings.TrimSpace(command)
+	}
+	path, _ := fields["path"].(string)
+	pattern, _ := fields["pattern"].(string)
+	path = strings.TrimSpace(path)
+	pattern = strings.TrimSpace(pattern)
+	if path != "" && pattern != "" {
+		return pattern + "  " + path
+	}
+	if path != "" {
+		return path
+	}
+	if pattern != "" {
+		return pattern
+	}
+	compact, err := json.Marshal(fields)
+	if err != nil || string(compact) == "{}" {
+		return ""
+	}
+	return string(compact)
 }
 
 // BuildPacket 组装 Work Info、目录 Info、Issue/PR 快照。

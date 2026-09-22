@@ -1,13 +1,12 @@
 "use client";
 
 import type { BoardView } from "@codedock/core/board";
-import { Button } from "@codedock/ui";
 import { useEffect, useRef, useState } from "react";
 
 import type { SessionEngine } from "../chat/chat-page.tsx";
 import { BOARD_COL_WIDTH, boardColumns, revealColumnCount, visibleColumnCount } from "./layout.ts";
 import { useBoard } from "./provider.tsx";
-import { WorkColumn, workTitleError } from "./work-column.tsx";
+import { WorkColumn } from "./work-column.tsx";
 
 // BoardGrid 横向 Work 列：列宽固定，滑到右端再挂下一列。
 export function BoardGrid({
@@ -15,6 +14,7 @@ export function BoardGrid({
   onDraftSession,
   onArchived,
   revision = 0,
+  notice = null,
 }: {
   onOpenSession: (id: string, engine: SessionEngine) => void;
   /** 在看板上弹出输入窗；发出消息才建会话。 */
@@ -22,13 +22,14 @@ export function BoardGrid({
   onArchived?: (id: string, engine: SessionEngine) => void;
   /** 有新会话挂上后加一，用来重拉列。 */
   revision?: number;
+  /** 顶栏操作失败时显示在列上方，例如新建分组。 */
+  notice?: string | null;
 }) {
   const { client } = useBoard();
   const [view, setView] = useState<BoardView>({ cards: [], ungrouped: [] });
   const [width, setWidth] = useState(720);
   const [shown, setShown] = useState(() => visibleColumnCount(720));
-  const [error, setError] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -40,10 +41,28 @@ export function BoardGrid({
   };
 
   useEffect(() => {
-    void reload().catch((err: unknown) => {
-      setError(err instanceof Error ? err.message : "无法加载看板");
-    });
+    void reload()
+      .then(() => setLoadError(null))
+      .catch((err: unknown) => {
+        setLoadError(err instanceof Error ? err.message : "无法加载看板");
+      });
   }, [client, revision]);
+
+  const columns = boardColumns(view);
+  const live = columns.some((column) =>
+    column.sessions.some((session) => session.running || session.pending > 0),
+  );
+
+  // 进行中或待审批时重拉摘要，结束和问票出现后状态跟着变。
+  useEffect(() => {
+    if (!live) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void client.getBoard().then(setView).catch(() => undefined);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [client, live]);
 
   useEffect(() => {
     const node = frameRef.current;
@@ -61,7 +80,6 @@ export function BoardGrid({
     return () => frame.disconnect();
   }, []);
 
-  const columns = boardColumns(view);
   const batch = visibleColumnCount(width);
   const visible = columns.slice(0, shown);
   const columnCount = useRef(columns.length);
@@ -95,35 +113,14 @@ export function BoardGrid({
 
   return (
     <div ref={frameRef} className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2">
-      <div className="flex shrink-0 items-center gap-2">
-        <input
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="标题"
-          className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2 text-sm"
-        />
-        <Button
-          size="sm"
-          onClick={() => {
-            setError(null);
-            void client
-              .createWork(title.trim())
-              .then(() => {
-                setTitle("");
-                return reload();
-              })
-              .catch((err: unknown) => {
-                setError(workTitleError(err));
-              });
-          }}
-        >
-          新建
-        </Button>
-      </div>
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      {notice || loadError ? <p className="shrink-0 text-xs text-destructive">{notice || loadError}</p> : null}
       <div ref={scrollerRef} className="flex min-h-0 min-w-0 flex-1 gap-2 overflow-x-auto">
         {visible.map((column) => (
-          <div key={column.id} className="h-full shrink-0" style={{ width: BOARD_COL_WIDTH }}>
+          <div
+            key={column.id}
+            className="h-full shrink-0"
+            style={{ width: BOARD_COL_WIDTH }}
+          >
             <WorkColumn
               column={column}
               onOpenSession={onOpenSession}

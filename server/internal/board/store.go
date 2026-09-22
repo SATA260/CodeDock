@@ -328,7 +328,7 @@ func Bind(ctx context.Context, q *sqlite.Queries, place Placement) (Placement, e
 	return mapPlacement(row), nil
 }
 
-// SetSessionDirectory 把目录绑到会话上。path 为空则解绑。已归组时同步 placement.checkout。
+// SetSessionDirectory 在创建会话时记下目录。空路径不能解绑；已有目录不能换成另一个。已归组时同步 placement.checkout。
 func SetSessionDirectory(ctx context.Context, q *sqlite.Queries, engine Engine, sessionID, path string) (string, error) {
 	if q == nil {
 		return "", cderr.Invalid("queries required")
@@ -340,19 +340,20 @@ func SetSessionDirectory(ctx context.Context, q *sqlite.Queries, engine Engine, 
 	if strings.TrimSpace(sessionID) == "" {
 		return "", cderr.Invalid("session_id is required")
 	}
-	cleaned := ""
-	if strings.TrimSpace(path) != "" {
-		cleaned, err = requireExistingDir(path)
-		if err != nil {
-			return "", err
-		}
-		if _, err := q.UpsertSessionDirectory(ctx, sqlite.UpsertSessionDirectoryParams{
-			Engine: string(engine), SessionID: sessionID, Path: cleaned,
-		}); err != nil {
-			return "", err
-		}
-	} else if err := q.DeleteSessionDirectory(ctx, sqlite.DeleteSessionDirectoryParams{
-		Engine: string(engine), SessionID: sessionID,
+	if strings.TrimSpace(path) == "" {
+		return "", cderr.Invalid("directory cannot be unbound")
+	}
+	cleaned, err := requireExistingDir(path)
+	if err != nil {
+		return "", err
+	}
+	if current, getErr := GetSessionDirectory(ctx, q, engine, sessionID); getErr == nil && current != "" && current != cleaned {
+		return "", cderr.Conflict("directory is bound when the session is created")
+	} else if getErr != nil && !cderr.IsNotFound(getErr) {
+		return "", getErr
+	}
+	if _, err := q.UpsertSessionDirectory(ctx, sqlite.UpsertSessionDirectoryParams{
+		Engine: string(engine), SessionID: sessionID, Path: cleaned,
 	}); err != nil {
 		return "", err
 	}

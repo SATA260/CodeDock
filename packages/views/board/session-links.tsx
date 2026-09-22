@@ -18,8 +18,8 @@ export function SessionLinkEditor({
   sessionId?: string;
   /** 还没有会话时已经记下的链接。 */
   draft?: string[];
-  /** 本地草稿保存后回写；发出第一条消息时再挂到会话上。 */
-  onDraft?: (links: string[]) => void;
+  /** 还没有会话时保存。非空链接由调用方建会话；失败时抛错，编辑器留在原地。 */
+  onDraft?: (links: string[]) => void | Promise<void>;
 }) {
   const { client } = useBoard();
   const [rows, setRows] = useState<string[]>(() => (draft && draft.length > 0 ? draft : [""]));
@@ -54,13 +54,20 @@ export function SessionLinkEditor({
     };
   }, [client, draft, engine, sessionId]);
 
-  // save 把非空行整批换上去；还没有会话时只记在本地。
+  // save 把非空行整批换上去。还没有会话时交给调用方，有链接就建会话。
   const save = async () => {
     const links = rows.map((row) => row.trim()).filter(Boolean);
     if (!engine || !sessionId) {
-      onDraft?.(links);
-      setRows(links.length > 0 ? links : [""]);
+      setBusy(true);
       setError(null);
+      try {
+        await onDraft?.(links);
+        setRows(links.length > 0 ? links : [""]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "保存失败");
+      } finally {
+        setBusy(false);
+      }
       return;
     }
     setBusy(true);
