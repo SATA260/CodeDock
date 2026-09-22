@@ -48,7 +48,7 @@ export function InfoEditor({
         if (cancelled) {
           return;
         }
-        setEditor(() => editorMod.default);
+        setEditor(() => editorMod.default as MarkdownEditor);
         setCommands({ main: cn.getCommands(), extra: cn.getExtraCommands() });
       },
       (err: unknown) => {

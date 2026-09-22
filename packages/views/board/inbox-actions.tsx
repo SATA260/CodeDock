@@ -1,6 +1,6 @@
 "use client";
 
-import type { BoardEngine, InboxItem } from "@codedock/core/board";
+import type { InboxItem } from "@codedock/core/board";
 import { Button } from "@codedock/ui";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -71,7 +71,7 @@ function InboxTicket({
     }
     setSubmitting(true);
     try {
-      const engine = (item.engine === "native" ? "agent" : item.engine) as BoardEngine;
+      const engine = item.engine;
       const picked = pages.map((entry) => ({
         id: entry.id,
         status: nextChoices[entry.id] ?? status,
