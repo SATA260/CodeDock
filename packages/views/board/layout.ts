@@ -1,7 +1,7 @@
 import type { BoardView, Card, SessionView } from "@codedock/core/board";
 
-export const BOARD_COL_MIN = 240;
-export const BOARD_COL_MAX = 3;
+export const BOARD_COL_WIDTH = 320;
+export const BOARD_COL_GAP = 8;
 
 export type BoardColumn = {
   id: string;
@@ -11,12 +11,18 @@ export type BoardColumn = {
   ungrouped: boolean;
 };
 
-// columnsPerRow 按容器宽度限制一行列数，约 240px 一列，最多 3。
-export function columnsPerRow(width: number): number {
+// visibleColumnCount 当前视口横向能放下几列，至少 1。
+export function visibleColumnCount(width: number): number {
   if (width <= 0) {
     return 1;
   }
-  return Math.min(BOARD_COL_MAX, Math.max(1, Math.floor(width / BOARD_COL_MIN)));
+  return Math.max(1, Math.floor((width + BOARD_COL_GAP) / (BOARD_COL_WIDTH + BOARD_COL_GAP)));
+}
+
+// revealColumnCount 滑动到末尾时再露出一批，不超过总数。
+export function revealColumnCount(shown: number, total: number, batch: number): number {
+  const step = Math.max(1, batch);
+  return Math.min(Math.max(0, total), Math.max(0, shown) + step);
 }
 
 // boardColumns 把已归组卡和未归组列收成横向列。
@@ -37,15 +43,3 @@ export function boardColumns(view: BoardView): BoardColumn[] {
   return cols;
 }
 
-// pageColumns 按当前页切出一排列。
-export function pageColumns(columns: BoardColumn[], page: number, perPage: number): BoardColumn[] {
-  const size = Math.max(1, perPage);
-  const start = Math.max(0, page) * size;
-  return columns.slice(start, start + size);
-}
-
-// pageCount 看板底部分页页数。
-export function pageCount(total: number, perPage: number): number {
-  const size = Math.max(1, perPage);
-  return Math.max(1, Math.ceil(Math.max(0, total) / size));
-}

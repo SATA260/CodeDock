@@ -4,17 +4,20 @@ import type { BoardEngine } from "@codedock/core/board";
 import type { TimelineItem } from "@codedock/core/chat";
 import { Button } from "@codedock/ui";
 import { Settings, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { ApprovalDock } from "../chat/approval-dock.tsx";
 import type { SessionEngine } from "../chat/chat-page.tsx";
 import { ConversationTimeline } from "../chat/conversation-timeline.tsx";
 import { useSessionTimeline } from "../chat/hooks/use-session-timeline.ts";
+import { shortWorkspace } from "../chat/lib/format.ts";
+import { createSessionError } from "../chat/lib/workspace.ts";
 import { PendingDock } from "../chat/pending-dock.tsx";
 import { PromptBar } from "../chat/prompt-bar.tsx";
 import { ClaudePane } from "../claude/claude-pane.tsx";
 import { CodexPane } from "../codex/codex-pane.tsx";
 import { useAgent } from "../provider.tsx";
+import { useBoard } from "./provider.tsx";
 import { SessionLinkEditor } from "./session-links.tsx";
 
 export type FloatSession = {
@@ -61,13 +64,203 @@ export function SessionFloat({
       ),
     [timeline.state.items],
   );
-  const [box, setBox] = useState<FloatBox>({ x: 72, y: 72, w: 560, h: 640 });
   const [linksOpen, setLinksOpen] = useState(false);
-  const gesture = useRef<Gesture | null>(null);
 
   useEffect(() => {
     setLinksOpen(false);
   }, [session.id, session.engine]);
+
+  const engineLabel = session.engine === "codex" ? "Codex" : session.engine === "claude" ? "Claude" : "Local";
+  return (
+    <FloatShell
+      title={`${engineLabel} · ${session.id}`}
+      onClose={onClose}
+      actions={
+        <Button
+          size="sm"
+          variant="ghost"
+          className="px-1.5"
+          aria-label="设置链接"
+          aria-pressed={linksOpen}
+          onClick={() => setLinksOpen((open) => !open)}
+        >
+          <Settings className="size-3.5" />
+        </Button>
+      }
+    >
+      {linksOpen ? <SessionLinkEditor engine={session.engine as BoardEngine} sessionId={session.id} /> : null}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {session.engine === "codex" ? (
+          <CodexPane
+            sessionId={session.id}
+            pickFiles={pickFiles}
+            onOpenSession={() => undefined}
+            onNewConversation={() => undefined}
+            onListChange={async () => undefined}
+          />
+        ) : session.engine === "claude" ? (
+          <ClaudePane
+            sessionId={session.id}
+            pickFiles={pickFiles}
+            onOpenSession={() => undefined}
+            onNewConversation={() => undefined}
+            onListChange={async () => undefined}
+          />
+        ) : (
+          <>
+            {timeline.error ? (
+              <div className="border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-red-300">
+                {timeline.error}
+              </div>
+            ) : null}
+            <ConversationTimeline
+              state={timeline.state}
+              loading={timeline.loading}
+              scrollKey={session.id}
+              onOpenPlan={onOpenPlan}
+              onOpenFile={onOpenFile}
+              onOpenGit={onOpenGit}
+            />
+            <div className="relative z-30 shrink-0">
+              <PendingDock
+                items={timeline.pending}
+                editingId={timeline.editingId}
+                onBeginEdit={timeline.beginEditPending}
+                onCancelEdit={timeline.cancelEditPending}
+                onSave={timeline.savePending}
+                onDelete={timeline.deletePending}
+                onSendNow={timeline.sendNow}
+              />
+              <ApprovalDock items={pendingApprovals} onDecide={timeline.decide} />
+              <PromptBar
+                running={timeline.running}
+                sending={timeline.sending}
+                onSend={timeline.send}
+                onCancel={timeline.cancel}
+              />
+            </div>
+          </>
+        )}
+      </div>
+    </FloatShell>
+  );
+}
+
+export type ComposeDraft = {
+  workId: string;
+  title: string;
+  engine: SessionEngine;
+  directory: string;
+};
+
+// ComposeFloat 在看板上弹出输入窗。关掉不建会话，发出第一条消息才创建并挂到这张卡。
+export function ComposeFloat({
+  draft,
+  onClose,
+  onSent,
+}: {
+  draft: ComposeDraft;
+  onClose: () => void;
+  onSent: (id: string, engine: SessionEngine) => void;
+}) {
+  const { client, userId, pickFiles } = useAgent();
+  const { client: board } = useBoard();
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const engineLabel = draft.engine === "codex" ? "Codex" : draft.engine === "claude" ? "Claude" : "Local";
+  const directory = draft.directory.trim();
+
+  // attach 把刚建好的会话挂到这张卡。
+  const attach = async (id: string) => {
+    await board.attachPlacement(draft.workId, draft.engine, id);
+  };
+
+  return (
+    <FloatShell title={`新建 · ${engineLabel} · ${draft.title || "未命名"}`} onClose={onClose}>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 text-center text-xs text-muted-foreground">
+          <p>发送后放到 {draft.title || "未命名"}</p>
+          {directory ? <p className="mt-1 truncate font-mono" title={directory}>{shortWorkspace(directory)}</p> : null}
+          {error ? <p className="mt-2 text-destructive">{error}</p> : null}
+        </div>
+        {draft.engine === "codex" ? (
+          <CodexPane
+            composeOnly
+            workspace={directory}
+            pickFiles={pickFiles}
+            onOpenSession={(id) => onSent(id, "codex")}
+            onCreated={attach}
+            onNewConversation={onClose}
+            onListChange={async () => undefined}
+          />
+        ) : draft.engine === "claude" ? (
+          <ClaudePane
+            composeOnly
+            workspace={directory}
+            pickFiles={pickFiles}
+            onOpenSession={(id) => onSent(id, "claude")}
+            onCreated={attach}
+            onNewConversation={onClose}
+            onListChange={async () => undefined}
+          />
+        ) : (
+          <div className="relative z-30 shrink-0">
+            <PromptBar
+              running={false}
+              sending={sending}
+              onCancel={async () => undefined}
+              onSend={async (text, mode, approval) => {
+                setError(null);
+                setSending(true);
+                let createdId = "";
+                try {
+                  const session = await client.createSession({
+                    user_id: userId,
+                    workspace_id: directory || undefined,
+                  });
+                  createdId = session.id;
+                  await client.startRun(session.id, { content: text, mode, approval });
+                  try {
+                    await attach(session.id);
+                  } catch (err) {
+                    setError(createSessionError(err, "会话已发出，但没能放到分组"));
+                  }
+                  onSent(session.id, "agent");
+                } catch (err) {
+                  if (createdId) {
+                    try {
+                      await client.archiveSession(createdId);
+                    } catch {
+                      // 发出失败时尽量清掉刚建的空会话
+                    }
+                  }
+                  setError(createSessionError(err, "发送失败"));
+                } finally {
+                  setSending(false);
+                }
+              }}
+            />
+          </div>
+        )}
+      </div>
+    </FloatShell>
+  );
+}
+
+// FloatShell 可拖、可改大小的悬浮窗壳，无遮罩。
+function FloatShell({
+  title,
+  onClose,
+  actions,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  const [box, setBox] = useState<FloatBox>({ x: 72, y: 72, w: 560, h: 640 });
+  const gesture = useRef<Gesture | null>(null);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -126,77 +319,13 @@ export function SessionFloat({
         className="flex shrink-0 cursor-grab items-center gap-2 border-b border-border px-2 py-1.5 active:cursor-grabbing"
         onPointerDown={beginMove}
       >
-        <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          {session.engine === "codex" ? "Codex" : session.engine === "claude" ? "Claude" : "Local"} · {session.id}
-        </p>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="px-1.5"
-          aria-label="设置链接"
-          aria-pressed={linksOpen}
-          onClick={() => setLinksOpen((open) => !open)}
-        >
-          <Settings className="size-3.5" />
-        </Button>
+        <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{title}</p>
+        {actions}
         <Button size="sm" variant="ghost" className="px-1.5" aria-label="关闭对话" onClick={onClose}>
           <X className="size-3.5" />
         </Button>
       </header>
-      {linksOpen ? <SessionLinkEditor engine={session.engine as BoardEngine} sessionId={session.id} /> : null}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {session.engine === "codex" ? (
-          <CodexPane
-            sessionId={session.id}
-            pickFiles={pickFiles}
-            onOpenSession={() => undefined}
-            onNewConversation={() => undefined}
-            onListChange={async () => undefined}
-          />
-        ) : session.engine === "claude" ? (
-          <ClaudePane
-            sessionId={session.id}
-            pickFiles={pickFiles}
-            onOpenSession={() => undefined}
-            onNewConversation={() => undefined}
-            onListChange={async () => undefined}
-          />
-        ) : (
-          <>
-            {timeline.error ? (
-              <div className="border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-red-300">
-                {timeline.error}
-              </div>
-            ) : null}
-            <ConversationTimeline
-              state={timeline.state}
-              loading={timeline.loading}
-              scrollKey={session.id}
-              onOpenPlan={onOpenPlan}
-              onOpenFile={onOpenFile}
-              onOpenGit={onOpenGit}
-            />
-            <div className="relative z-30 shrink-0">
-              <PendingDock
-                items={timeline.pending}
-                editingId={timeline.editingId}
-                onBeginEdit={timeline.beginEditPending}
-                onCancelEdit={timeline.cancelEditPending}
-                onSave={timeline.savePending}
-                onDelete={timeline.deletePending}
-                onSendNow={timeline.sendNow}
-              />
-              <ApprovalDock items={pendingApprovals} onDecide={timeline.decide} />
-              <PromptBar
-                running={timeline.running}
-                sending={timeline.sending}
-                onSend={timeline.send}
-                onCancel={timeline.cancel}
-              />
-            </div>
-          </>
-        )}
-      </div>
+      {children}
     </div>
   );
 }

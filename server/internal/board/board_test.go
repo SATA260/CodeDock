@@ -215,6 +215,39 @@ func TestReplaceLinks(t *testing.T) {
 	}
 }
 
+func TestWorkTitlesAreUnique(t *testing.T) {
+	q, ctx := testQueries(t)
+	first, err := CreateWork(ctx, q, "t1", "u1", "")
+	if err != nil || first.Title != "未命名(1)" {
+		t.Fatalf("first %+v %v", first, err)
+	}
+	second, err := CreateWork(ctx, q, "t1", "u1", "  ")
+	if err != nil || second.Title != "未命名(2)" {
+		t.Fatalf("second %+v %v", second, err)
+	}
+	if _, err := CreateWork(ctx, q, "t1", "u1", "未命名(1)"); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatal("expected duplicate title")
+	}
+	other, err := CreateWork(ctx, q, "t1", "u2", "")
+	if err != nil || other.Title != "未命名(1)" {
+		t.Fatalf("other user %+v %v", other, err)
+	}
+	if _, err := UpdateWork(ctx, q, second.ID, "未命名(1)"); err == nil {
+		t.Fatal("expected rename conflict")
+	}
+	if _, err := UpdateWork(ctx, q, second.ID, "  "); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatal("expected empty rename rejected")
+	}
+	renamed, err := UpdateWork(ctx, q, second.ID, "修登录")
+	if err != nil || renamed.Title != "修登录" {
+		t.Fatalf("rename %+v %v", renamed, err)
+	}
+	third, err := CreateWork(ctx, q, "t1", "u1", "")
+	if err != nil || third.Title != "未命名(2)" {
+		t.Fatalf("reuse gap %+v %v", third, err)
+	}
+}
+
 func TestParseEngine(t *testing.T) {
 	eng, err := ParseEngine("agent")
 	if err != nil || eng != EngineNative || PublicEngine(eng) != "agent" {

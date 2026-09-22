@@ -161,7 +161,10 @@ func (s *Service) Card(ctx context.Context, workID string) (Card, error) {
 		return Card{}, err
 	}
 	for _, place := range places {
-		view := s.sessionView(ctx, place)
+		view, ok := s.sessionView(ctx, place)
+		if !ok {
+			continue
+		}
 		card.Sessions = append(card.Sessions, view)
 		if view.Running {
 			card.Running++
@@ -172,21 +175,27 @@ func (s *Service) Card(ctx context.Context, workID string) (Card, error) {
 	return card, nil
 }
 
-// sessionView 读一路会话的看板摘要，目录取会话自己的绑定。
-func (s *Service) sessionView(ctx context.Context, place Placement) SessionView {
+// sessionView 读一路会话的看板摘要，目录取会话自己的绑定。已归档的不进卡。
+func (s *Service) sessionView(ctx context.Context, place Placement) (SessionView, bool) {
 	view := SessionView{Engine: PublicEngine(place.Engine), SessionID: place.SessionID, Checkout: place.Checkout}
 	if s.ports.Lookup != nil {
 		if meta, err := s.ports.Lookup(ctx, place.Engine, place.SessionID); err == nil {
+			if meta.Archived {
+				return SessionView{}, false
+			}
 			view.Summary = meta.Summary
 			view.UpdatedAt = meta.UpdatedAt
 			view.Running = meta.Running
 			view.Pending = meta.Pending
 			s.annotateDirectory(ctx, place.Engine, &view)
-			return view
+			return view, true
 		}
 	}
 	if place.Engine == EngineNative {
 		if row, err := s.q.GetSession(ctx, place.SessionID); err == nil {
+			if row.Status == string(agent.SessionArchived) {
+				return SessionView{}, false
+			}
 			view.Summary = row.Summary
 			view.UpdatedAt = row.UpdatedAt
 			view.Running = row.ActiveRunID.Valid && row.ActiveRunID.String != ""
@@ -196,7 +205,7 @@ func (s *Service) sessionView(ctx context.Context, place Placement) SessionView 
 		}
 	}
 	s.annotateDirectory(ctx, place.Engine, &view)
-	return view
+	return view, true
 }
 
 // annotateDirectory 用会话目录盖过归属上的路径，并现问 Git 状态。

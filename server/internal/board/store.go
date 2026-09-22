@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	cderr "codedock/internal/errors"
@@ -24,9 +26,9 @@ func CreateWork(ctx context.Context, q *sqlite.Queries, tenantID, userID, title 
 	if strings.TrimSpace(tenantID) == "" {
 		tenantID = "default"
 	}
-	title = strings.TrimSpace(title)
-	if title == "" {
-		title = "未命名"
+	title, err := assignWorkTitle(ctx, q, tenantID, userID, title, "")
+	if err != nil {
+		return Work{}, err
 	}
 	now := util.FormatTime(util.Now())
 	row, err := q.InsertWork(ctx, sqlite.InsertWorkParams{
@@ -80,18 +82,71 @@ func ListWorks(ctx context.Context, q *sqlite.Queries, tenantID, userID string) 
 
 // UpdateWork 改卡片标题。
 func UpdateWork(ctx context.Context, q *sqlite.Queries, workID, title string) (Work, error) {
-	if _, err := GetWork(ctx, q, workID); err != nil {
+	current, err := GetWork(ctx, q, workID)
+	if err != nil {
 		return Work{}, err
 	}
-	title = strings.TrimSpace(title)
-	if title == "" {
-		return Work{}, cderr.Invalid("title is required")
+	title, err = assignWorkTitle(ctx, q, current.TenantID, current.UserID, title, workID)
+	if err != nil {
+		return Work{}, err
 	}
 	row, err := q.UpdateWork(ctx, sqlite.UpdateWorkParams{Title: title, UpdatedAt: util.FormatTime(util.Now()), ID: workID})
 	if err != nil {
 		return Work{}, err
 	}
 	return mapWork(row), nil
+}
+
+// assignWorkTitle 空白标题顺延为未命名(1)、未命名(2)；已有同名则拒绝。exceptID 是改名时自己的卡。
+func assignWorkTitle(ctx context.Context, q *sqlite.Queries, tenantID, userID, title, exceptID string) (string, error) {
+	title = strings.TrimSpace(title)
+	works, err := ListWorks(ctx, q, tenantID, userID)
+	if err != nil {
+		return "", err
+	}
+	if title == "" {
+		if exceptID != "" {
+			return "", cderr.Invalid("title is required")
+		}
+		title = nextUntitled(works)
+	}
+	for _, work := range works {
+		if work.ID == exceptID {
+			continue
+		}
+		if work.Title == title {
+			return "", cderr.Conflict("work title already exists")
+		}
+	}
+	return title, nil
+}
+
+// nextUntitled 取最小的未占用序号，从 1 开始。
+func nextUntitled(works []Work) string {
+	used := map[int]struct{}{}
+	for _, work := range works {
+		if n, ok := untitledNumber(work.Title); ok {
+			used[n] = struct{}{}
+		}
+	}
+	for n := 1; ; n++ {
+		if _, ok := used[n]; !ok {
+			return fmt.Sprintf("未命名(%d)", n)
+		}
+	}
+}
+
+// untitledNumber 解析未命名(n)。不是这个格式则不算占号。
+func untitledNumber(title string) (int, bool) {
+	const prefix = "未命名("
+	if !strings.HasPrefix(title, prefix) || !strings.HasSuffix(title, ")") {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSuffix(title[len(prefix):], ")"))
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
 }
 
 // DeleteWork 删卡并断开归属；会话回未归组，不删会话、不删磁盘。

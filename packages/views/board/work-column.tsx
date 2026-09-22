@@ -4,8 +4,10 @@ import type { BoardEngine, InboxItem, SessionView } from "@codedock/core/board";
 import { Button, MessageResponse } from "@codedock/ui";
 import { useEffect, useState } from "react";
 
+import { useClaude } from "../claude/provider.tsx";
 import type { SessionEngine } from "../chat/chat-page.tsx";
 import { relativeTime, shortWorkspace } from "../chat/lib/format.ts";
+import { useCodex } from "../codex/provider.tsx";
 import { useAgent } from "../provider.tsx";
 import { InboxActions } from "./inbox-actions.tsx";
 import { InfoEditor } from "./info-editor.tsx";
@@ -17,11 +19,13 @@ export function WorkColumn({
   column,
   onOpenSession,
   onDraftSession,
+  onArchived,
   onRefresh,
 }: {
   column: BoardColumn;
   onOpenSession: (id: string, engine: SessionEngine) => void;
-  onDraftSession?: (workId: string, engine: SessionEngine, directory: string) => void;
+  onDraftSession?: (workId: string, engine: SessionEngine, directory: string, title: string) => void;
+  onArchived?: (id: string, engine: SessionEngine) => void;
   onRefresh: () => Promise<void> | void;
 }) {
   const { client } = useBoard();
@@ -48,13 +52,19 @@ export function WorkColumn({
     void client.listInbox(workId).then(setInbox).catch(() => setInbox([]));
   }, [client, workId, column.card?.pending, column.sessions]);
 
-  // saveTitle 改列头标题。
+  // saveTitle 改列头标题。重名时改回去并提示。
   const saveTitle = async () => {
     if (!workId || title.trim() === "" || title === column.title) {
       return;
     }
-    await client.updateWork(workId, title.trim());
-    await onRefresh();
+    setError(null);
+    try {
+      await client.updateWork(workId, title.trim());
+      await onRefresh();
+    } catch (err) {
+      setTitle(column.title);
+      setError(workTitleError(err));
+    }
   };
 
   // saveInfo 从编辑框覆盖写入这张卡的说明。
@@ -86,16 +96,16 @@ export function WorkColumn({
     }
   };
 
-  // prepareSession 记下引擎和目录，回到输入框。发出消息才建会话，并挂到这张卡。
+  // prepareSession 弹出悬浮输入窗。发出消息才建会话，并挂到这张卡。
   const prepareSession = () => {
     if (!workId || !onDraftSession) {
       return;
     }
-    onDraftSession(workId, engine, directory);
+    onDraftSession(workId, engine, directory, title.trim() || column.title);
   };
 
   return (
-    <section className="flex h-full min-w-[240px] flex-1 flex-col overflow-hidden rounded-md border border-border bg-background">
+    <section className="flex h-full w-full min-w-0 flex-col overflow-hidden rounded-md border border-border bg-background">
       <header className="shrink-0 space-y-2 border-b border-border px-2 py-2">
         {column.ungrouped ? (
           <h2 className="text-sm font-semibold">未分组</h2>
@@ -182,19 +192,24 @@ export function WorkColumn({
             const sessionInbox = inbox.filter((item) => item.session_id === session.session_id);
             return (
               <li key={`${session.engine}:${session.session_id}`} className="rounded-md border border-border/70 px-2 py-1.5">
-                <button
-                  type="button"
-                  className={`block w-full truncate text-left text-sm font-medium hover:text-foreground${session.running ? " live-status-active" : ""}`}
-                  onClick={() => onOpenSession(session.session_id, session.engine)}
-                >
-                  {session.summary || session.session_id}
-                </button>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  {engineLabel(session.engine)}
-                  {session.running ? <span className="live-status-active"> · 进行中</span> : ""}
-                  {session.pending ? ` · 待审批 ${session.pending}` : ""}
-                  {session.updated_at ? ` · ${relativeTime(session.updated_at)}` : ""}
-                </p>
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      className={`block w-full truncate text-left text-sm font-medium hover:text-foreground${session.running ? " live-status-active" : ""}`}
+                      onClick={() => onOpenSession(session.session_id, session.engine)}
+                    >
+                      {session.summary || session.session_id}
+                    </button>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {engineLabel(session.engine)}
+                      {session.running ? <span className="live-status-active"> · 进行中</span> : ""}
+                      {session.pending ? ` · 待审批 ${session.pending}` : ""}
+                      {session.updated_at ? ` · ${relativeTime(session.updated_at)}` : ""}
+                    </p>
+                  </div>
+                  <SessionArchive session={session} onRefresh={onRefresh} onArchived={onArchived} />
+                </div>
                 <SessionDirectory session={session} onRefresh={onRefresh} />
                 <InboxActions
                   items={sessionInbox}
@@ -218,6 +233,68 @@ export function WorkColumn({
         )}
       </ul>
     </section>
+  );
+}
+
+// SessionArchive 按引擎归档这路会话；进行中的 Local 先停掉再归档。
+function SessionArchive({
+  session,
+  onRefresh,
+  onArchived,
+}: {
+  session: SessionView;
+  onRefresh: () => Promise<void> | void;
+  onArchived?: (id: string, engine: SessionEngine) => void;
+}) {
+  const { client } = useAgent();
+  const { client: codex } = useCodex();
+  const { client: claude } = useClaude();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const label = session.summary || session.session_id;
+
+  // archive 归档后刷新列，并通知外层关掉还开着的悬浮窗。
+  const archive = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (session.engine === "codex") {
+        await codex.archiveSession(session.session_id);
+      } else if (session.engine === "claude") {
+        await claude.archiveSession(session.session_id);
+      } else {
+        const current = await client.getSession(session.session_id);
+        if (current.active_run_id) {
+          try {
+            await client.cancelRun(current.active_run_id);
+          } catch {
+            // 已结束则继续归档
+          }
+        }
+        await client.archiveSession(session.session_id);
+      }
+      onArchived?.(session.session_id, session.engine);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "归档失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="shrink-0 text-right">
+      <button
+        type="button"
+        aria-label={`归档 ${label}`}
+        disabled={busy}
+        className="text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40"
+        onClick={() => void archive()}
+      >
+        归档
+      </button>
+      {error ? <p className="max-w-16 text-[11px] text-destructive">{error}</p> : null}
+    </div>
   );
 }
 
@@ -324,6 +401,15 @@ function AttachMenu({
       ))}
     </select>
   );
+}
+
+// workTitleError 把重名失败说成界面上的短句。
+export function workTitleError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : "无法保存";
+  if (raw.includes("work title already exists")) {
+    return "已有同名分组";
+  }
+  return raw;
 }
 
 // engineLabel 列内用短名区分引擎。

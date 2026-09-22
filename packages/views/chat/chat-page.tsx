@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { BoardGrid } from "../board/board-grid.tsx";
 import { groupSessionsByWork } from "../board/group.ts";
 import { useBoard } from "../board/provider.tsx";
-import { SessionFloat, type FloatSession } from "../board/session-float.tsx";
+import { ComposeFloat, SessionFloat, type ComposeDraft, type FloatSession } from "../board/session-float.tsx";
 import { ClaudePane } from "../claude/claude-pane.tsx";
 import { useClaudeSessionList } from "../claude/hooks/use-session-list.ts";
 import { useClaude } from "../claude/provider.tsx";
@@ -93,6 +93,8 @@ export function ChatPage({
   const [works, setWorks] = useState<Work[]>([]);
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [float, setFloat] = useState<FloatSession | null>(null);
+  const [compose, setCompose] = useState<ComposeDraft | null>(null);
+  const [boardRevision, setBoardRevision] = useState(0);
   const [pendingWorkId, setPendingWorkId] = useState<string | null>(null);
   const wasBoard = useRef(boardMode);
 
@@ -351,20 +353,35 @@ export function ChatPage({
             </div>
           </header>
           <BoardGrid
-            onOpenSession={(id, nextEngine) => setFloat({ id, engine: nextEngine })}
-            onDraftSession={(workId, nextEngine, directory) => {
-              setPendingWorkId(workId);
-              setDraftEngine(nextEngine);
-              if (directory.trim()) {
-                setWorkspaceDraft(directory);
-                writeLastWorkspace(directory);
+            revision={boardRevision}
+            onOpenSession={(id, nextEngine) => {
+              setCompose(null);
+              setFloat({ id, engine: nextEngine });
+            }}
+            onDraftSession={(workId, nextEngine, directory, title) => {
+              setFloat(null);
+              setCompose({ workId, engine: nextEngine, directory, title });
+            }}
+            onArchived={(id, nextEngine) => {
+              if (float?.id === id && float.engine === nextEngine) {
+                setFloat(null);
               }
-              onNewConversation();
             }}
           />
         </main>
         {rightDock}
-        {float ? (
+        {compose ? (
+          <ComposeFloat
+            draft={compose}
+            onClose={() => setCompose(null)}
+            onSent={(id, nextEngine) => {
+              setCompose(null);
+              setFloat({ id, engine: nextEngine });
+              setBoardRevision((value) => value + 1);
+              void boardClient.listPlacements().then(setPlacements).catch(() => undefined);
+            }}
+          />
+        ) : float ? (
           <SessionFloat
             session={float}
             onClose={() => setFloat(null)}
