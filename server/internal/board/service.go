@@ -26,6 +26,7 @@ type Ports struct {
 	ViewPull    func(repo string, number int) (PullSnap, error)
 	ListAsks    func(engine Engine, sessionID string) []InboxItem
 	Decide      func(ctx context.Context, engine Engine, ticketID string, answer DecideAnswer) error
+	ApplyDir    func(ctx context.Context, engine Engine, sessionID, path string) error
 }
 
 // Service 编排 Work / 看板聚合 / Inbox；不写记忆、不 spawn CLI、不建 worktree。
@@ -54,17 +55,14 @@ func (s *Service) StartTalk(ctx context.Context, workID string, spec StartSpec) 
 	return place, started, err
 }
 
-// StartInDir 在已挂目录上开新会话。
+// StartInDir 开会话，并把这个已存在的目录绑到新会话上。
 func (s *Service) StartInDir(ctx context.Context, workID, path string, spec StartSpec) (Placement, Started, error) {
 	if s == nil || s.q == nil {
 		return Placement{}, Started{}, cderr.Invalid("board service required")
 	}
-	cleaned, err := normalizeCheckoutPath(path)
+	cleaned, err := requireExistingDir(path)
 	if err != nil {
 		return Placement{}, Started{}, err
-	}
-	if !HasCheckout(ctx, s.q, workID, cleaned) {
-		return Placement{}, Started{}, cderr.Invalid("checkout is not attached; cannot start a session on this path")
 	}
 	spec.Talk = false
 	spec.WorkspaceID = cleaned
@@ -74,6 +72,23 @@ func (s *Service) StartInDir(ctx context.Context, workID, path string, spec Star
 	}
 	place, err := Bind(ctx, s.q, Placement{Engine: spec.Engine, SessionID: started.ID, WorkID: workID, Checkout: cleaned})
 	return place, started, err
+}
+
+// BindSessionDirectory 把目录绑到已有会话上。path 为空则解绑。非空时再交给引擎改工作目录。
+func (s *Service) BindSessionDirectory(ctx context.Context, engine Engine, sessionID, path string) (string, error) {
+	if s == nil || s.q == nil {
+		return "", cderr.Invalid("board service required")
+	}
+	cleaned, err := SetSessionDirectory(ctx, s.q, engine, sessionID, path)
+	if err != nil {
+		return "", err
+	}
+	if cleaned != "" && s.ports.ApplyDir != nil {
+		if err := s.ports.ApplyDir(ctx, engine, sessionID, cleaned); err != nil {
+			return "", err
+		}
+	}
+	return cleaned, nil
 }
 
 // startSession 按引擎走已注入的建会话口。
@@ -127,7 +142,7 @@ func (s *Service) Cards(ctx context.Context, tenantID, userID string) (BoardView
 	return view, nil
 }
 
-// Card 聚合一张卡的信息、目录 Git 状态与会话摘要。
+// Card 聚合一张卡的说明与会话摘要。目录挂在会话上，不挂在卡上。
 func (s *Service) Card(ctx context.Context, workID string) (Card, error) {
 	if s == nil || s.q == nil {
 		return Card{}, cderr.Invalid("board service required")
@@ -140,26 +155,7 @@ func (s *Service) Card(ctx context.Context, workID string) (Card, error) {
 	if err != nil {
 		return Card{}, err
 	}
-	checkouts, err := ListCheckouts(ctx, s.q, workID)
-	if err != nil {
-		return Card{}, err
-	}
-	card := Card{Work: work, Info: info, Dirs: make([]DirView, 0, len(checkouts)), Sessions: []SessionView{}}
-	for _, co := range checkouts {
-		dir := DirView{Path: co.Path, Kind: string(co.Kind), SharedWriters: []string{}}
-		if dirInfo, infoErr := GetInfo(ctx, s.q, workID, co.Path); infoErr == nil {
-			dir.Info = dirInfo
-		}
-		if s.ports.InspectDir != nil {
-			inspected := s.ports.InspectDir(co.Path)
-			dir.Branch = inspected.Branch
-			dir.Dirty = inspected.Dirty
-			if inspected.SharedWriters != nil {
-				dir.SharedWriters = inspected.SharedWriters
-			}
-		}
-		card.Dirs = append(card.Dirs, dir)
-	}
+	card := Card{Work: work, Info: info, Dirs: []DirView{}, Sessions: []SessionView{}}
 	places, err := ListPlacements(ctx, s.q, workID)
 	if err != nil {
 		return Card{}, err
@@ -176,7 +172,7 @@ func (s *Service) Card(ctx context.Context, workID string) (Card, error) {
 	return card, nil
 }
 
-// sessionView 读一路会话的看板摘要。
+// sessionView 读一路会话的看板摘要，目录取会话自己的绑定。
 func (s *Service) sessionView(ctx context.Context, place Placement) SessionView {
 	view := SessionView{Engine: PublicEngine(place.Engine), SessionID: place.SessionID, Checkout: place.Checkout}
 	if s.ports.Lookup != nil {
@@ -185,6 +181,7 @@ func (s *Service) sessionView(ctx context.Context, place Placement) SessionView 
 			view.UpdatedAt = meta.UpdatedAt
 			view.Running = meta.Running
 			view.Pending = meta.Pending
+			s.annotateDirectory(ctx, place.Engine, &view)
 			return view
 		}
 	}
@@ -198,7 +195,24 @@ func (s *Service) sessionView(ctx context.Context, place Placement) SessionView 
 			}
 		}
 	}
+	s.annotateDirectory(ctx, place.Engine, &view)
 	return view
+}
+
+// annotateDirectory 用会话目录盖过归属上的路径，并现问 Git 状态。
+func (s *Service) annotateDirectory(ctx context.Context, engine Engine, view *SessionView) {
+	if view == nil || s == nil || s.q == nil {
+		return
+	}
+	if path, err := GetSessionDirectory(ctx, s.q, engine, view.SessionID); err == nil && path != "" {
+		view.Checkout = path
+	}
+	if view.Checkout == "" || s.ports.InspectDir == nil {
+		return
+	}
+	inspected := s.ports.InspectDir(view.Checkout)
+	view.Branch = inspected.Branch
+	view.Dirty = inspected.Dirty
 }
 
 // listUngrouped 列出没有 placement 的三引擎会话。
@@ -216,6 +230,7 @@ func (s *Service) listUngrouped(ctx context.Context, tenantID, userID string, pl
 		if n, err := s.q.CountPendingApprovalsBySession(ctx, row.ID); err == nil {
 			view.Pending = int(n)
 		}
+		s.annotateDirectory(ctx, EngineNative, &view)
 		out = append(out, view)
 	}
 	for _, engine := range []Engine{EngineClaude, EngineCodex} {
@@ -233,10 +248,12 @@ func (s *Service) listUngrouped(ctx context.Context, tenantID, userID string, pl
 			if _, ok := placed[PublicEngine(engine)+":"+meta.ID]; ok {
 				continue
 			}
-			out = append(out, SessionView{
+			view := SessionView{
 				Engine: PublicEngine(engine), SessionID: meta.ID, Summary: meta.Summary,
 				UpdatedAt: meta.UpdatedAt, Running: meta.Running, Pending: meta.Pending,
-			})
+			}
+			s.annotateDirectory(ctx, engine, &view)
+			out = append(out, view)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
@@ -308,15 +325,27 @@ func BuildPacket(ctx context.Context, q *sqlite.Queries, engine Engine, sessionI
 		return Packet{}, nil
 	}
 	pkt := Packet{Pulls: []PullSnap{}}
+	dirPath := ""
+	if path, err := GetSessionDirectory(ctx, q, engine, sessionID); err == nil {
+		dirPath = path
+	}
 	if place, err := GetPlacement(ctx, q, engine, sessionID); err == nil {
 		if info, infoErr := GetInfo(ctx, q, place.WorkID, ""); infoErr == nil {
 			pkt.WorkInfo = info
 		}
-		if place.Checkout != "" {
-			if dir, dirErr := GetInfo(ctx, q, place.WorkID, place.Checkout); dirErr == nil {
-				pkt.DirInfo = &dir
-			}
+		if dirPath == "" {
+			dirPath = place.Checkout
 		}
+		if dirPath != "" {
+			dir, dirErr := GetInfo(ctx, q, place.WorkID, dirPath)
+			if dirErr != nil {
+				dir = Info{WorkID: place.WorkID, Checkout: dirPath}
+			}
+			dir.Checkout = dirPath
+			pkt.DirInfo = &dir
+		}
+	} else if dirPath != "" {
+		pkt.DirInfo = &Info{Checkout: dirPath}
 	}
 	if links, err := GetLinks(ctx, q, engine, sessionID); err == nil {
 		pkt.Issue = links.Issue
@@ -336,11 +365,13 @@ func FormatPacket(pkt Packet) string {
 		b.WriteString(strings.TrimSpace(pkt.WorkInfo.Body))
 		wrote = true
 	}
-	if pkt.DirInfo != nil && strings.TrimSpace(pkt.DirInfo.Body) != "" {
+	if pkt.DirInfo != nil && strings.TrimSpace(pkt.DirInfo.Checkout) != "" {
 		b.WriteString("\n\n## 目录 ")
 		b.WriteString(pkt.DirInfo.Checkout)
-		b.WriteByte('\n')
-		b.WriteString(strings.TrimSpace(pkt.DirInfo.Body))
+		if body := strings.TrimSpace(pkt.DirInfo.Body); body != "" {
+			b.WriteByte('\n')
+			b.WriteString(body)
+		}
 		wrote = true
 	}
 	if pkt.Issue != nil && (pkt.Issue.Number > 0 || pkt.Issue.Title != "") {

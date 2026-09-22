@@ -45,19 +45,37 @@ export function groupSessionsByWork<T extends GroupedSession>(
     }
     list.push(session);
   }
-  const ranked = [...works].sort((left, right) => (left.updated_at < right.updated_at ? 1 : -1));
-  const groups: WorkGroup<T>[] = ranked.map((work) => ({
-    id: work.id,
-    title: work.title || "未命名",
-    updatedAt: work.updated_at,
-    sessions: sortSessions(buckets.get(work.id) ?? []),
-  }));
+  const ranked = [...works].sort((left, right) => {
+    const leftAt = newestAt(buckets.get(left.id) ?? [], left.updated_at);
+    const rightAt = newestAt(buckets.get(right.id) ?? [], right.updated_at);
+    return leftAt < rightAt ? 1 : leftAt > rightAt ? -1 : 0;
+  });
+  const groups: WorkGroup<T>[] = ranked.map((work) => {
+    const sessions = sortSessions(buckets.get(work.id) ?? []);
+    return {
+      id: work.id,
+      title: work.title || "未命名",
+      updatedAt: newestAt(sessions, work.updated_at),
+      sessions,
+    };
+  });
   const ungrouped = sortSessions(buckets.get(null) ?? []);
   groups.push({ id: null, title: "未分组", updatedAt: ungrouped[0]?.updated_at ?? "", sessions: ungrouped });
   return groups;
 }
 
-// sortSessions 组内按更新时间倒序。
+// sortSessions 组内按更新时间倒序，新的在前。
 function sortSessions<T extends GroupedSession>(sessions: T[]): T[] {
-  return sessions.slice().sort((left, right) => (left.updated_at < right.updated_at ? 1 : -1));
+  return sessions.slice().sort((left, right) => (left.updated_at < right.updated_at ? 1 : left.updated_at > right.updated_at ? -1 : 0));
+}
+
+// newestAt 取会话里最晚的更新时间，没有会话时用卡片自己的时间。
+function newestAt(sessions: GroupedSession[], fallback: string): string {
+  let best = fallback;
+  for (const session of sessions) {
+    if (session.updated_at > best) {
+      best = session.updated_at;
+    }
+  }
+  return best;
 }

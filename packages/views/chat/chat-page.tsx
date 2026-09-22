@@ -6,7 +6,7 @@ import type { ClaudeSession } from "@codedock/core/claude";
 import type { Session as CodexSession } from "@codedock/core/codex";
 import { Button } from "@codedock/ui";
 import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, PlusIcon } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { BoardGrid } from "../board/board-grid.tsx";
 import { groupSessionsByWork } from "../board/group.ts";
@@ -93,6 +93,26 @@ export function ChatPage({
   const [works, setWorks] = useState<Work[]>([]);
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [float, setFloat] = useState<FloatSession | null>(null);
+  const [pendingWorkId, setPendingWorkId] = useState<string | null>(null);
+  const wasBoard = useRef(boardMode);
+
+  // 看板里会新建、归组、绑目录；回到会话时重拉左侧列表，避免还显示离开前的分组。
+  useEffect(() => {
+    const leaving = wasBoard.current && !boardMode;
+    wasBoard.current = boardMode;
+    if (!leaving) {
+      return;
+    }
+    void list.refresh();
+    void codexList.refresh();
+    void claudeList.refresh();
+    void Promise.all([boardClient.listWorks(), boardClient.listPlacements()])
+      .then(([nextWorks, nextPlaces]) => {
+        setWorks(nextWorks);
+        setPlacements(nextPlaces);
+      })
+      .catch(() => undefined);
+  }, [boardClient, boardMode, claudeList.refresh, codexList.refresh, list.refresh]);
 
   useEffect(() => {
     workbench.reset();
@@ -107,6 +127,29 @@ export function ChatPage({
     () => mergeSessions(list.sessions, codexList.sessions, claudeList.sessions),
     [claudeList.sessions, codexList.sessions, list.sessions],
   );
+  const sidebarSessions = useMemo(() => {
+    if (activeEngine !== "agent" || !sessionId) {
+      return sessions;
+    }
+    return sessions.map((session) => {
+      if (session.engine !== "agent" || session.id !== sessionId) {
+        return session;
+      }
+      return { ...session, running: timeline.loading ? session.running : timeline.running };
+    });
+  }, [activeEngine, sessionId, sessions, timeline.running]);
+  const someoneRunning = sidebarSessions.some((session) => session.running);
+  useEffect(() => {
+    if (boardMode || !someoneRunning) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void list.refresh();
+      void codexList.refresh();
+      void claudeList.refresh();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [boardMode, claudeList.refresh, codexList.refresh, list.refresh, someoneRunning]);
   useEffect(() => {
     void Promise.all([boardClient.listWorks(), boardClient.listPlacements()])
       .then(([nextWorks, nextPlaces]) => {
@@ -116,8 +159,8 @@ export function ChatPage({
       .catch(() => undefined);
   }, [boardClient, sessions]);
   const groups = useMemo(
-    () => groupSessionsByWork(sessions, placements, works),
-    [placements, sessions, works],
+    () => groupSessionsByWork(sidebarSessions, placements, works),
+    [placements, sidebarSessions, works],
   );
   const currentKey = sessionId ? `${activeEngine}:${sessionId}` : undefined;
   const current = sessions.find((session) => `${session.engine}:${session.id}` === currentKey);
@@ -172,6 +215,11 @@ export function ChatPage({
       setWorkspaceDraft(session.workspace_id);
       await client.startRun(session.id, { content: text, mode, approval });
       await list.refresh();
+      try {
+        await placePending(session.id, "agent");
+      } catch (err) {
+        setComposerError(createSessionError(err, "会话已发出，但没能放到分组"));
+      }
       onOpenSession(session.id, "agent");
     } catch (err) {
       setComposerError(createSessionError(err, "发送失败"));
@@ -201,6 +249,17 @@ export function ChatPage({
       .finally(() => {
         setPickingWorkspace(false);
       });
+  };
+
+  // placePending 把刚发出消息的会话挂到加号选中的 Work 上。没有待挂分组时什么都不做。
+  const placePending = async (id: string, engine: SessionEngine) => {
+    const workId = pendingWorkId;
+    if (!workId) {
+      return;
+    }
+    await boardClient.attachPlacement(workId, engine, id);
+    setPendingWorkId(null);
+    setPlacements(await boardClient.listPlacements());
   };
 
   // hideSession 按引擎归档或删除，当前打开的那条会回到新建页。
@@ -291,7 +350,18 @@ export function ChatPage({
               </SidebarToggle>
             </div>
           </header>
-          <BoardGrid onOpenSession={(id, nextEngine) => setFloat({ id, engine: nextEngine })} />
+          <BoardGrid
+            onOpenSession={(id, nextEngine) => setFloat({ id, engine: nextEngine })}
+            onDraftSession={(workId, nextEngine, directory) => {
+              setPendingWorkId(workId);
+              setDraftEngine(nextEngine);
+              if (directory.trim()) {
+                setWorkspaceDraft(directory);
+                writeLastWorkspace(directory);
+              }
+              onNewConversation();
+            }}
+          />
         </main>
         {rightDock}
         {float ? (
@@ -313,7 +383,7 @@ export function ChatPage({
         <>
           <SessionSidebar
             width={columns.left}
-            sessions={sessions}
+            sessions={sidebarSessions}
             groups={groups}
             works={works.map((work) => ({ id: work.id, title: work.title }))}
             currentId={currentKey}
@@ -327,7 +397,15 @@ export function ChatPage({
             }
             hasMore={codexList.hasMore}
             onLoadMore={codexList.hasMore ? () => void codexList.loadMore() : undefined}
-            onCreate={onNewConversation}
+            onCreate={() => {
+              setPendingWorkId(null);
+              onNewConversation();
+            }}
+            pendingWorkId={pendingWorkId}
+            onCreateInWork={(workId) => {
+              setPendingWorkId(workId);
+              onNewConversation();
+            }}
             onOpenBoard={onOpenBoard}
             onAttach={async (session, workId) => {
               await boardClient.attachPlacement(workId, session.engine ?? "agent", session.id);
@@ -338,7 +416,10 @@ export function ChatPage({
               setWorks(nextWorks);
               setPlacements(nextPlaces);
             }}
-            onSelect={(id, nextEngine) => onOpenSession(id, nextEngine ?? "agent")}
+            onSelect={(id, nextEngine) => {
+              setPendingWorkId(null);
+              onOpenSession(id, nextEngine ?? "agent");
+            }}
             onRecover={async (runId) => {
               await timeline.recover(runId);
               await list.refresh();
@@ -367,7 +448,14 @@ export function ChatPage({
             {columns.leftOpen ? <PanelLeftClose className="size-3.5" /> : <PanelLeft className="size-3.5" />}
           </SidebarToggle>
           {!columns.leftOpen ? (
-            <Button size="sm" variant="secondary" onClick={onNewConversation}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setPendingWorkId(null);
+                onNewConversation();
+              }}
+            >
               <PlusIcon className="size-3.5" />
               新对话
             </Button>
@@ -512,6 +600,7 @@ export function ChatPage({
                 setWorkspaceDraft("");
                 clearLastWorkspace();
               }}
+              placedIn={works.find((work) => work.id === pendingWorkId)?.title}
             >
               {draftEngine === "codex" ? (
                 <CodexPane
@@ -519,6 +608,13 @@ export function ChatPage({
                   workspace={workspaceDraft}
                   pickFiles={pickFiles}
                   onOpenSession={(id) => onOpenSession(id, "codex")}
+                  onCreated={async (id) => {
+                    try {
+                      await placePending(id, "codex");
+                    } catch (err) {
+                      setComposerError(createSessionError(err, "会话已发出，但没能放到分组"));
+                    }
+                  }}
                   onNewConversation={onNewConversation}
                   onListChange={codexList.refresh}
                 />
@@ -528,6 +624,13 @@ export function ChatPage({
                   workspace={workspaceDraft}
                   pickFiles={pickFiles}
                   onOpenSession={(id) => onOpenSession(id, "claude")}
+                  onCreated={async (id) => {
+                    try {
+                      await placePending(id, "claude");
+                    } catch (err) {
+                      setComposerError(createSessionError(err, "会话已发出，但没能放到分组"));
+                    }
+                  }}
                   onNewConversation={onNewConversation}
                   onListChange={claudeList.refresh}
                 />
@@ -573,7 +676,11 @@ function mergeSessions(
   claude: ClaudeSession[],
 ): SidebarSession[] {
   const mapped: SidebarSession[] = [
-    ...agent.map((session) => ({ ...session, engine: "agent" as const })),
+    ...agent.map((session) => ({
+      ...session,
+      engine: "agent" as const,
+      running: Boolean(session.active_run_id) && !session.needs_recover,
+    })),
     ...codex.map(asCodexSidebarSession),
     ...claude.map(asClaudeSidebarSession),
   ];
@@ -605,6 +712,7 @@ function asCodexSidebarSession(session: CodexSession): SidebarSession {
     created_at: stampToIso(session.created_at),
     updated_at: stampToIso(session.updated_at),
     engine: "codex",
+    running: Boolean(session.active_turn_id),
   };
 }
 
@@ -623,6 +731,7 @@ function asClaudeSidebarSession(session: ClaudeSession): SidebarSession {
     created_at: stampToIso(session.created_at),
     updated_at: stampToIso(session.updated_at),
     engine: "claude",
+    running: Boolean(session.active_turn_id),
   };
 }
 

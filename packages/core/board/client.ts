@@ -165,6 +165,20 @@ export class BoardClient {
     await this.request(`/placements/${engine}/${sessionId}`, { method: "DELETE" });
   }
 
+  // bindDirectory 把已存在目录绑到会话上。
+  async bindDirectory(engine: BoardEngine, sessionId: string, path: string): Promise<string> {
+    const body = (await this.request(`/session-directories/${engine}/${sessionId}`, {
+      method: "PUT",
+      json: { path },
+    })) as { path?: string };
+    return body.path ?? "";
+  }
+
+  // clearDirectory 解绑会话上的目录。
+  async clearDirectory(engine: BoardEngine, sessionId: string): Promise<void> {
+    await this.request(`/session-directories/${engine}/${sessionId}`, { method: "DELETE" });
+  }
+
   // getBoard 聚合横向看板。
   async getBoard(): Promise<BoardView> {
     const body = (await this.request(`/board${this.userQuery()}`)) as { board?: BoardView };

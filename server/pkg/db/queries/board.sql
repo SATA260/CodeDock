@@ -185,3 +185,21 @@ WHERE engine = ? AND session_id = ? AND repo = ? AND number = ?;
 -- name: DeleteSessionPulls :exec
 DELETE FROM session_pulls
 WHERE engine = ? AND session_id = ?;
+
+-- name: GetSessionDirectory :one
+SELECT engine, session_id, path FROM session_directories
+WHERE engine = ? AND session_id = ?;
+
+-- name: UpsertSessionDirectory :one
+INSERT INTO session_directories (
+    engine, session_id, path
+) VALUES (
+    ?, ?, ?
+)
+ON CONFLICT (engine, session_id) DO UPDATE SET
+    path = excluded.path
+RETURNING *;
+
+-- name: DeleteSessionDirectory :exec
+DELETE FROM session_directories
+WHERE engine = ? AND session_id = ?;

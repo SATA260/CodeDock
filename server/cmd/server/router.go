@@ -80,6 +80,10 @@ func newRouter(log *slog.Logger, api *handler.API, codexAPI *codexhttp.API) http
 			r.Get("/packet", api.GetPlacementPacket)
 		})
 		router.Post("/inbox/decision", api.DecideInbox)
+		router.Route("/session-directories/{engine}/{session_id}", func(r chi.Router) {
+			r.Put("/", api.BindSessionDirectory)
+			r.Delete("/", api.BindSessionDirectory)
+		})
 		router.Route("/session-links/{engine}/{session_id}", func(r chi.Router) {
 			r.Get("/", api.GetSessionLinks)
 			r.Put("/", api.ReplaceSessionLinks)

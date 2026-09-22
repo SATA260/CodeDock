@@ -245,6 +245,23 @@ func (q *Queries) SetSessionSummary(ctx context.Context, arg SetSessionSummaryPa
 	return err
 }
 
+const setSessionWorkspace = `-- name: SetSessionWorkspace :exec
+UPDATE sessions
+SET workspace_id = ?, updated_at = ?
+WHERE id = ?
+`
+
+type SetSessionWorkspaceParams struct {
+	WorkspaceID string
+	UpdatedAt   string
+	ID          string
+}
+
+func (q *Queries) SetSessionWorkspace(ctx context.Context, arg SetSessionWorkspaceParams) error {
+	_, err := q.db.ExecContext(ctx, setSessionWorkspace, arg.WorkspaceID, arg.UpdatedAt, arg.ID)
+	return err
+}
+
 const updateCompactionSeq = `-- name: UpdateCompactionSeq :exec
 UPDATE sessions
 SET compaction_seq = ?, updated_at = ?

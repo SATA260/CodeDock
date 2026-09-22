@@ -2,13 +2,18 @@
 
 import type { Session } from "@codedock/core/chat";
 import { Button, cn } from "@codedock/ui";
-import { Archive, LayoutGrid, PlusIcon } from "lucide-react";
+import { Archive, ChevronRight, FolderKanban, LayoutGrid, PlusIcon } from "lucide-react";
+import { useState } from "react";
 
 import type { WorkGroup } from "../board/group.ts";
 import type { SessionEngine } from "./chat-page.tsx";
-import { relativeTime, sessionTitle, sessionTitleParts, shortId } from "./lib/format.ts";
+import { compactAge, sessionTitle, sessionTitleParts } from "./lib/format.ts";
 
-export type SidebarSession = Session & { engine?: SessionEngine };
+export type SidebarSession = Session & {
+  engine?: SessionEngine;
+  /** 这路会话正在跑，侧栏用扫光标出来。 */
+  running?: boolean;
+};
 
 // SessionSidebar 按 Work 分组、组内按时间；未挂卡的进未归组。
 export function SessionSidebar({
@@ -21,6 +26,8 @@ export function SessionSidebar({
   hasMore = false,
   onLoadMore,
   onCreate,
+  onCreateInWork,
+  pendingWorkId,
   onSelect,
   onRecover,
   onArchive,
@@ -41,6 +48,10 @@ export function SessionSidebar({
   hasMore?: boolean;
   onLoadMore?: () => void;
   onCreate: () => void;
+  /** 记下要挂上的 Work，等用户发出第一条消息再开会话。未分组没有这个入口。 */
+  onCreateInWork?: (workId: string) => void;
+  /** 下一条新对话要挂上的 Work。 */
+  pendingWorkId?: string | null;
   onSelect: (id: string, engine?: SessionEngine) => void;
   onRecover?: (runId: string) => Promise<void>;
   onArchive?: (session: SidebarSession) => Promise<void>;
@@ -79,39 +90,27 @@ export function SessionSidebar({
       </div>
       {error ? <p className="px-3 pb-2 text-xs text-destructive">{error}</p> : null}
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        {rendered.every((group) => group.sessions.length === 0) ? (
+        {rendered.every((group) => group.id === null && group.sessions.length === 0) ? (
           <p className="px-2 py-6 text-xs text-muted-foreground">还没有会话</p>
         ) : (
           rendered.map((group) => (
-            <section key={group.id ?? "ungrouped"} className="mb-3">
-              <h2 className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                {group.title}
-              </h2>
-              {group.sessions.length === 0 ? (
-                <p className="px-2 pb-2 text-[11px] text-muted-foreground/70">暂无会话</p>
-              ) : (
-                <ul className="space-y-0.5">
-                  {group.sessions.map((session) => (
-                    <SidebarRow
-                      key={`${session.engine ?? "agent"}:${session.id}`}
-                      session={session}
-                      currentId={currentId}
-                      ungrouped={group.id === null}
-                      works={works}
-                      busy={busy}
-                      onSelect={onSelect}
-                      onRecover={onRecover}
-                      onArchive={onArchive}
-                      onAttach={onAttach}
-                      canRecoverCurrent={canRecoverCurrent}
-                      brandSrc={brandSrc}
-                      codexIconSrc={codexIconSrc}
-                      claudeIconSrc={claudeIconSrc}
-                    />
-                  ))}
-                </ul>
-              )}
-            </section>
+            <WorkGroupSection
+              key={group.id ?? "ungrouped"}
+              group={group}
+              currentId={currentId}
+              works={works}
+              busy={busy}
+              onSelect={onSelect}
+              onRecover={onRecover}
+              onArchive={onArchive}
+              onAttach={onAttach}
+              onCreateInWork={onCreateInWork}
+              pendingWorkId={pendingWorkId}
+              canRecoverCurrent={canRecoverCurrent}
+              brandSrc={brandSrc}
+              codexIconSrc={codexIconSrc}
+              claudeIconSrc={claudeIconSrc}
+            />
           ))
         )}
         {hasMore && onLoadMore ? (
@@ -121,6 +120,106 @@ export function SessionSidebar({
         ) : null}
       </nav>
     </aside>
+  );
+}
+
+// WorkGroupSection 一组 Work：标题可收起下面的会话，组内已按时间从新到旧排好。
+function WorkGroupSection({
+  group,
+  currentId,
+  works,
+  busy,
+  onSelect,
+  onRecover,
+  onArchive,
+  onAttach,
+  onCreateInWork,
+  pendingWorkId,
+  canRecoverCurrent,
+  brandSrc,
+  codexIconSrc,
+  claudeIconSrc,
+}: {
+  group: WorkGroup<SidebarSession>;
+  currentId?: string;
+  works: { id: string; title: string }[];
+  busy: boolean;
+  onSelect: (id: string, engine?: SessionEngine) => void;
+  onRecover?: (runId: string) => Promise<void>;
+  onArchive?: (session: SidebarSession) => Promise<void>;
+  onAttach?: (session: SidebarSession, workId: string) => Promise<void>;
+  onCreateInWork?: (workId: string) => void;
+  pendingWorkId?: string | null;
+  canRecoverCurrent: boolean;
+  brandSrc?: string;
+  codexIconSrc?: string;
+  claudeIconSrc?: string;
+}) {
+  const [open, setOpen] = useState(true);
+  const pending = Boolean(group.id && pendingWorkId === group.id);
+  return (
+    <section className="mb-3">
+      <h2 className="flex items-center gap-1 pr-1">
+        <button
+          type="button"
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-1 px-2 pb-1 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground"
+          onClick={() => setOpen((value) => !value)}
+        >
+          <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
+          {group.id ? <FolderKanban className="size-3 shrink-0" aria-hidden /> : null}
+          <span className="min-w-0 truncate">{group.title}</span>
+        </button>
+        {group.id && onCreateInWork ? (
+          <button
+            type="button"
+            title="创建会话"
+            aria-label={`在${group.title}下创建会话`}
+            aria-pressed={pending}
+            className={cn(
+              "inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground",
+              pending && "bg-accent text-foreground",
+            )}
+            onClick={() => {
+              const workId = group.id;
+              if (!workId) {
+                return;
+              }
+              setOpen(true);
+              onCreateInWork(workId);
+            }}
+          >
+            <PlusIcon className="size-3" />
+          </button>
+        ) : null}
+      </h2>
+      {open ? (
+        group.sessions.length === 0 ? (
+          <p className="px-2 pb-2 text-[11px] text-muted-foreground/70">暂无会话</p>
+        ) : (
+          <ul className="space-y-0.5">
+            {group.sessions.map((session) => (
+              <SidebarRow
+                key={`${session.engine ?? "agent"}:${session.id}`}
+                session={session}
+                currentId={currentId}
+                ungrouped={group.id === null}
+                works={works}
+                busy={busy}
+                onSelect={onSelect}
+                onRecover={onRecover}
+                onArchive={onArchive}
+                onAttach={onAttach}
+                canRecoverCurrent={canRecoverCurrent}
+                brandSrc={brandSrc}
+                codexIconSrc={codexIconSrc}
+                claudeIconSrc={claudeIconSrc}
+              />
+            ))}
+          </ul>
+        )
+      ) : null}
+    </section>
   );
 }
 
@@ -161,27 +260,24 @@ function SidebarRow({
     <li>
       <div
         className={cn(
-          "group flex w-full items-center gap-1 rounded-md px-2 py-1.5 leading-5 transition-colors",
+          "group flex h-7 w-full items-center gap-1 rounded-md px-1.5 transition-colors",
           active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
         )}
       >
         <button
           type="button"
           onClick={() => onSelect(session.id, engine)}
-          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
         >
-          <SessionEngineMark
-            engine={engine}
-            brandSrc={brandSrc}
-            codexIconSrc={codexIconSrc}
-            claudeIconSrc={claudeIconSrc}
-          />
-          <span className="min-w-0 flex-1">
-            <SidebarSessionTitle id={session.id} summary={session.summary} />
-            <span className="mt-0.5 block truncate text-xs text-muted-foreground/70">
-              {relativeTime(session.updated_at) || shortId(session.id)}
-            </span>
+          <span className={cn("inline-flex shrink-0", session.running && "session-live-mark")}>
+            <SessionEngineMark
+              engine={engine}
+              brandSrc={brandSrc}
+              codexIconSrc={codexIconSrc}
+              claudeIconSrc={claudeIconSrc}
+            />
           </span>
+          <SidebarSessionTitle id={session.id} summary={session.summary} running={session.running} />
         </button>
         {engine === "agent" &&
         session.needs_recover &&
@@ -203,7 +299,7 @@ function SidebarRow({
         {ungrouped && onAttach && works.length > 0 ? (
           <select
             aria-label="放到分组"
-            className="h-6 max-w-[4.5rem] shrink-0 rounded border border-border bg-background text-[10px]"
+            className="h-5 max-w-[3.25rem] shrink-0 rounded border border-border bg-background text-[10px]"
             defaultValue=""
             onChange={(event) => {
               const workId = event.target.value;
@@ -226,7 +322,7 @@ function SidebarRow({
             aria-label={`归档 ${sessionTitle(session.id, session.summary)}`}
             disabled={busy}
             className={cn(
-              "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/55 transition-colors",
+              "inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/55 transition-colors",
               "hover:bg-muted hover:text-foreground",
               "opacity-80 group-hover:opacity-100 focus-visible:opacity-100",
             )}
@@ -235,21 +331,24 @@ function SidebarRow({
               void onArchive(session);
             }}
           >
-            <Archive className="size-3.5" />
+            <Archive className="size-3" />
           </button>
         ) : null}
+        <span className="w-7 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground/70">
+          {compactAge(session.updated_at)}
+        </span>
       </div>
     </li>
   );
 }
 
-// SidebarSessionTitle 正文可裁，末尾 (n) 不参与省略。
-function SidebarSessionTitle({ id, summary }: { id: string; summary?: string }) {
+// SidebarSessionTitle 正文可裁，末尾 (n) 不参与省略；进行中时两段各自扫光。
+function SidebarSessionTitle({ id, summary, running }: { id: string; summary?: string; running?: boolean }) {
   const { stem, suffix } = sessionTitleParts(id, summary);
   return (
-    <span className="flex min-w-0 text-sm font-medium">
-      <span className="min-w-0 truncate">{stem}</span>
-      {suffix ? <span className="shrink-0">{suffix}</span> : null}
+    <span className="flex min-w-0 text-xs font-medium">
+      <span className={cn("min-w-0 truncate", running && "live-status-active")}>{stem}</span>
+      {suffix ? <span className={cn("shrink-0", running && "live-status-active")}>{suffix}</span> : null}
     </span>
   );
 }
@@ -274,7 +373,7 @@ function SessionEngineMark({
       <img
         src={codexIconSrc}
         alt="Codex"
-        className="size-8 shrink-0 rounded-[8px] shadow-[0_0_0_1px_rgba(255,255,255,0.28),0_0_12px_rgba(88,122,255,0.55)]"
+        className="size-4 shrink-0 rounded-[4px] shadow-[0_0_0_1px_rgba(255,255,255,0.28),0_0_8px_rgba(88,122,255,0.45)]"
       />
     );
   }
@@ -286,7 +385,7 @@ function SessionEngineMark({
       <img
         src={claudeIconSrc}
         alt="Claude"
-        className="size-8 shrink-0 rounded-[8px] shadow-[0_0_0_1px_rgba(255,255,255,0.22),0_0_12px_rgba(217,119,87,0.55)]"
+        className="size-4 shrink-0 rounded-[4px] shadow-[0_0_0_1px_rgba(255,255,255,0.22),0_0_8px_rgba(217,119,87,0.45)]"
       />
     );
   }
@@ -294,8 +393,8 @@ function SessionEngineMark({
     return null;
   }
   return (
-    <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-zinc-800 shadow-[0_0_0_1px_rgba(255,255,255,0.22),0_0_10px_rgba(244,244,245,0.2)]">
-      <img src={brandSrc} alt="Local" className="size-6" />
+    <span className="flex size-4 shrink-0 items-center justify-center rounded-[4px] bg-zinc-800 shadow-[0_0_0_1px_rgba(255,255,255,0.22),0_0_6px_rgba(244,244,245,0.16)]">
+      <img src={brandSrc} alt="Local" className="size-3" />
     </span>
   );
 }

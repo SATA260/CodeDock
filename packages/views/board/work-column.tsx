@@ -1,6 +1,6 @@
 "use client";
 
-import type { BoardEngine, InboxItem } from "@codedock/core/board";
+import type { BoardEngine, InboxItem, SessionView } from "@codedock/core/board";
 import { Button, MessageResponse } from "@codedock/ui";
 import { useEffect, useState } from "react";
 
@@ -16,10 +16,12 @@ import { useBoard } from "./provider.tsx";
 export function WorkColumn({
   column,
   onOpenSession,
+  onDraftSession,
   onRefresh,
 }: {
   column: BoardColumn;
   onOpenSession: (id: string, engine: SessionEngine) => void;
+  onDraftSession?: (workId: string, engine: SessionEngine, directory: string) => void;
   onRefresh: () => Promise<void> | void;
 }) {
   const { client } = useBoard();
@@ -28,6 +30,7 @@ export function WorkColumn({
   const [info, setInfo] = useState(column.card?.info.body ?? "");
   const [editingInfo, setEditingInfo] = useState(false);
   const [engine, setEngine] = useState<BoardEngine>("agent");
+  const [directory, setDirectory] = useState("");
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const workId = column.card?.work.id;
@@ -67,47 +70,28 @@ export function WorkColumn({
     void onRefresh();
   };
 
-  // startTalk 在这张卡上开问答会话并打开悬浮窗。
-  const startTalk = async () => {
-    if (!workId) {
+  // pickCreateDirectory 为接下来要创建的会话选一个目录。
+  const pickCreateDirectory = async () => {
+    if (!pickDirectory) {
       return;
     }
     setError(null);
     try {
-      const started = await client.startSession(workId, { engine, kind: "talk" });
-      await onRefresh();
-      onOpenSession(started.session_id, started.engine);
+      const path = await pickDirectory({ start: directory || undefined });
+      if (path) {
+        setDirectory(path);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "无法开会话");
+      setError(err instanceof Error ? err.message : "无法选择目录");
     }
   };
 
-  // startInDir 在已挂目录上开新会话。
-  const startInDir = async (path: string) => {
-    if (!workId) {
+  // prepareSession 记下引擎和目录，回到输入框。发出消息才建会话，并挂到这张卡。
+  const prepareSession = () => {
+    if (!workId || !onDraftSession) {
       return;
     }
-    setError(null);
-    try {
-      const started = await client.startSession(workId, { engine, kind: "dir", checkout: path });
-      await onRefresh();
-      onOpenSession(started.session_id, started.engine);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "无法开目录会话");
-    }
-  };
-
-  // attachDir 弹出系统目录选择框后挂到卡上。
-  const attachDir = async () => {
-    if (!workId || !pickDirectory) {
-      return;
-    }
-    const path = await pickDirectory();
-    if (!path) {
-      return;
-    }
-    await client.attachCheckout(workId, path);
-    await onRefresh();
+    onDraftSession(workId, engine, directory);
   };
 
   return (
@@ -140,34 +124,26 @@ export function WorkColumn({
               </Button>
             </div>
             <InfoEditor open={editingInfo} value={info} onClose={() => setEditingInfo(false)} onSave={saveInfo} />
-            <div className="space-y-1 text-[11px] text-muted-foreground">
-              {(column.card.dirs ?? []).map((dir) => (
-                <div key={dir.path} className="flex items-start justify-between gap-1">
-                  <button type="button" className="min-w-0 text-left hover:text-foreground" onClick={() => void startInDir(dir.path)}>
-                    <span className="block truncate font-mono" title={dir.path}>
-                      {shortWorkspace(dir.path)}
-                    </span>
-                    <span>
-                      {dir.branch || "—"}
-                      {dir.dirty ? " · 有改动" : ""}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="shrink-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => {
-                      void client.detachCheckout(workId ?? "", dir.path).then(onRefresh);
-                    }}
-                  >
-                    解绑
-                  </button>
-                </div>
-              ))}
-            </div>
             <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
               <span>{column.sessions.length} 会话</span>
               <span>进行中 {column.card.running}</span>
               <span>待审批 {column.card.pending}</span>
+            </div>
+            <div className="flex items-center gap-1 text-[11px]">
+              <button
+                type="button"
+                className="h-6 min-w-0 flex-1 truncate rounded border border-border bg-background px-1.5 text-left font-mono text-muted-foreground hover:text-foreground"
+                title={directory || "选择目录"}
+                disabled={!pickDirectory}
+                onClick={() => void pickCreateDirectory()}
+              >
+                {directory ? shortWorkspace(directory) : "选择目录"}
+              </button>
+              {directory ? (
+                <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" onClick={() => setDirectory("")}>
+                  清除
+                </button>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-1">
               <select
@@ -179,11 +155,8 @@ export function WorkColumn({
                 <option value="codex">Codex</option>
                 <option value="claude">Claude</option>
               </select>
-              <Button size="sm" variant="secondary" onClick={() => void startTalk()}>
+              <Button size="sm" variant="secondary" disabled={!onDraftSession} onClick={prepareSession}>
                 创建会话
-              </Button>
-              <Button size="sm" variant="ghost" disabled={!pickDirectory} onClick={() => void attachDir()}>
-                绑定目录
               </Button>
               <Button
                 size="sm"
@@ -211,17 +184,18 @@ export function WorkColumn({
               <li key={`${session.engine}:${session.session_id}`} className="rounded-md border border-border/70 px-2 py-1.5">
                 <button
                   type="button"
-                  className="block w-full truncate text-left text-sm font-medium hover:text-foreground"
+                  className={`block w-full truncate text-left text-sm font-medium hover:text-foreground${session.running ? " live-status-active" : ""}`}
                   onClick={() => onOpenSession(session.session_id, session.engine)}
                 >
                   {session.summary || session.session_id}
                 </button>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
                   {engineLabel(session.engine)}
-                  {session.running ? " · 进行中" : ""}
+                  {session.running ? <span className="live-status-active"> · 进行中</span> : ""}
                   {session.pending ? ` · 待审批 ${session.pending}` : ""}
                   {session.updated_at ? ` · ${relativeTime(session.updated_at)}` : ""}
                 </p>
+                <SessionDirectory session={session} onRefresh={onRefresh} />
                 <InboxActions
                   items={sessionInbox}
                   onDone={async () => {
@@ -244,6 +218,71 @@ export function WorkColumn({
         )}
       </ul>
     </section>
+  );
+}
+
+// SessionDirectory 在会话上绑定或解绑目录。
+function SessionDirectory({
+  session,
+  onRefresh,
+}: {
+  session: SessionView;
+  onRefresh: () => Promise<void> | void;
+}) {
+  const { client } = useBoard();
+  const { pickDirectory } = useAgent();
+  const [error, setError] = useState<string | null>(null);
+
+  // bind 弹出系统目录选择框，把选中的目录记到这路会话上。
+  const bind = async () => {
+    if (!pickDirectory) {
+      return;
+    }
+    const path = await pickDirectory();
+    if (!path) {
+      return;
+    }
+    setError(null);
+    try {
+      await client.bindDirectory(session.engine, session.session_id, path);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "无法绑定目录");
+    }
+  };
+
+  return (
+    <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+      {session.checkout ? (
+        <p className="truncate font-mono" title={session.checkout}>
+          {shortWorkspace(session.checkout)}
+          {session.branch ? ` · ${session.branch}` : ""}
+          {session.dirty ? " · 有改动" : ""}
+        </p>
+      ) : (
+        <p>还没有目录</p>
+      )}
+      <div className="flex gap-2">
+        <button type="button" className="hover:text-foreground" disabled={!pickDirectory} onClick={() => void bind()}>
+          绑定目录
+        </button>
+        {session.checkout ? (
+          <button
+            type="button"
+            className="hover:text-foreground"
+            onClick={() => {
+              setError(null);
+              void client.clearDirectory(session.engine, session.session_id).then(onRefresh).catch((err: unknown) => {
+                setError(err instanceof Error ? err.message : "无法解绑");
+              });
+            }}
+          >
+            解绑
+          </button>
+        ) : null}
+      </div>
+      {error ? <p className="text-destructive">{error}</p> : null}
+    </div>
   );
 }
 

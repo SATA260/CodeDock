@@ -17,8 +17,9 @@ import (
 
 // API 是 /codex HTTP 薄桥接。
 type API struct {
-	rt     *intcodex.Runtime
-	packet func(ctx context.Context, sessionID string) string
+	rt        *intcodex.Runtime
+	packet    func(ctx context.Context, sessionID string) string
+	directory func(ctx context.Context, sessionID string) string
 }
 
 // New 构造 Codex HTTP 入口。
@@ -32,6 +33,14 @@ func (a *API) SetPacket(fn func(ctx context.Context, sessionID string) string) {
 		return
 	}
 	a.packet = fn
+}
+
+// SetDirectory 注入会话目录读取函数，开回合前写回 Codex 工作目录。
+func (a *API) SetDirectory(fn func(ctx context.Context, sessionID string) string) {
+	if a == nil {
+		return
+	}
+	a.directory = fn
 }
 
 // Mount 把 /codex 路由挂到父路由器上。
@@ -282,11 +291,17 @@ func (a *API) StartTurn(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = pkg.InputStart
 	}
+	sessionID := chi.URLParam(r, "id")
+	if a.directory != nil {
+		if path := a.directory(r.Context(), sessionID); path != "" {
+			a.rt.SetCwd(sessionID, path)
+		}
+	}
 	content := req.Content
 	if a.packet != nil {
-		content = board.PrefixContent(a.packet(r.Context(), chi.URLParam(r, "id")), content)
+		content = board.PrefixContent(a.packet(r.Context(), sessionID), content)
 	}
-	turn, err := a.rt.StartTurn(r.Context(), chi.URLParam(r, "id"), content, req.Input, mode)
+	turn, err := a.rt.StartTurn(r.Context(), sessionID, content, req.Input, mode)
 	if err != nil {
 		writeError(w, err)
 		return

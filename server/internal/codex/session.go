@@ -152,6 +152,17 @@ func (rt *Runtime) sessionFromThread(sessionID string, th pkg.ThreadObject) pkg.
 	return pkg.MapThread(th, archived, active)
 }
 
+// SetCwd 记下这条对话接下来使用的工作目录。
+func (rt *Runtime) SetCwd(sessionID, cwd string) {
+	if rt == nil || sessionID == "" || cwd == "" {
+		return
+	}
+	st := rt.state(sessionID)
+	st.mu.Lock()
+	st.settings.Cwd = cwd
+	st.mu.Unlock()
+}
+
 // Rename 改标题。
 func (rt *Runtime) Rename(ctx context.Context, sessionID, title string) error {
 	if title == "" {

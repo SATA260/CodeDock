@@ -65,6 +65,8 @@ export type SessionView = {
   session_id: string;
   summary: string;
   checkout: string;
+  branch?: string;
+  dirty?: boolean;
   running: boolean;
   pending: number;
   updated_at: string;

@@ -19,6 +19,7 @@ export function ClaudePane({
   workspace,
   pickFiles,
   onOpenSession,
+  onCreated,
   onNewConversation,
   onListChange,
   composeOnly = false,
@@ -27,6 +28,8 @@ export function ClaudePane({
   workspace?: string;
   pickFiles?: (options?: PickFilesOptions) => Promise<PickedLocalFile[]>;
   onOpenSession: (id: string) => void;
+  /** 第一条消息已经发出、会话刚建好时调用，用来挂到 Work。 */
+  onCreated?: (id: string) => Promise<void>;
   onNewConversation: () => void;
   onListChange?: () => Promise<void>;
   composeOnly?: boolean;
@@ -99,6 +102,7 @@ export function ClaudePane({
     try {
       const id = await createWithSettings();
       await client.startTurn(id, { content: text, mode });
+      await onCreated?.(id);
       await openCreated(id);
     } catch (err) {
       fail(err, "无法开对话");

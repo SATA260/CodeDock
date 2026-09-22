@@ -96,6 +96,8 @@ type SessionView struct {
 	SessionID string `json:"session_id"`
 	Summary   string `json:"summary"`
 	Checkout  string `json:"checkout"`
+	Branch    string `json:"branch,omitempty"`
+	Dirty     bool   `json:"dirty,omitempty"`
 	Running   bool   `json:"running"`
 	Pending   int    `json:"pending"`
 	UpdatedAt string `json:"updated_at"`
@@ -151,7 +153,7 @@ type StartSpec struct {
 	UserID      string
 	TenantID    string
 	AgentID     string
-	WorkspaceID string // StartInDir 时为目录；问答可空。
+	WorkspaceID string // 新建时要冻进会话的目录；问答可空，事后再绑。
 	Talk        bool
 }
 

@@ -35,6 +35,14 @@ type AttachCheckoutRequest struct {
 	Kind string `json:"kind"`
 }
 
+type BindDirectoryRequest struct {
+	Path string `json:"path"`
+}
+
+type DirectoryResponse struct {
+	Path string `json:"path"`
+}
+
 type CheckoutResponse struct {
 	Checkout board.Checkout `json:"checkout"`
 }
@@ -335,6 +343,30 @@ func (a *API) GetPlacement(w http.ResponseWriter, r *http.Request) {
 		SessionID: place.SessionID,
 		Engine:    board.PublicEngine(place.Engine),
 	})
+}
+
+// BindSessionDirectory 把目录绑到会话上。DELETE 或空 path 为解绑。
+func (a *API) BindSessionDirectory(w http.ResponseWriter, r *http.Request) {
+	engine, err := board.ParseEngine(chi.URLParam(r, "engine"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	path := ""
+	if r.Method != http.MethodDelete && r.Body != nil {
+		var req BindDirectoryRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, err)
+			return
+		}
+		path = req.Path
+	}
+	bound, err := a.board.BindSessionDirectory(r.Context(), engine, chi.URLParam(r, "session_id"), path)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DirectoryResponse{Path: bound})
 }
 
 // DeletePlacement 断开归属。

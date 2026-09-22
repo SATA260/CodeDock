@@ -12,8 +12,11 @@ import { WorkColumn } from "./work-column.tsx";
 // BoardGrid 横向 Work 列：列高滚动、每行限列、底部分页。
 export function BoardGrid({
   onOpenSession,
+  onDraftSession,
 }: {
   onOpenSession: (id: string, engine: SessionEngine) => void;
+  /** 记下这张卡和目录，回到输入框；发出消息才建会话。 */
+  onDraftSession?: (workId: string, engine: SessionEngine, directory: string) => void;
 }) {
   const { client } = useBoard();
   const [view, setView] = useState<BoardView>({ cards: [], ungrouped: [] });
@@ -85,6 +88,7 @@ export function BoardGrid({
             key={column.id}
             column={column}
             onOpenSession={onOpenSession}
+            onDraftSession={onDraftSession}
             onRefresh={reload}
           />
         ))}

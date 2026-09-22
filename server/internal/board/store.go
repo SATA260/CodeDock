@@ -116,16 +116,9 @@ func AttachCheckout(ctx context.Context, q *sqlite.Queries, workID, path string,
 	if _, err := GetWork(ctx, q, workID); err != nil {
 		return Checkout{}, err
 	}
-	cleaned, err := normalizeCheckoutPath(path)
+	cleaned, err := requireExistingDir(path)
 	if err != nil {
 		return Checkout{}, err
-	}
-	info, err := os.Stat(cleaned)
-	if err != nil {
-		return Checkout{}, cderr.Invalid("checkout path must exist")
-	}
-	if !info.IsDir() {
-		return Checkout{}, cderr.Invalid("checkout path must be a directory")
 	}
 	if kind == "" {
 		kind = CheckoutFolder
@@ -237,7 +230,7 @@ func PutInfo(ctx context.Context, q *sqlite.Queries, workID, checkout, body stri
 	return mapInfo(row), nil
 }
 
-// Bind 把一路已建会话挂到卡上。问答 checkout 必须空。
+// Bind 把一路已建会话挂到卡上。目录属于会话：有路径就记到会话上，空路径沿用会话已有目录。
 func Bind(ctx context.Context, q *sqlite.Queries, place Placement) (Placement, error) {
 	if q == nil {
 		return Placement{}, cderr.Invalid("queries required")
@@ -251,26 +244,18 @@ func Bind(ctx context.Context, q *sqlite.Queries, place Placement) (Placement, e
 	if place.Engine == "" {
 		place.Engine = EngineNative
 	}
-	if _, err := ParseEngine(string(place.Engine)); err != nil {
+	engine, err := ParseEngine(string(place.Engine))
+	if err != nil {
 		return Placement{}, err
 	}
-	checkout := strings.TrimSpace(place.Checkout)
-	if checkout != "" {
-		cleaned, err := normalizeCheckoutPath(checkout)
-		if err != nil {
-			return Placement{}, err
-		}
-		if !HasCheckout(ctx, q, place.WorkID, cleaned) {
-			return Placement{}, cderr.Invalid("checkout is not attached; cannot start a session on this path")
-		}
-		checkout = cleaned
+	place.Engine = engine
+	checkout, err := sessionCheckout(ctx, q, engine, place.SessionID, place.Checkout)
+	if err != nil {
+		return Placement{}, err
 	}
-	if existing, err := GetPlacement(ctx, q, place.Engine, place.SessionID); err == nil {
-		if existing.Checkout == "" && checkout != "" {
-			return Placement{}, cderr.Invalid("talk session cannot bind a directory later")
-		}
+	if _, err := GetPlacement(ctx, q, engine, place.SessionID); err == nil {
 		row, err := q.UpdateSessionPlacement(ctx, sqlite.UpdateSessionPlacementParams{
-			WorkID: place.WorkID, Checkout: checkout, Engine: string(place.Engine), SessionID: place.SessionID,
+			WorkID: place.WorkID, Checkout: checkout, Engine: string(engine), SessionID: place.SessionID,
 		})
 		if err != nil {
 			return Placement{}, err
@@ -279,13 +264,111 @@ func Bind(ctx context.Context, q *sqlite.Queries, place Placement) (Placement, e
 		return mapPlacement(row), nil
 	}
 	row, err := q.InsertSessionPlacement(ctx, sqlite.InsertSessionPlacementParams{
-		Engine: string(place.Engine), SessionID: place.SessionID, WorkID: place.WorkID, Checkout: checkout,
+		Engine: string(engine), SessionID: place.SessionID, WorkID: place.WorkID, Checkout: checkout,
 	})
 	if err != nil {
 		return Placement{}, err
 	}
 	touchWork(ctx, q, place.WorkID)
 	return mapPlacement(row), nil
+}
+
+// SetSessionDirectory 把目录绑到会话上。path 为空则解绑。已归组时同步 placement.checkout。
+func SetSessionDirectory(ctx context.Context, q *sqlite.Queries, engine Engine, sessionID, path string) (string, error) {
+	if q == nil {
+		return "", cderr.Invalid("queries required")
+	}
+	engine, err := ParseEngine(string(engine))
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return "", cderr.Invalid("session_id is required")
+	}
+	cleaned := ""
+	if strings.TrimSpace(path) != "" {
+		cleaned, err = requireExistingDir(path)
+		if err != nil {
+			return "", err
+		}
+		if _, err := q.UpsertSessionDirectory(ctx, sqlite.UpsertSessionDirectoryParams{
+			Engine: string(engine), SessionID: sessionID, Path: cleaned,
+		}); err != nil {
+			return "", err
+		}
+	} else if err := q.DeleteSessionDirectory(ctx, sqlite.DeleteSessionDirectoryParams{
+		Engine: string(engine), SessionID: sessionID,
+	}); err != nil {
+		return "", err
+	}
+	if place, err := GetPlacement(ctx, q, engine, sessionID); err == nil {
+		if _, err := q.UpdateSessionPlacement(ctx, sqlite.UpdateSessionPlacementParams{
+			WorkID: place.WorkID, Checkout: cleaned, Engine: string(engine), SessionID: sessionID,
+		}); err != nil {
+			return "", err
+		}
+		touchWork(ctx, q, place.WorkID)
+	}
+	return cleaned, nil
+}
+
+// GetSessionDirectory 读会话自己的目录；没有行表示还没绑定。
+func GetSessionDirectory(ctx context.Context, q *sqlite.Queries, engine Engine, sessionID string) (string, error) {
+	if q == nil {
+		return "", cderr.Invalid("queries required")
+	}
+	engine, err := ParseEngine(string(engine))
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return "", cderr.Invalid("session_id is required")
+	}
+	row, err := q.GetSessionDirectory(ctx, sqlite.GetSessionDirectoryParams{Engine: string(engine), SessionID: sessionID})
+	if err != nil {
+		return "", wrapDB(err)
+	}
+	return row.Path, nil
+}
+
+// sessionCheckout 解析要写入归属的目录：显式路径必须存在，空则沿用会话已绑定的目录。
+func sessionCheckout(ctx context.Context, q *sqlite.Queries, engine Engine, sessionID, checkout string) (string, error) {
+	if strings.TrimSpace(checkout) != "" {
+		cleaned, err := requireExistingDir(checkout)
+		if err != nil {
+			return "", err
+		}
+		if _, err := q.UpsertSessionDirectory(ctx, sqlite.UpsertSessionDirectoryParams{
+			Engine: string(engine), SessionID: sessionID, Path: cleaned,
+		}); err != nil {
+			return "", err
+		}
+		return cleaned, nil
+	}
+	path, err := GetSessionDirectory(ctx, q, engine, sessionID)
+	if err == nil {
+		return path, nil
+	}
+	if cderr.IsNotFound(err) {
+		return "", nil
+	}
+	return "", err
+}
+
+// requireExistingDir 把路径收成绝对目录，必须已经存在。
+func requireExistingDir(path string) (string, error) {
+	cleaned, err := normalizeCheckoutPath(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(cleaned)
+	if err != nil {
+		return "", cderr.Invalid("checkout path must exist")
+	}
+	if !info.IsDir() {
+		return "", cderr.Invalid("checkout path must be a directory")
+	}
+	return cleaned, nil
 }
 
 // AttachExisting 把未归组会话补挂到卡上，只能当问答。

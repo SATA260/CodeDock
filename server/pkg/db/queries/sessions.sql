@@ -55,3 +55,8 @@ WHERE id = ? AND summary = '';
 SELECT * FROM sessions
 WHERE status != 'archived'
 ORDER BY updated_at DESC, id ASC;
+
+-- name: SetSessionWorkspace :exec
+UPDATE sessions
+SET workspace_id = ?, updated_at = ?
+WHERE id = ?;

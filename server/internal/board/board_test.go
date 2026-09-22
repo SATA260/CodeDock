@@ -57,8 +57,20 @@ func TestWorkCheckoutPlacement(t *testing.T) {
 	if talk.Checkout != "" {
 		t.Fatalf("talk checkout %q", talk.Checkout)
 	}
-	if _, err := Bind(ctx, q, Placement{Engine: EngineNative, SessionID: "s-talk", WorkID: work.ID, Checkout: co.Path}); err == nil {
-		t.Fatal("talk session must not bind a directory later")
+	bound, err := SetSessionDirectory(ctx, q, EngineNative, "s-talk", dir)
+	if err != nil || bound == "" {
+		t.Fatalf("talk session should bind a directory later: %q %v", bound, err)
+	}
+	talk, err = GetPlacement(ctx, q, EngineNative, "s-talk")
+	if err != nil || talk.Checkout != bound {
+		t.Fatalf("bound talk %+v %v", talk, err)
+	}
+	if _, err := SetSessionDirectory(ctx, q, EngineNative, "s-talk", ""); err != nil {
+		t.Fatal(err)
+	}
+	talk, err = GetPlacement(ctx, q, EngineNative, "s-talk")
+	if err != nil || talk.Checkout != "" {
+		t.Fatalf("unbound talk %+v %v", talk, err)
 	}
 	if err := DetachCheckout(ctx, q, work.ID, co.Path); err != nil {
 		t.Fatal(err)
@@ -88,9 +100,6 @@ func TestStartTalkAndInDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if _, err := AttachCheckout(ctx, q, work.ID, dir, CheckoutPrimary); err != nil {
-		t.Fatal(err)
-	}
 	svc := New(q, Ports{
 		StartNative: func(_ context.Context, spec StartSpec) (Started, error) {
 			id := "talk"
@@ -169,8 +178,12 @@ func TestBoardCardsAndPacket(t *testing.T) {
 	if len(view.Cards) != 1 || len(view.Cards[0].Sessions) != 1 {
 		t.Fatalf("cards=%+v", view)
 	}
-	if view.Cards[0].Dirs[0].Branch != "main" || !view.Cards[0].Dirs[0].Dirty {
-		t.Fatalf("dir %+v", view.Cards[0].Dirs[0])
+	sess := view.Cards[0].Sessions[0]
+	if sess.Checkout == "" || sess.Branch != "main" || !sess.Dirty {
+		t.Fatalf("session dir %+v", sess)
+	}
+	if len(view.Cards[0].Dirs) != 0 {
+		t.Fatalf("work should not own directories: %+v", view.Cards[0].Dirs)
 	}
 	if len(view.Ungrouped) != 1 || view.Ungrouped[0].SessionID != "c1" {
 		t.Fatalf("ungrouped %+v", view.Ungrouped)

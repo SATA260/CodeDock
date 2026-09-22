@@ -29,6 +29,36 @@ func (a *API) boardPorts() board.Ports {
 		ViewPull:    viewBoardPull,
 		ListAsks:    a.listBoardAsks,
 		Decide:      a.decideBoardAsk,
+		ApplyDir:    a.applyBoardDir,
+	}
+}
+
+// applyBoardDir 把会话目录写进对应引擎的工作目录。
+func (a *API) applyBoardDir(ctx context.Context, engine board.Engine, sessionID, path string) error {
+	if path == "" {
+		return nil
+	}
+	switch engine {
+	case board.EngineNative:
+		if a == nil || a.q(ctx) == nil {
+			return cderr.Unavailable("database is required")
+		}
+		return a.q(ctx).SetSessionWorkspace(ctx, sqlite.SetSessionWorkspaceParams{
+			WorkspaceID: path,
+			UpdatedAt:   util.FormatTime(util.Now()),
+			ID:          sessionID,
+		})
+	case board.EngineClaude:
+		_, err := claude.Apply(sessionID, claude.Settings{Cwd: path, Overridden: []string{"cwd"}})
+		return err
+	case board.EngineCodex:
+		if a == nil || a.codex == nil {
+			return cderr.Unavailable("codex is not configured")
+		}
+		a.codex.SetCwd(sessionID, path)
+		return nil
+	default:
+		return cderr.Invalid("unknown engine")
 	}
 }
 

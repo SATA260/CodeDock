@@ -123,6 +123,12 @@ type Session struct {
 	Summary       string
 }
 
+type SessionDirectory struct {
+	Engine    string
+	SessionID string
+	Path      string
+}
+
 type SessionIssue struct {
 	Engine    string
 	SessionID string

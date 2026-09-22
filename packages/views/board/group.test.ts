@@ -36,3 +36,38 @@ test("groupSessionsByWork groups by work then time, leftover goes ungrouped", ()
   assert.equal(groups[1]?.sessions[0]?.id, "s-free");
   assert.equal(sessionKey("native", "s-new"), "agent:s-new");
 });
+
+test("groupSessionsByWork orders works by the newest session", () => {
+  const groups = groupSessionsByWork(
+    [
+      { id: "quiet", engine: "agent", updated_at: "2026-01-02T00:00:00Z" },
+      { id: "busy", engine: "agent", updated_at: "2026-04-01T00:00:00Z" },
+    ],
+    [
+      { engine: "agent", session_id: "quiet", work_id: "w-old", checkout: "" },
+      { engine: "agent", session_id: "busy", work_id: "w-new", checkout: "" },
+    ],
+    [
+      {
+        id: "w-old",
+        tenant_id: "t",
+        user_id: "u",
+        title: "旧卡",
+        created_at: "2026-03-01T00:00:00Z",
+        updated_at: "2026-03-01T00:00:00Z",
+      },
+      {
+        id: "w-new",
+        tenant_id: "t",
+        user_id: "u",
+        title: "新卡",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+    ],
+  );
+  assert.deepEqual(
+    groups.map((group) => group.id),
+    ["w-new", "w-old", null],
+  );
+});

@@ -169,6 +169,8 @@ func testRouter(api *handler.API) http.Handler {
 	r.Delete("/placements/{engine}/{session_id}", api.DeletePlacement)
 	r.Get("/placements/{engine}/{session_id}/packet", api.GetPlacementPacket)
 	r.Post("/inbox/decision", api.DecideInbox)
+	r.Put("/session-directories/{engine}/{session_id}", api.BindSessionDirectory)
+	r.Delete("/session-directories/{engine}/{session_id}", api.BindSessionDirectory)
 	r.Get("/session-links/{engine}/{session_id}", api.GetSessionLinks)
 	r.Put("/session-links/{engine}/{session_id}", api.ReplaceSessionLinks)
 	r.Put("/session-links/{engine}/{session_id}/issue", api.PutSessionIssue)

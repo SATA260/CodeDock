@@ -65,3 +65,28 @@
     color: inherit;
   }
 }
+
+/* 进行中的会话：图标一圈呼吸光，标题沿用上面的扫光。 */
+.session-live-mark {
+  border-radius: 5px;
+  animation: session-live-glow 1.4s ease-in-out infinite;
+}
+
+@keyframes session-live-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 28%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--foreground) 80%, transparent),
+      0 0 8px color-mix(in oklab, var(--foreground) 45%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-live-mark {
+    animation: none;
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 55%, transparent);
+  }
+}

@@ -109,6 +109,13 @@ func main() {
 		}
 		return pkt.Text
 	})
+	codexAPI.SetDirectory(func(ctx context.Context, sessionID string) string {
+		path, err := boardpkg.GetSessionDirectory(ctx, queries, boardpkg.EngineCodex, sessionID)
+		if err != nil {
+			return ""
+		}
+		return path
+	})
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

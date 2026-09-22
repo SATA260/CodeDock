@@ -35,6 +35,21 @@ func (q *Queries) DeletePlacementsByWork(ctx context.Context, workID string) err
 	return err
 }
 
+const deleteSessionDirectory = `-- name: DeleteSessionDirectory :exec
+DELETE FROM session_directories
+WHERE engine = ? AND session_id = ?
+`
+
+type DeleteSessionDirectoryParams struct {
+	Engine    string
+	SessionID string
+}
+
+func (q *Queries) DeleteSessionDirectory(ctx context.Context, arg DeleteSessionDirectoryParams) error {
+	_, err := q.db.ExecContext(ctx, deleteSessionDirectory, arg.Engine, arg.SessionID)
+	return err
+}
+
 const deleteSessionIssue = `-- name: DeleteSessionIssue :exec
 DELETE FROM session_issues
 WHERE engine = ? AND session_id = ?
@@ -160,6 +175,23 @@ WHERE work_id = ?
 func (q *Queries) DeleteWorkInfos(ctx context.Context, workID string) error {
 	_, err := q.db.ExecContext(ctx, deleteWorkInfos, workID)
 	return err
+}
+
+const getSessionDirectory = `-- name: GetSessionDirectory :one
+SELECT engine, session_id, path FROM session_directories
+WHERE engine = ? AND session_id = ?
+`
+
+type GetSessionDirectoryParams struct {
+	Engine    string
+	SessionID string
+}
+
+func (q *Queries) GetSessionDirectory(ctx context.Context, arg GetSessionDirectoryParams) (SessionDirectory, error) {
+	row := q.db.QueryRowContext(ctx, getSessionDirectory, arg.Engine, arg.SessionID)
+	var i SessionDirectory
+	err := row.Scan(&i.Engine, &i.SessionID, &i.Path)
+	return i, err
 }
 
 const getSessionIssue = `-- name: GetSessionIssue :one
@@ -708,6 +740,30 @@ func (q *Queries) UpdateWork(ctx context.Context, arg UpdateWorkParams) (Work, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const upsertSessionDirectory = `-- name: UpsertSessionDirectory :one
+INSERT INTO session_directories (
+    engine, session_id, path
+) VALUES (
+    ?, ?, ?
+)
+ON CONFLICT (engine, session_id) DO UPDATE SET
+    path = excluded.path
+RETURNING engine, session_id, path
+`
+
+type UpsertSessionDirectoryParams struct {
+	Engine    string
+	SessionID string
+	Path      string
+}
+
+func (q *Queries) UpsertSessionDirectory(ctx context.Context, arg UpsertSessionDirectoryParams) (SessionDirectory, error) {
+	row := q.db.QueryRowContext(ctx, upsertSessionDirectory, arg.Engine, arg.SessionID, arg.Path)
+	var i SessionDirectory
+	err := row.Scan(&i.Engine, &i.SessionID, &i.Path)
 	return i, err
 }
 

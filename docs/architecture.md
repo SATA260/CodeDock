@@ -278,7 +278,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `internal/board`
 
-产品工作流：Work / Checkout / Info / Placement / Board 聚合 / Inbox 编排 / Packet。一张卡可挂多目录、多路会话。旧会话不自动建卡；可先聊再补挂。问答会话不能事后补绑目录。删卡只断开归属，不删会话、不删磁盘。看板只聚合摘要，不加载对话正文。目录 Git 状态现问 `pkg/git`。不写记忆正文、不 spawn CLI、不建 worktree。
+产品工作流：Work / Info / Placement / Board 聚合 / Inbox 编排 / Packet。一张卡可挂多路会话。目录绑在会话上，不挂在卡上；已有会话可以事后绑定或更换目录。旧会话不自动建卡；可先聊再补挂。删卡只断开归属，不删会话、不删磁盘。看板只聚合摘要，不加载对话正文。目录 Git 状态现问 `pkg/git`。不写记忆正文、不 spawn CLI、不建 worktree。
 
 ### `pkg/git`
 
