@@ -199,6 +199,7 @@ type Session struct {
 	Status        SessionStatus `json:"status"`                  // 会话状态
 	ActiveRunID   *string       `json:"active_run_id,omitempty"` // 当前正在执行的 Run ID
 	NeedsRecover  bool          `json:"needs_recover,omitempty"` // Handler 计算：active Run 已中断、需用户恢复；不入库
+	Executing     *bool         `json:"executing,omitempty"`     // Handler 计算：active Run 还在执行。等审批为 false；空表示没带
 	LastEventSeq  int64         `json:"last_event_seq"`          // 已分配的最大事件序号
 	CompactionSeq int64         `json:"compaction_seq"`          // 上次压缩对应的事件序号
 	Summary       string        `json:"summary"`                 // 会话列表摘要（首条用户输入首行）

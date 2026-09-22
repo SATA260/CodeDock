@@ -6,7 +6,7 @@ import { BoardProvider } from "@codedock/views/board";
 import { ChatPage, type SessionEngine } from "@codedock/views/chat";
 import { GitProvider } from "@codedock/views/git";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { apiBase, defaultUserId } from "@/lib/env";
 import { rememberSession } from "@/lib/session";
@@ -23,7 +23,9 @@ export function ChatHost() {
   if (parsed.sessionId && parsed.engine === "agent") {
     rememberSession(parsed.sessionId);
   }
-  const gitSessionId = parsed.engine === "agent" ? parsed.sessionId : undefined;
+  const [boardGitSessionId, setBoardGitSessionId] = useState<string | undefined>();
+  const routeGitSessionId = parsed.engine === "agent" ? parsed.sessionId : undefined;
+  const gitSessionId = parsed.board ? boardGitSessionId : routeGitSessionId;
   const git = useMemo(
     () => new GitClient({ baseUrl: apiBase, sessionId: gitSessionId }),
     [gitSessionId],
@@ -43,6 +45,7 @@ export function ChatHost() {
           brandSrc="/brand/codedock-berth-mark.svg"
           codexIconSrc="/brand/codex-app-icon.png"
           claudeIconSrc="/brand/claude-app-icon.svg"
+          onGitSession={setBoardGitSessionId}
           onOpenSession={(id, engine = parsed.engine ?? "agent") => {
             const path = pathFor(id, engine);
             if (pathname !== path) {

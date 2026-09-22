@@ -13,6 +13,8 @@ export type SidebarSession = Session & {
   engine?: SessionEngine;
   /** 这路会话正在跑，侧栏用扫光标出来。 */
   running?: boolean;
+  /** 卡在待审批。标题用琥珀呼吸，不算进行中。 */
+  awaiting?: boolean;
 };
 
 // SessionSidebar 按 Work 分组、组内按时间；未挂卡的进未归组。
@@ -303,7 +305,7 @@ function SidebarRow({
           onClick={() => onSelect(session.id, engine)}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
         >
-          <span className={cn("inline-flex shrink-0", session.running && "session-live-mark")}>
+          <span className={cn("inline-flex shrink-0", session.running && !session.awaiting && "session-live-mark")}>
             <SessionEngineMark
               engine={engine}
               brandSrc={brandSrc}
@@ -311,7 +313,12 @@ function SidebarRow({
               claudeIconSrc={claudeIconSrc}
             />
           </span>
-          <SidebarSessionTitle id={session.id} summary={session.summary} running={session.running} />
+          <SidebarSessionTitle
+            id={session.id}
+            summary={session.summary}
+            running={session.running}
+            awaiting={session.awaiting}
+          />
         </button>
         {engine === "agent" &&
         session.needs_recover &&
@@ -376,13 +383,24 @@ function SidebarRow({
   );
 }
 
-// SidebarSessionTitle 正文可裁，末尾 (n) 不参与省略；进行中时两段各自扫光。
-function SidebarSessionTitle({ id, summary, running }: { id: string; summary?: string; running?: boolean }) {
+// SidebarSessionTitle 正文可裁，末尾 (n) 不参与省略。进行中两段各自扫光，待审批改成琥珀呼吸。
+function SidebarSessionTitle({
+  id,
+  summary,
+  running,
+  awaiting,
+}: {
+  id: string;
+  summary?: string;
+  running?: boolean;
+  awaiting?: boolean;
+}) {
   const { stem, suffix } = sessionTitleParts(id, summary);
+  const motion = awaiting ? "live-status-waiting" : running ? "live-status-active" : undefined;
   return (
     <span className="flex min-w-0 text-xs font-medium">
-      <span className={cn("min-w-0 truncate", running && "live-status-active")}>{stem}</span>
-      {suffix ? <span className={cn("shrink-0", running && "live-status-active")}>{suffix}</span> : null}
+      <span className={cn("min-w-0 truncate", motion)}>{stem}</span>
+      {suffix ? <span className={cn("shrink-0", motion)}>{suffix}</span> : null}
     </span>
   );
 }

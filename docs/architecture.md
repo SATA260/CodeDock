@@ -278,7 +278,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `internal/board`
 
-产品工作流：Work / Info / Placement / Board 聚合 / Inbox 编排 / Packet。同一用户下标题不能重复；新建时标题为空则取最小的空号，从 `未命名(1)` 起。一张卡可挂多路会话。目录绑在会话上，不挂在卡上；只在创建会话时绑定，之后不能改、不能解绑。看板待审批和会话窗口一样一条一条看摘要，选齐同一张票才提交。旧会话不自动建卡；可先聊再补挂。删卡只断开归属，不删会话、不删磁盘。看板只聚合摘要，不加载对话正文。进行中只表示引擎还在执行；等审批单独计，不记成进行中。看板开着且有进行中或待审批时会重拉这两项。目录 Git 状态现问 `pkg/git`。不写记忆正文、不 spawn CLI、不建 worktree。
+产品工作流：Work / Info / Placement / Board 聚合 / Inbox 编排 / Packet。同一用户下标题不能重复；新建时标题为空则取最小的空号，从 `未命名(1)` 起。一张卡可挂多路会话。目录绑在会话上，不挂在卡上；只在创建会话时绑定，之后不能改、不能解绑。看板待审批和会话窗口一样一条一条看摘要，选齐同一张票才提交。旧会话不自动建卡；可先聊再补挂。删卡只断开归属，不删会话、不删磁盘。看板只聚合摘要，不加载对话正文。进行中只表示引擎还在执行；等审批单独计，不记成进行中。侧栏同样只把还在执行的会话算进行中。看板开着且有进行中或待审批时会重拉这两项。目录 Git 状态现问 `pkg/git`。不写记忆正文、不 spawn CLI、不建 worktree。
 
 ### `pkg/git`
 
@@ -349,7 +349,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `apps/web`
 
-路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient` / `GitClient` / `CodexClient` / `ClaudeClient` / `BoardClient`、包 `AgentProvider` / `GitProvider` / `CodexProvider` / `ClaudeProvider` / `BoardProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。对话页装配 `GitClient` 给右侧 Git 窗口。Codex 走对话页的 `/` 与 `/s/c/:id`，Claude 走 `/` 与 `/s/claude/:id`，看板走 `/board`，`/s/...` 仍是会话模式。
+路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient` / `GitClient` / `CodexClient` / `ClaudeClient` / `BoardClient`、包 `AgentProvider` / `GitProvider` / `CodexProvider` / `ClaudeProvider` / `BoardProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。对话页装配 `GitClient` 给右侧 Git 窗口。看板上打开 Local 悬浮会话时，Git 窗口用这路会话的冻结目录。Codex 走对话页的 `/` 与 `/s/c/:id`，Claude 走 `/` 与 `/s/claude/:id`，看板走 `/board`，`/s/...` 仍是会话模式。
 
 ## 组装关系
 

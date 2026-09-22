@@ -50,6 +50,7 @@ export function SessionFloat({
   onOpenFile,
   onOpenGit,
   initialLinksOpen = false,
+  notice = null,
 }: {
   session: FloatSession;
   onClose: () => void;
@@ -58,6 +59,8 @@ export function SessionFloat({
   onOpenGit: () => void;
   /** 刚靠链接建好会话时，设置面板保持打开。 */
   initialLinksOpen?: boolean;
+  /** 会话已经建好，但没能挂进分组。关掉新建窗后仍留在这里。 */
+  notice?: string | null;
 }) {
   const { pickFiles } = useAgent();
   const timeline = useSessionTimeline(session.engine === "agent" ? session.id : undefined);
@@ -101,6 +104,11 @@ export function SessionFloat({
     >
       {linksOpen ? <SessionLinkEditor engine={session.engine as BoardEngine} sessionId={session.id} /> : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {notice ? (
+          <div className="border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-red-300">
+            {notice}
+          </div>
+        ) : null}
         {session.engine === "codex" ? (
           <CodexPane
             sessionId={session.id}
@@ -172,8 +180,8 @@ export function ComposeFloat({
 }: {
   draft: ComposeDraft;
   onClose: () => void;
-  /** source 为 links 时，会话是靠保存链接建的，设置面板保持打开。 */
-  onSent: (id: string, engine: SessionEngine, source?: "links") => void;
+  /** source 为 links 时，会话是靠保存链接建的，设置面板保持打开。notice 是挂分组失败、关掉新建窗后仍要看见的那句。 */
+  onSent: (id: string, engine: SessionEngine, source?: "links", notice?: string) => void;
 }) {
   const { client, userId, pickFiles } = useAgent();
   const { client: codex } = useCodex();
@@ -229,12 +237,13 @@ export function ComposeFloat({
         createdId = session.id;
       }
       await board.replaceLinks(draft.engine, createdId, links);
+      let notice: string | undefined;
       try {
         await attach(createdId);
       } catch (err) {
-        setError(createSessionError(err, "会话已创建，但没能放到分组"));
+        notice = createSessionError(err, "会话已创建，但没能放到分组");
       }
-      onSent(createdId, draft.engine, "links");
+      onSent(createdId, draft.engine, "links", notice);
     } catch (err) {
       if (createdId) {
         try {
@@ -310,12 +319,13 @@ export function ComposeFloat({
                   });
                   createdId = session.id;
                   await client.startRun(session.id, { content: text, mode, approval });
+                  let notice: string | undefined;
                   try {
                     await attach(session.id);
                   } catch (err) {
-                    setError(createSessionError(err, "会话已发出，但没能放到分组"));
+                    notice = createSessionError(err, "会话已发出，但没能放到分组");
                   }
-                  onSent(session.id, "agent");
+                  onSent(session.id, "agent", undefined, notice);
                 } catch (err) {
                   if (createdId) {
                     try {

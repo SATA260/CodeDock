@@ -72,6 +72,8 @@ export type ChatPageProps = {
   onNewConversation: () => void;
   onOpenBoard?: () => void;
   onLeaveBoard?: () => void;
+  /** 看板打开 Local 悬浮会话时，把这路 id 交给宿主装 Git；关掉或换成别的引擎时传 undefined。 */
+  onGitSession?: (sessionId: string | undefined) => void;
   brandSrc?: string;
   codexIconSrc?: string;
   claudeIconSrc?: string;
@@ -87,6 +89,7 @@ export function ChatPage({
   onNewConversation,
   onOpenBoard,
   onLeaveBoard,
+  onGitSession,
   brandSrc,
   codexIconSrc,
   claudeIconSrc,
@@ -116,6 +119,7 @@ export function ChatPage({
   const [works, setWorks] = useState<Work[]>([]);
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [float, setFloat] = useState<FloatSession | null>(null);
+  const [floatNotice, setFloatNotice] = useState<string | null>(null);
   const [floatLinksOpen, setFloatLinksOpen] = useState(false);
   const [compose, setCompose] = useState<ComposeDraft | null>(null);
   const [boardRevision, setBoardRevision] = useState(0);
@@ -285,6 +289,14 @@ export function ChatPage({
       .catch(() => undefined);
   }, [boardClient, boardMode, claudeList.refresh, codexList.refresh, list.refresh]);
 
+  // 看板路径上没有会话 id。Local 悬浮窗打开时，把这路 id 交给宿主去装 Git。
+  useEffect(() => {
+    if (!onGitSession || !boardMode) {
+      return;
+    }
+    onGitSession(float?.engine === "agent" ? float.id : undefined);
+  }, [boardMode, float, onGitSession]);
+
   useEffect(() => {
     workbench.reset();
   }, [sessionId, activeEngine, workbench.reset]);
@@ -306,9 +318,17 @@ export function ChatPage({
       if (session.engine !== "agent" || session.id !== sessionId) {
         return session;
       }
-      return { ...session, running: timeline.loading ? session.running : timeline.running };
+      if (timeline.loading) {
+        return session;
+      }
+      const waiting = timeline.state.runStatus === "waiting_approval";
+      return {
+        ...session,
+        running: waiting ? false : timeline.running,
+        awaiting: waiting,
+      };
     });
-  }, [activeEngine, sessionId, sessions, timeline.running]);
+  }, [activeEngine, sessionId, sessions, timeline.loading, timeline.running, timeline.state.runStatus]);
   const someoneRunning = sidebarSessions.some((session) => session.running);
   useEffect(() => {
     if (boardMode || !someoneRunning) {
@@ -321,6 +341,7 @@ export function ChatPage({
     }, 3000);
     return () => window.clearInterval(timer);
   }, [boardMode, claudeList.refresh, codexList.refresh, list.refresh, someoneRunning]);
+  // 分组和挂载只在进页面时拉一次。会话列表刷新不重打这两条；离开看板和显式归组另有自己的重拉。
   useEffect(() => {
     void Promise.all([boardClient.listWorks(), boardClient.listPlacements()])
       .then(([nextWorks, nextPlaces]) => {
@@ -328,7 +349,7 @@ export function ChatPage({
         setPlacements(nextPlaces);
       })
       .catch(() => undefined);
-  }, [boardClient, sessions]);
+  }, [boardClient]);
   const groups = useMemo(
     () => groupSessionsByWork(sidebarSessions, placements, works),
     [placements, sidebarSessions, works],
@@ -687,6 +708,7 @@ export function ChatPage({
             notice={groupError}
             onOpenSession={(id, nextEngine) => {
               setCompose(null);
+              setFloatNotice(null);
               setFloatLinksOpen(false);
               setFloat({ id, engine: nextEngine });
             }}
@@ -697,6 +719,7 @@ export function ChatPage({
             onArchived={(id, nextEngine) => {
               if (float?.id === id && float.engine === nextEngine) {
                 setFloat(null);
+                setFloatNotice(null);
               }
             }}
           />
@@ -707,8 +730,9 @@ export function ChatPage({
           <ComposeFloat
             draft={compose}
             onClose={() => setCompose(null)}
-            onSent={(id, nextEngine, source) => {
+            onSent={(id, nextEngine, source, notice) => {
               setCompose(null);
+              setFloatNotice(notice ?? null);
               setFloatLinksOpen(source === "links");
               setFloat({ id, engine: nextEngine });
               setBoardRevision((value) => value + 1);
@@ -719,8 +743,12 @@ export function ChatPage({
           <SessionFloat
             key={`${float.engine}:${float.id}`}
             initialLinksOpen={floatLinksOpen}
+            notice={floatNotice}
             session={float}
-            onClose={() => setFloat(null)}
+            onClose={() => {
+              setFloat(null);
+              setFloatNotice(null);
+            }}
             onOpenPlan={openPlan}
             onOpenFile={openFile}
             onOpenGit={openGit}
@@ -1010,7 +1038,7 @@ function mergeSessions(
     ...agent.map((session) => ({
       ...session,
       engine: "agent" as const,
-      running: Boolean(session.active_run_id) && !session.needs_recover,
+      ...agentSidebarLive(session),
     })),
     ...codex.map(asCodexSidebarSession),
     ...claude.map(asClaudeSidebarSession),
@@ -1043,7 +1071,7 @@ function asCodexSidebarSession(session: CodexSession): SidebarSession {
     created_at: stampToIso(session.created_at),
     updated_at: stampToIso(session.updated_at),
     engine: "codex",
-    running: Boolean(session.active_turn_id),
+    ...turnSidebarLive(Boolean(session.active_turn_id), session.running),
   };
 }
 
@@ -1062,8 +1090,25 @@ function asClaudeSidebarSession(session: ClaudeSession): SidebarSession {
     created_at: stampToIso(session.created_at),
     updated_at: stampToIso(session.updated_at),
     engine: "claude",
-    running: Boolean(session.active_turn_id),
+    ...turnSidebarLive(Boolean(session.active_turn_id), session.running),
   };
+}
+
+// agentSidebarLive 只把还在执行的 Local 会话标成进行中。等审批用 awaiting，不扫光。
+function agentSidebarLive(session: Session): { running: boolean; awaiting: boolean } {
+  const hasRun = Boolean(session.active_run_id) && !session.needs_recover;
+  if (typeof session.executing === "boolean") {
+    return { running: session.executing, awaiting: hasRun && !session.executing };
+  }
+  return { running: hasRun, awaiting: false };
+}
+
+// turnSidebarLive 用列表带来的 running。有回合但 running 为 false 时是待审批。
+function turnSidebarLive(active: boolean, running: boolean | undefined): { running: boolean; awaiting: boolean } {
+  if (typeof running === "boolean") {
+    return { running, awaiting: active && !running };
+  }
+  return { running: active, awaiting: false };
 }
 
 // stampToIso 把秒或毫秒时间戳收成 ISO 字符串，无效值用纪元。

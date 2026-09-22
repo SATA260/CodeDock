@@ -29,7 +29,10 @@ func (rt *Runtime) ListSessions(ctx context.Context, archived bool, cursor strin
 		}
 		st.archived = archived
 		st.mu.Unlock()
-		out.Sessions = append(out.Sessions, pkg.MapThread(th, archived, active))
+		sess := pkg.MapThread(th, archived, active)
+		running := active != "" && len(rt.PendingAsks(th.ID)) == 0
+		sess.Running = &running
+		out.Sessions = append(out.Sessions, sess)
 	}
 	out.Sessions = dedupeSessions(out.Sessions)
 	return out, nil

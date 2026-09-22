@@ -111,6 +111,7 @@ type ClaudeSession struct {
 	ClaudeSessionID string `json:"claude_session_id"`
 	Title           string `json:"title"`
 	ActiveTurnID    string `json:"active_turn_id"`
+	Running         *bool  `json:"running,omitempty"` // 有进行中的回合且没有待审批。空表示没带。
 	Archived        bool   `json:"archived"`
 	CreatedAt       int64  `json:"created_at"` // 本机实录第一条时间，Unix 秒。
 	UpdatedAt       int64  `json:"updated_at"` // 本机实录最近一条时间，Unix 秒。
@@ -478,12 +479,15 @@ func claudeStrings(values []string) []string {
 	return values
 }
 
+// mapClaudeSession 把本机 Claude 会话收成 HTTP 形状。有待审批时 running 为 false。
 func mapClaudeSession(sess claude.Session) ClaudeSession {
+	running := sess.ActiveTurnID != "" && len(claude.PendingAsks(sess.ID)) == 0
 	return ClaudeSession{
 		ID:              sess.ID,
 		ClaudeSessionID: sess.ClaudeSessionID,
 		Title:           sess.Title,
 		ActiveTurnID:    sess.ActiveTurnID,
+		Running:         &running,
 		Archived:        sess.Archived,
 		CreatedAt:       sess.CreatedAt,
 		UpdatedAt:       sess.UpdatedAt,
