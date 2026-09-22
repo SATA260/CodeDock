@@ -371,7 +371,7 @@ Worker
 
 ## 配置
 
-`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`。工具出站审批用 `EVALUATOR_PROVIDER` / `EVALUATOR_MODEL`（及可选 Key/BaseURL）；explore 用 `SUBAGENT_PROVIDER` / `SUBAGENT_MODEL`。空则回落主模型。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。未设 `DB_DSN` 时 SQLite 写仓根 `data/codedock.db`，不写 `server/`。`PLUGIN_DIR` 指向插件根目录，未设则不拉插件进程；`PLUGIN_RPC_TIMEOUT` 默认 `10s`。`CODEX_BIN` 为本机 Codex CLI（默认 `codex`）。Handler 创建 Run 时写入 `RunConfigSnapshot`（含 `EvaluatorModel` / `SubagentModel`），后续 Turn 只读快照。收尾验证跑工作区 `.cursor/verify.yaml`，以及本会话绑定计划里非 `manual` 的 `verify_cmd`。取消已标 `cancel_requested` 后不得再落 `completed`；`verifying` 上的取消立即终态。
+`LLM_PROVIDER`（`openai` | `fake`，默认 `fake`）、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`、`LLM_THINKING`（`enabled` | `disabled`，空则沿用模型默认）。Run 预算：`LLM_MAX_INPUT_TOKENS`（默认 256000）、`LLM_MAX_OUTPUT_TOKENS`（默认 65536，思考和正文共用）、`LLM_MAX_TURNS`（默认 32）、`LLM_MAX_TOOL_CALLS`（默认 64）、`LLM_MAX_WALL_TIME`（默认 20m）。工具出站审批用 `EVALUATOR_PROVIDER` / `EVALUATOR_MODEL`（及可选 Key/BaseURL）；explore 用 `SUBAGENT_PROVIDER` / `SUBAGENT_MODEL`。空则回落主模型。`GIT_REPO` 指向本地仓库根，未设则用进程 cwd（不向上找 `.git`）。未设 `DB_DSN` 时 SQLite 写仓根 `data/codedock.db`，不写 `server/`。`PLUGIN_DIR` 指向插件根目录，未设则不拉插件进程；`PLUGIN_RPC_TIMEOUT` 默认 `10s`。`CODEX_BIN` 为本机 Codex CLI（默认 `codex`）。Handler 创建 Run 时写入 `RunConfigSnapshot`（含 `EvaluatorModel` / `SubagentModel`），后续 Turn 只读快照。收尾验证跑工作区 `.cursor/verify.yaml`，以及本会话绑定计划里非 `manual` 的 `verify_cmd`。取消已标 `cancel_requested` 后不得再落 `completed`；`verifying` 上的取消立即终态。
 
 HTTP 出站领域对象使用 snake_case JSON。Router 只对本地回环 Origin 放行 CORS，便于本机 Web 直连 `:8080`。Web 用 `NEXT_PUBLIC_API_BASE`（默认 `http://localhost:8080`）和 `NEXT_PUBLIC_USER_ID`（默认 `local`）。
 

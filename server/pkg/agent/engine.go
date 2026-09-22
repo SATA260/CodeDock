@@ -119,7 +119,7 @@ func (e *Engine) Step(ctx context.Context, in StepInput) (StepResult, error) {
 
 // callLLM 占槽后压缩上下文、调模型，把流式增量写成 Fact，再产出 assistant 消息与下一步。
 // 逻辑：校验取消 → 超回合则有副作用先验证否则收束 → CompactIfNeeded + Stream → 收齐文本/工具调用 → 有 Tool 则下一步 llm_result。
-// wrap-up 回合清空工具表；模型空正文时用改动和验证事实拼装。
+// wrap-up 回合清空工具表；模型空正文时用改动和验证事实拼装。正文和工具调用都空时不落助手消息。
 func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (StepResult, error) {
 	if err := ctx.Err(); err != nil {
 		return e.finish(ctx, in, finishInstructions(RunCancelled, StopCancelled)[0])
@@ -241,18 +241,21 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 			assistant.Content = EncodeText(composeWrapUpText(e, state, hist.Messages))
 		}
 	}
-	if len(assistant.Content) == 0 {
+	blank := assistantBlank(assistant.Content, assistant.ToolCalls)
+	if !blank && len(assistant.Content) == 0 {
 		assistant.Content = EncodeText("")
 	}
-	_ = e.appendFact(ctx, state.RunID, Fact{
-		Type:   EventAssistantCompleted,
-		TurnID: state.TurnID,
-		Payload: MarshalPayload(AssistantCompletedPayload{
-			MessageID: msgID,
-			Text:      DecodeText(assistant.Content),
-			ToolCalls: result.ToolCalls,
-		}),
-	})
+	if !blank {
+		_ = e.appendFact(ctx, state.RunID, Fact{
+			Type:   EventAssistantCompleted,
+			TurnID: state.TurnID,
+			Payload: MarshalPayload(AssistantCompletedPayload{
+				MessageID: msgID,
+				Text:      DecodeText(assistant.Content),
+				ToolCalls: result.ToolCalls,
+			}),
+		})
+	}
 
 	now := time.Now().UTC()
 	if state.StartedAt == nil {
@@ -269,9 +272,13 @@ func (e *Engine) callLLM(ctx context.Context, in StepInput, _ Instruction) (Step
 		state.Checkpoint.Results = nil
 		state.Checkpoint.Completed = nil
 	}
+	var messages []Message
+	if !blank {
+		messages = []Message{assistant}
+	}
 	return StepResult{
 		State:    state,
-		Messages: []Message{assistant},
+		Messages: messages,
 		Next: &StepJob{
 			RunID:     state.RunID,
 			StepIndex: state.StepIndex + 1,

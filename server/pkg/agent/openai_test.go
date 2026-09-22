@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -225,6 +226,34 @@ func TestStreamWithRetryThenOK(t *testing.T) {
 	result, err := stream.Result(context.Background())
 	if err != nil || DecodeText(result.Message.Content) != "ok" || hits != 2 {
 		t.Fatalf("result=%+v err=%v hits=%d", result, err, hits)
+	}
+}
+
+// TestToOpenAIMessagesSkipsBlankAssistant 确认空助手消息不进网关，带 tool_calls 的空正文仍保留。
+func TestToOpenAIMessagesSkipsBlankAssistant(t *testing.T) {
+	msgs := toOpenAIMessages(Chat{
+		Messages: []Message{
+			{Role: RoleAssistant, Content: EncodeText("")},
+			{Role: RoleAssistant, Content: EncodeText("   ")},
+			{Role: RoleAssistant, Content: EncodeText(""), ToolCalls: []tool.Call{{ID: "c1", Name: "ping", Arguments: json.RawMessage(`{}`)}}},
+			{Role: RoleUser, Content: EncodeText("go")},
+		},
+	})
+	if len(msgs) != 2 || msgs[0].Role != "assistant" || msgs[0].Content != "" || len(msgs[0].ToolCalls) != 1 || msgs[1].Role != "user" {
+		t.Fatalf("%+v", msgs)
+	}
+}
+
+// TestConsumeOpenAICancelAfterCleanEOF 确认请求已取消时，干净结束的空流不算成功回复。
+func TestConsumeOpenAICancelAfterCleanEOF(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stream := &staticStream{events: make(chan ModelStreamEvent, 4), done: make(chan struct{})}
+	go consumeOpenAI(ctx, Chat{Model: ModelConfig{Model: "m"}}, io.NopCloser(strings.NewReader("")), stream)
+	for range stream.Events() {
+	}
+	if _, err := stream.Result(context.Background()); err == nil {
+		t.Fatal("cancelled empty stream should fail")
 	}
 }
 
