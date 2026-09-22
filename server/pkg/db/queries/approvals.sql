@@ -19,3 +19,21 @@ UPDATE approvals
 SET scope = ?, status = ?, tool_calls = ?
 WHERE id = ?
 RETURNING *;
+
+-- name: ListPendingApprovals :many
+SELECT * FROM approvals
+WHERE status = 'pending'
+ORDER BY id ASC;
+
+-- name: ListPendingApprovalsBySession :many
+SELECT * FROM approvals
+WHERE session_id = ? AND status = 'pending'
+ORDER BY id ASC;
+
+-- name: CountPendingApprovalsBySession :one
+SELECT COUNT(*) FROM approvals
+WHERE session_id = ? AND status = 'pending';
+
+-- name: CountPendingApprovals :one
+SELECT COUNT(*) FROM approvals
+WHERE session_id = ? AND status = 'pending';

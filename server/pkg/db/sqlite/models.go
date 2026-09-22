@@ -123,6 +123,18 @@ type Session struct {
 	Summary       string
 }
 
+type SessionIssue struct {
+	Engine    string
+	SessionID string
+	Repo      string
+	Number    int64
+	Title     string
+	Body      string
+	Url       string
+	State     string
+	UpdatedAt string
+}
+
 type SessionLease struct {
 	SessionID    string
 	RunID        string
@@ -130,6 +142,25 @@ type SessionLease struct {
 	FencingToken int64
 	HeartbeatAt  string
 	ExpiresAt    string
+}
+
+type SessionPlacement struct {
+	Engine    string
+	SessionID string
+	WorkID    string
+	Checkout  string
+}
+
+type SessionPull struct {
+	Engine    string
+	SessionID string
+	Repo      string
+	Number    int64
+	Title     string
+	Body      string
+	Url       string
+	State     string
+	UpdatedAt string
 }
 
 type StepJob struct {
@@ -185,4 +216,26 @@ type UsageRecord struct {
 	Estimated                int64
 	RawProviderUsage         sql.NullString
 	CreatedAt                string
+}
+
+type Work struct {
+	ID        string
+	TenantID  string
+	UserID    string
+	Title     string
+	CreatedAt string
+	UpdatedAt string
+}
+
+type WorkCheckout struct {
+	WorkID string
+	Path   string
+	Kind   string
+}
+
+type WorkInfo struct {
+	WorkID    string
+	Checkout  string
+	Body      string
+	UpdatedAt string
 }

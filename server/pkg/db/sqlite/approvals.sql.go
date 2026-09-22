@@ -9,6 +9,30 @@ import (
 	"context"
 )
 
+const countPendingApprovals = `-- name: CountPendingApprovals :one
+SELECT COUNT(*) FROM approvals
+WHERE session_id = ? AND status = 'pending'
+`
+
+func (q *Queries) CountPendingApprovals(ctx context.Context, sessionID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPendingApprovals, sessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countPendingApprovalsBySession = `-- name: CountPendingApprovalsBySession :one
+SELECT COUNT(*) FROM approvals
+WHERE session_id = ? AND status = 'pending'
+`
+
+func (q *Queries) CountPendingApprovalsBySession(ctx context.Context, sessionID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPendingApprovalsBySession, sessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countSessionApprovals = `-- name: CountSessionApprovals :one
 SELECT COUNT(*) FROM approvals
 WHERE session_id = ?
@@ -89,6 +113,84 @@ func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) 
 		&i.Kind,
 	)
 	return i, err
+}
+
+const listPendingApprovals = `-- name: ListPendingApprovals :many
+SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls, kind FROM approvals
+WHERE status = 'pending'
+ORDER BY id ASC
+`
+
+func (q *Queries) ListPendingApprovals(ctx context.Context) ([]Approval, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingApprovals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Approval
+	for rows.Next() {
+		var i Approval
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RunID,
+			&i.ToolCallID,
+			&i.Scope,
+			&i.Status,
+			&i.ExpiresAt,
+			&i.ToolCalls,
+			&i.Kind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingApprovalsBySession = `-- name: ListPendingApprovalsBySession :many
+SELECT id, session_id, run_id, tool_call_id, scope, status, expires_at, tool_calls, kind FROM approvals
+WHERE session_id = ? AND status = 'pending'
+ORDER BY id ASC
+`
+
+func (q *Queries) ListPendingApprovalsBySession(ctx context.Context, sessionID string) ([]Approval, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingApprovalsBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Approval
+	for rows.Next() {
+		var i Approval
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RunID,
+			&i.ToolCallID,
+			&i.Scope,
+			&i.Status,
+			&i.ExpiresAt,
+			&i.ToolCalls,
+			&i.Kind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateApproval = `-- name: UpdateApproval :one

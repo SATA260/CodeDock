@@ -1,5 +1,6 @@
 "use client";
 
+import type { Placement, Work } from "@codedock/core/board";
 import type { ApprovalMode, Session, TimelineItem, WorkMode } from "@codedock/core/chat";
 import type { ClaudeSession } from "@codedock/core/claude";
 import type { Session as CodexSession } from "@codedock/core/codex";
@@ -7,6 +8,10 @@ import { Button } from "@codedock/ui";
 import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, PlusIcon } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { BoardGrid } from "../board/board-grid.tsx";
+import { groupSessionsByWork } from "../board/group.ts";
+import { useBoard } from "../board/provider.tsx";
+import { SessionFloat, type FloatSession } from "../board/session-float.tsx";
 import { ClaudePane } from "../claude/claude-pane.tsx";
 import { useClaudeSessionList } from "../claude/hooks/use-session-list.ts";
 import { useClaude } from "../claude/provider.tsx";
@@ -39,26 +44,33 @@ export type SessionEngine = "agent" | "codex" | "claude";
 export type ChatPageProps = {
   sessionId?: string;
   engine?: SessionEngine;
+  boardMode?: boolean;
   onOpenSession: (id: string, engine?: SessionEngine) => void;
   onNewConversation: () => void;
+  onOpenBoard?: () => void;
+  onLeaveBoard?: () => void;
   brandSrc?: string;
   codexIconSrc?: string;
   claudeIconSrc?: string;
   headerActions?: ReactNode;
 };
 
-// ChatPage 组合会话列表、对话和右侧多窗口栏。
+// ChatPage 组两态：会话三栏，看板藏左与中、右侧仍是 Plan / 文件 / Git。
 export function ChatPage({
   sessionId,
   engine,
+  boardMode = false,
   onOpenSession,
   onNewConversation,
+  onOpenBoard,
+  onLeaveBoard,
   brandSrc,
   codexIconSrc,
   claudeIconSrc,
   headerActions,
 }: ChatPageProps) {
   const { client, pickDirectory, pickFiles } = useAgent();
+  const { client: boardClient } = useBoard();
   const { client: codexClient } = useCodex();
   const { client: claudeClient } = useClaude();
   const list = useSessionList();
@@ -78,6 +90,9 @@ export function ChatPage({
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const workbench = useWorkbench();
   const columns = useColumnLayout();
+  const [works, setWorks] = useState<Work[]>([]);
+  const [placements, setPlacements] = useState<Placement[]>([]);
+  const [float, setFloat] = useState<FloatSession | null>(null);
 
   useEffect(() => {
     workbench.reset();
@@ -91,6 +106,18 @@ export function ChatPage({
   const sessions = useMemo(
     () => mergeSessions(list.sessions, codexList.sessions, claudeList.sessions),
     [claudeList.sessions, codexList.sessions, list.sessions],
+  );
+  useEffect(() => {
+    void Promise.all([boardClient.listWorks(), boardClient.listPlacements()])
+      .then(([nextWorks, nextPlaces]) => {
+        setWorks(nextWorks);
+        setPlacements(nextPlaces);
+      })
+      .catch(() => undefined);
+  }, [boardClient, sessions]);
+  const groups = useMemo(
+    () => groupSessionsByWork(sessions, placements, works),
+    [placements, sessions, works],
   );
   const currentKey = sessionId ? `${activeEngine}:${sessionId}` : undefined;
   const current = sessions.find((session) => `${session.engine}:${session.id}` === currentKey);
@@ -226,6 +253,60 @@ export function ChatPage({
     workbench.createKind(kind, seed);
   };
 
+  const rightDock = columns.rightOpen ? (
+    <>
+      <ColumnSash
+        label="调整右侧窗口宽度"
+        onMove={(delta, persist) => columns.moveRight(-delta, persist)}
+        onCollapse={() => columns.setRightOpen(false)}
+      />
+      <SideDock
+        width={columns.right}
+        windows={workbench.windows}
+        activeId={workbench.activeId}
+        plans={artifacts.plans}
+        files={artifacts.files}
+        onSelect={workbench.setActiveId}
+        onClose={workbench.closeWindow}
+        onCreate={createDock}
+      />
+    </>
+  ) : null;
+
+  if (boardMode) {
+    return (
+      <div ref={columns.rowRef} className="flex h-full overflow-hidden bg-background text-foreground">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-2 text-sm leading-5 text-muted-foreground">
+            <Button size="sm" variant="secondary" onClick={onLeaveBoard ?? onNewConversation}>
+              返回会话
+            </Button>
+            <div className="ml-auto flex items-center gap-2">
+              {headerActions}
+              <SidebarToggle
+                label={columns.rightOpen ? "收起右侧窗口" : "展开右侧窗口"}
+                onClick={columns.toggleRight}
+              >
+                {columns.rightOpen ? <PanelRightClose className="size-3.5" /> : <PanelRight className="size-3.5" />}
+              </SidebarToggle>
+            </div>
+          </header>
+          <BoardGrid onOpenSession={(id, nextEngine) => setFloat({ id, engine: nextEngine })} />
+        </main>
+        {rightDock}
+        {float ? (
+          <SessionFloat
+            session={float}
+            onClose={() => setFloat(null)}
+            onOpenPlan={openPlan}
+            onOpenFile={openFile}
+            onOpenGit={openGit}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div ref={columns.rowRef} className="flex h-full overflow-hidden bg-background text-foreground">
       {columns.leftOpen ? (
@@ -233,6 +314,8 @@ export function ChatPage({
           <SessionSidebar
             width={columns.left}
             sessions={sessions}
+            groups={groups}
+            works={works.map((work) => ({ id: work.id, title: work.title }))}
             currentId={currentKey}
             busy={list.busy || codexList.busy || claudeList.busy}
             error={
@@ -245,6 +328,16 @@ export function ChatPage({
             hasMore={codexList.hasMore}
             onLoadMore={codexList.hasMore ? () => void codexList.loadMore() : undefined}
             onCreate={onNewConversation}
+            onOpenBoard={onOpenBoard}
+            onAttach={async (session, workId) => {
+              await boardClient.attachPlacement(workId, session.engine ?? "agent", session.id);
+              const [nextWorks, nextPlaces] = await Promise.all([
+                boardClient.listWorks(),
+                boardClient.listPlacements(),
+              ]);
+              setWorks(nextWorks);
+              setPlacements(nextPlaces);
+            }}
             onSelect={(id, nextEngine) => onOpenSession(id, nextEngine ?? "agent")}
             onRecover={async (runId) => {
               await timeline.recover(runId);
@@ -451,25 +544,7 @@ export function ChatPage({
           </>
         )}
       </main>
-      {columns.rightOpen ? (
-        <>
-          <ColumnSash
-            label="调整右侧窗口宽度"
-            onMove={(delta, persist) => columns.moveRight(-delta, persist)}
-            onCollapse={() => columns.setRightOpen(false)}
-          />
-          <SideDock
-            width={columns.right}
-            windows={workbench.windows}
-            activeId={workbench.activeId}
-            plans={artifacts.plans}
-            files={artifacts.files}
-            onSelect={workbench.setActiveId}
-            onClose={workbench.closeWindow}
-            onCreate={createDock}
-          />
-        </>
-      ) : null}
+      {rightDock}
     </div>
   );
 }

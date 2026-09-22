@@ -110,6 +110,19 @@ func TestUpsertIndexOverBudgetStillWrites(t *testing.T) {
 	}
 }
 
+// TestWorkScopeRoundTrip 确认 work 范围记忆可写入并按 scope_id 列出。
+func TestWorkScopeRoundTrip(t *testing.T) {
+	q, ctx := testQueries(t)
+	item, err := Upsert(ctx, q, TextMemory{Scope: ScopeWork, ScopeID: "w1", Name: NameIndex, Content: "work notes"})
+	if err != nil || item.Scope != ScopeWork || item.ScopeID != "w1" {
+		t.Fatalf("upsert %+v %v", item, err)
+	}
+	listed, err := List(ctx, q, ScopeWork, "w1")
+	if err != nil || len(listed) != 1 || listed[0].Content != "work notes" {
+		t.Fatalf("list %+v %v", listed, err)
+	}
+}
+
 func TestIndexAndSearchMessages(t *testing.T) {
 	q, ctx := testQueries(t)
 	if err := IndexMessage(ctx, q, ContextMessage{

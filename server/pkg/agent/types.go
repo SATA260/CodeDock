@@ -279,6 +279,7 @@ type ContextSnapshot struct {
 	ActivePlan      string             `json:"active_plan,omitempty"`    // 本会话绑定的计划；注入 developer 范围说明
 	Hidden          []Message          `json:"hidden,omitempty"`         // 插件注入的隐藏消息，不入库
 	MemoryIndexes   []string           `json:"memory_indexes,omitempty"` // 冻结记忆目录
+	Packet          string             `json:"packet,omitempty"`         // Work Packet，独立 system，不入库、不抄进记忆
 	EstimatedTokens int64              `json:"estimated_tokens"`         // 估算 token 数
 	Version         int64              `json:"version"`                  // 快照版本
 }

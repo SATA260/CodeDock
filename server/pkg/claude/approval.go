@@ -30,3 +30,28 @@ func Decide(approvalID string, answer AskAnswer) error {
 func Expire(approvalID string) error {
 	return ReplyAsk(approvalID, AskAnswer{Approved: false})
 }
+
+// PendingAsks 列出该对话还没作答的反问。
+func PendingAsks(sessionID string) []ApprovalAsk {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	out := make([]ApprovalAsk, 0)
+	for _, item := range rt.asks {
+		if item == nil {
+			continue
+		}
+		turn, ok := rt.turns[item.TurnID]
+		if !ok || turn == nil {
+			continue
+		}
+		if sessionID != "" && turn.SessionID != sessionID {
+			continue
+		}
+		ask := item.Ask
+		if ask.ExternalRequestID == "" {
+			ask.ExternalRequestID = item.ID
+		}
+		out = append(out, ask)
+	}
+	return out
+}

@@ -2,16 +2,19 @@
 
 import type { Session } from "@codedock/core/chat";
 import { Button, cn } from "@codedock/ui";
-import { Archive, PlusIcon } from "lucide-react";
+import { Archive, LayoutGrid, PlusIcon } from "lucide-react";
 
+import type { WorkGroup } from "../board/group.ts";
 import type { SessionEngine } from "./chat-page.tsx";
 import { relativeTime, sessionTitle, sessionTitleParts, shortId } from "./lib/format.ts";
 
 export type SidebarSession = Session & { engine?: SessionEngine };
 
-// SessionSidebar 混排 Local / Codex / Claude，引擎只靠图标区分。
+// SessionSidebar 按 Work 分组、组内按时间；未挂卡的进未归组。
 export function SessionSidebar({
   sessions,
+  groups,
+  works = [],
   currentId,
   busy,
   error,
@@ -21,6 +24,8 @@ export function SessionSidebar({
   onSelect,
   onRecover,
   onArchive,
+  onOpenBoard,
+  onAttach,
   canRecoverCurrent = false,
   brandSrc,
   codexIconSrc,
@@ -28,6 +33,8 @@ export function SessionSidebar({
   width,
 }: {
   sessions: SidebarSession[];
+  groups?: WorkGroup<SidebarSession>[];
+  works?: { id: string; title: string }[];
   currentId?: string;
   busy: boolean;
   error: string | null;
@@ -37,12 +44,15 @@ export function SessionSidebar({
   onSelect: (id: string, engine?: SessionEngine) => void;
   onRecover?: (runId: string) => Promise<void>;
   onArchive?: (session: SidebarSession) => Promise<void>;
+  onOpenBoard?: () => void;
+  onAttach?: (session: SidebarSession, workId: string) => Promise<void>;
   canRecoverCurrent?: boolean;
   brandSrc?: string;
   codexIconSrc?: string;
   claudeIconSrc?: string;
   width?: number;
 }) {
+  const rendered = groups ?? [{ id: null, title: "未分组", updatedAt: "", sessions }];
   return (
     <aside
       className="flex h-full shrink-0 flex-col bg-background"
@@ -55,89 +65,54 @@ export function SessionSidebar({
           ) : null}
           <div className="truncate text-sm font-semibold tracking-tight">CodeDock</div>
         </div>
-        <Button size="sm" variant="secondary" disabled={busy} onClick={onCreate}>
-          <PlusIcon className="size-3.5" />
-          新对话
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          {onOpenBoard ? (
+            <Button size="sm" variant="ghost" className="px-1.5" title="打开看板" aria-label="打开看板" onClick={onOpenBoard}>
+              <LayoutGrid className="size-3.5" />
+            </Button>
+          ) : null}
+          <Button size="sm" variant="secondary" disabled={busy} onClick={onCreate}>
+            <PlusIcon className="size-3.5" />
+            新对话
+          </Button>
+        </div>
       </div>
       {error ? <p className="px-3 pb-2 text-xs text-destructive">{error}</p> : null}
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        {sessions.length === 0 ? (
+        {rendered.every((group) => group.sessions.length === 0) ? (
           <p className="px-2 py-6 text-xs text-muted-foreground">还没有会话</p>
         ) : (
-          <ul className="space-y-0.5">
-            {sessions.map((session) => {
-              const engine = session.engine ?? "agent";
-              const rowKey = `${engine}:${session.id}`;
-              const active = rowKey === currentId;
-              return (
-                <li key={rowKey}>
-                  <div
-                    className={cn(
-                      "group flex w-full items-center gap-1 rounded-md px-2 py-1.5 leading-5 transition-colors",
-                      active
-                        ? "bg-muted text-foreground"
-                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onSelect(session.id, engine)}
-                      className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
-                    >
-                      <SessionEngineMark
-                        engine={engine}
-                        brandSrc={brandSrc}
-                        codexIconSrc={codexIconSrc}
-                        claudeIconSrc={claudeIconSrc}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <SidebarSessionTitle id={session.id} summary={session.summary} />
-                        <span className="mt-0.5 block truncate text-xs text-muted-foreground/70">
-                          {relativeTime(session.updated_at) || shortId(session.id)}
-                        </span>
-                      </span>
-                    </button>
-                    {engine === "agent" &&
-                    session.needs_recover &&
-                    session.active_run_id &&
-                    onRecover &&
-                    (rowKey !== currentId || canRecoverCurrent) ? (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="h-6 shrink-0 px-2 text-xs"
-                        data-testid="run-recover"
-                        onClick={() => {
-                          void onRecover(session.active_run_id as string);
-                        }}
-                      >
-                        恢复
-                      </Button>
-                    ) : null}
-                    {onArchive ? (
-                      <button
-                        type="button"
-                        aria-label={`归档 ${sessionTitle(session.id, session.summary)}`}
-                        disabled={busy}
-                        className={cn(
-                          "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/55 transition-colors",
-                          "hover:bg-muted hover:text-foreground",
-                          "opacity-80 group-hover:opacity-100 focus-visible:opacity-100",
-                        )}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void onArchive(session);
-                        }}
-                      >
-                        <Archive className="size-3.5" />
-                      </button>
-                    ) : null}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          rendered.map((group) => (
+            <section key={group.id ?? "ungrouped"} className="mb-3">
+              <h2 className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                {group.title}
+              </h2>
+              {group.sessions.length === 0 ? (
+                <p className="px-2 pb-2 text-[11px] text-muted-foreground/70">暂无会话</p>
+              ) : (
+                <ul className="space-y-0.5">
+                  {group.sessions.map((session) => (
+                    <SidebarRow
+                      key={`${session.engine ?? "agent"}:${session.id}`}
+                      session={session}
+                      currentId={currentId}
+                      ungrouped={group.id === null}
+                      works={works}
+                      busy={busy}
+                      onSelect={onSelect}
+                      onRecover={onRecover}
+                      onArchive={onArchive}
+                      onAttach={onAttach}
+                      canRecoverCurrent={canRecoverCurrent}
+                      brandSrc={brandSrc}
+                      codexIconSrc={codexIconSrc}
+                      claudeIconSrc={claudeIconSrc}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+          ))
         )}
         {hasMore && onLoadMore ? (
           <Button className="mt-2 w-full" size="sm" variant="ghost" onClick={onLoadMore}>
@@ -146,6 +121,125 @@ export function SessionSidebar({
         ) : null}
       </nav>
     </aside>
+  );
+}
+
+// SidebarRow 一条会话：点开、恢复、归档，未归组可补挂。
+function SidebarRow({
+  session,
+  currentId,
+  ungrouped,
+  works,
+  busy,
+  onSelect,
+  onRecover,
+  onArchive,
+  onAttach,
+  canRecoverCurrent,
+  brandSrc,
+  codexIconSrc,
+  claudeIconSrc,
+}: {
+  session: SidebarSession;
+  currentId?: string;
+  ungrouped: boolean;
+  works: { id: string; title: string }[];
+  busy: boolean;
+  onSelect: (id: string, engine?: SessionEngine) => void;
+  onRecover?: (runId: string) => Promise<void>;
+  onArchive?: (session: SidebarSession) => Promise<void>;
+  onAttach?: (session: SidebarSession, workId: string) => Promise<void>;
+  canRecoverCurrent: boolean;
+  brandSrc?: string;
+  codexIconSrc?: string;
+  claudeIconSrc?: string;
+}) {
+  const engine = session.engine ?? "agent";
+  const rowKey = `${engine}:${session.id}`;
+  const active = rowKey === currentId;
+  return (
+    <li>
+      <div
+        className={cn(
+          "group flex w-full items-center gap-1 rounded-md px-2 py-1.5 leading-5 transition-colors",
+          active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => onSelect(session.id, engine)}
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+        >
+          <SessionEngineMark
+            engine={engine}
+            brandSrc={brandSrc}
+            codexIconSrc={codexIconSrc}
+            claudeIconSrc={claudeIconSrc}
+          />
+          <span className="min-w-0 flex-1">
+            <SidebarSessionTitle id={session.id} summary={session.summary} />
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground/70">
+              {relativeTime(session.updated_at) || shortId(session.id)}
+            </span>
+          </span>
+        </button>
+        {engine === "agent" &&
+        session.needs_recover &&
+        session.active_run_id &&
+        onRecover &&
+        (rowKey !== currentId || canRecoverCurrent) ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-6 shrink-0 px-2 text-xs"
+            data-testid="run-recover"
+            onClick={() => {
+              void onRecover(session.active_run_id as string);
+            }}
+          >
+            恢复
+          </Button>
+        ) : null}
+        {ungrouped && onAttach && works.length > 0 ? (
+          <select
+            aria-label="放到分组"
+            className="h-6 max-w-[4.5rem] shrink-0 rounded border border-border bg-background text-[10px]"
+            defaultValue=""
+            onChange={(event) => {
+              const workId = event.target.value;
+              if (workId) {
+                void onAttach(session, workId);
+              }
+            }}
+          >
+            <option value="">放到</option>
+            {works.map((work) => (
+              <option key={work.id} value={work.id}>
+                {work.title}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        {onArchive ? (
+          <button
+            type="button"
+            aria-label={`归档 ${sessionTitle(session.id, session.summary)}`}
+            disabled={busy}
+            className={cn(
+              "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/55 transition-colors",
+              "hover:bg-muted hover:text-foreground",
+              "opacity-80 group-hover:opacity-100 focus-visible:opacity-100",
+            )}
+            onClick={(event) => {
+              event.stopPropagation();
+              void onArchive(session);
+            }}
+          >
+            <Archive className="size-3.5" />
+          </button>
+        ) : null}
+      </div>
+    </li>
   );
 }
 

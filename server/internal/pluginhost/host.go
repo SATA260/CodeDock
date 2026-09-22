@@ -19,6 +19,7 @@ import (
 	goplugin "github.com/hashicorp/go-plugin"
 
 	"codedock/internal/agent/memory"
+	"codedock/internal/board"
 	"codedock/internal/events"
 	"codedock/internal/util"
 	pkgagent "codedock/pkg/agent"
@@ -416,7 +417,7 @@ func (r *hostRPC) MemoryGet(ctx context.Context, key sdk.MemoryKey) (string, err
 	if err != nil {
 		return "", err
 	}
-	scope, scopeID := memoryScope(key.Scope, sess)
+	scope, scopeID := memoryScope(ctx, r.host.queries, key.Scope, sess)
 	item, err := memory.Get(ctx, r.host.queries, memory.TextMemoryKey{
 		Scope:   scope,
 		ScopeID: scopeID,
@@ -441,7 +442,7 @@ func (r *hostRPC) MemoryUpsert(ctx context.Context, key sdk.MemoryKey, text stri
 	if err != nil {
 		return err
 	}
-	scope, scopeID := memoryScope(key.Scope, sess)
+	scope, scopeID := memoryScope(ctx, r.host.queries, key.Scope, sess)
 	_, err = memory.Upsert(ctx, r.host.queries, memory.TextMemory{
 		Scope:   scope,
 		ScopeID: scopeID,
@@ -498,12 +499,21 @@ func (r *hostRPC) AppendNotice(ctx context.Context, sessionID, runID, text strin
 	return err
 }
 
-// memoryScope 把插件传来的 scope 落到用户或工作区。
-func memoryScope(scope string, sess sqlite.Session) (memory.TextMemoryScope, string) {
-	if scope == string(memory.ScopeUser) {
+// memoryScope 把插件传来的 scope 落到用户、Work 或工作区。
+func memoryScope(ctx context.Context, q *sqlite.Queries, scope string, sess sqlite.Session) (memory.TextMemoryScope, string) {
+	switch scope {
+	case string(memory.ScopeUser):
 		return memory.ScopeUser, sess.UserID
+	case string(memory.ScopeWork):
+		if q != nil {
+			if place, err := board.GetPlacement(ctx, q, board.EngineNative, sess.ID); err == nil && place.WorkID != "" {
+				return memory.ScopeWork, place.WorkID
+			}
+		}
+		return memory.ScopeUser, sess.UserID
+	default:
+		return memory.ScopeWorkspace, sess.WorkspaceID
 	}
-	return memory.ScopeWorkspace, sess.WorkspaceID
 }
 
 // nullString 把空串收成 SQL NULL。

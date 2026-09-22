@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"codedock/internal/board"
 	intcodex "codedock/internal/codex"
 	cderr "codedock/internal/errors"
 	pkg "codedock/pkg/codex"
@@ -15,12 +17,21 @@ import (
 
 // API 是 /codex HTTP 薄桥接。
 type API struct {
-	rt *intcodex.Runtime
+	rt     *intcodex.Runtime
+	packet func(ctx context.Context, sessionID string) string
 }
 
 // New 构造 Codex HTTP 入口。
 func New(rt *intcodex.Runtime) *API {
 	return &API{rt: rt}
+}
+
+// SetPacket 注入 Work Packet 只读前缀读取函数。
+func (a *API) SetPacket(fn func(ctx context.Context, sessionID string) string) {
+	if a == nil {
+		return
+	}
+	a.packet = fn
 }
 
 // Mount 把 /codex 路由挂到父路由器上。
@@ -271,7 +282,11 @@ func (a *API) StartTurn(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = pkg.InputStart
 	}
-	turn, err := a.rt.StartTurn(r.Context(), chi.URLParam(r, "id"), req.Content, req.Input, mode)
+	content := req.Content
+	if a.packet != nil {
+		content = board.PrefixContent(a.packet(r.Context(), chi.URLParam(r, "id")), content)
+	}
+	turn, err := a.rt.StartTurn(r.Context(), chi.URLParam(r, "id"), content, req.Input, mode)
 	if err != nil {
 		writeError(w, err)
 		return

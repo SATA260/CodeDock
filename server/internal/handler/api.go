@@ -10,7 +10,9 @@ import (
 	"strings"
 
 	"codedock/internal/agent"
+	"codedock/internal/board"
 	"codedock/internal/config"
+	intcodex "codedock/internal/codex"
 	cderr "codedock/internal/errors"
 	"codedock/internal/events"
 	"codedock/internal/logger"
@@ -28,6 +30,8 @@ type API struct {
 	defaults pkgagent.RunConfigSnapshot
 	cfg      config.Config
 	log      *slog.Logger
+	board    *board.Service
+	codex    *intcodex.Runtime
 }
 
 // New 创建 Handler 入口。log 为 nil 时回退到 slog.Default。
@@ -35,7 +39,26 @@ func New(client db.Client, queries *sqlite.Queries, runtime *agent.Runtime, bus 
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{db: client, queries: queries, runtime: runtime, bus: bus, defaults: defaults, cfg: cfg, log: log}
+	api := &API{db: client, queries: queries, runtime: runtime, bus: bus, defaults: defaults, cfg: cfg, log: log}
+	api.refreshBoard()
+	return api
+}
+
+// SetCodex 注入本机 Codex 运行时，供看板 Inbox / StartInDir 转给已有裁决。
+func (a *API) SetCodex(rt *intcodex.Runtime) {
+	if a == nil {
+		return
+	}
+	a.codex = rt
+	a.refreshBoard()
+}
+
+// refreshBoard 按当前依赖重装看板服务。
+func (a *API) refreshBoard() {
+	if a == nil {
+		return
+	}
+	a.board = board.New(a.queries, a.boardPorts())
 }
 
 // logger 返回 Handler 日志；API 或字段为空时回退到 slog.Default。

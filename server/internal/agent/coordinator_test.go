@@ -473,8 +473,8 @@ func TestLoadMemoryIndexesAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hist.MemoryIndexes) != 2 {
-		t.Fatalf("indexes=%d", len(hist.MemoryIndexes))
+	if len(hist.MemoryIndexes) != 1 {
+		t.Fatalf("indexes=%d want user only, got %v", len(hist.MemoryIndexes), hist.MemoryIndexes)
 	}
 
 	over := strings.Repeat("line\n", memory.IndexMaxLines+2)

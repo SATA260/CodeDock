@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"codedock/internal/board"
 	"codedock/pkg/claude"
 )
 
@@ -380,7 +381,11 @@ func (a *API) ClaudeStartTurn(w http.ResponseWriter, r *http.Request) {
 	if req.Mode == string(claude.InputModeQueue) {
 		mode = claude.InputModeQueue
 	}
-	turnID, err := claude.Start(req.SessionID, req.Content, claude.Input{
+	content := req.Content
+	if pkt, err := board.BuildPacket(r.Context(), a.q(r.Context()), board.EngineClaude, req.SessionID); err == nil {
+		content = board.PrefixContent(pkt.Text, content)
+	}
+	turnID, err := claude.Start(req.SessionID, content, claude.Input{
 		Text:     req.Input.Text,
 		Mentions: claudeStrings(req.Input.Mentions),
 		Images:   claudeStrings(req.Input.Images),

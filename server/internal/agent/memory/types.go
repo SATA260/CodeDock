@@ -11,7 +11,8 @@ type TextMemoryScope string
 
 const (
 	ScopeUser      TextMemoryScope = "user"      // ScopeID 为 user_id。
-	ScopeWorkspace TextMemoryScope = "workspace" // ScopeID 为 workspace_id。
+	ScopeWorkspace TextMemoryScope = "workspace" // ScopeID 为 workspace_id；热层保留，本回合不装。
+	ScopeWork      TextMemoryScope = "work"      // ScopeID 为 work_id。
 )
 
 // TextMemoryKind 区分目录与专题。

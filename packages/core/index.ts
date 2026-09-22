@@ -36,6 +36,17 @@ export {
 export { GitClient, GitClientError, type GitClientOptions } from "./git/index.ts";
 export { CodexClient, CodexClientError, type CodexClientOptions } from "./codex/index.ts";
 export { ClaudeClient, ClaudeClientError, type ClaudeClientOptions } from "./claude/index.ts";
+export { BoardClient, BoardClientError, type BoardClientOptions } from "./board/index.ts";
+export type {
+  BoardEngine,
+  BoardView,
+  Card,
+  InboxItem,
+  Placement,
+  SessionLinks,
+  SessionView,
+  Work,
+} from "./board/index.ts";
 export type {
   ApprovalAsk,
   AskAnswer,

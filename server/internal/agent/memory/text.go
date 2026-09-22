@@ -134,7 +134,7 @@ func normalizeKey(key TextMemoryKey) (TextMemoryKey, error) {
 		key.Kind = KindFromName(key.Name)
 	}
 	switch key.Scope {
-	case ScopeUser, ScopeWorkspace:
+	case ScopeUser, ScopeWorkspace, ScopeWork:
 	default:
 		return key, cderr.Invalid("invalid memory scope")
 	}

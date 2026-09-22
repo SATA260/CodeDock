@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"codedock/internal/board"
 	cderr "codedock/internal/errors"
 	"codedock/internal/events"
 	"codedock/internal/util"
@@ -310,6 +311,14 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 		return pkgagent.AgentState{}, pkgagent.History{}, err
 	}
 
+	workID := ""
+	packet := ""
+	if place, placeErr := board.GetPlacement(ctx, q, board.EngineNative, sess.ID); placeErr == nil {
+		workID = place.WorkID
+		if pkt, pktErr := board.BuildPacket(ctx, q, board.EngineNative, sess.ID); pktErr == nil {
+			packet = pkt.Text
+		}
+	}
 	hist := pkgagent.History{
 		Run:           run,
 		Turn:          nextTurn,
@@ -318,7 +327,8 @@ func (r *Runtime) LoadAgentState(ctx context.Context, runID string) (pkgagent.Ag
 		Tools:         tools,
 		Prompt:        prompt,
 		Hidden:        hidden,
-		MemoryIndexes: r.loadMemoryIndexes(ctx, sess.UserID, sess.WorkspaceID),
+		MemoryIndexes: r.loadMemoryIndexes(ctx, sess.UserID, workID),
+		Packet:        packet,
 	}
 	return state, hist, nil
 }

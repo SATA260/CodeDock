@@ -50,3 +50,8 @@ WHERE id = ?;
 UPDATE sessions
 SET summary = ?, updated_at = ?
 WHERE id = ? AND summary = '';
+
+-- name: ListActiveSessions :many
+SELECT * FROM sessions
+WHERE status != 'archived'
+ORDER BY updated_at DESC, id ASC;

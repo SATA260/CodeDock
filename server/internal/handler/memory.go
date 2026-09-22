@@ -12,6 +12,7 @@ import (
 type ListTextMemoriesRequest struct {
 	UserID      string
 	WorkspaceID string
+	WorkID      string
 }
 
 type ListTextMemoriesResponse struct {
@@ -45,9 +46,10 @@ func (a *API) ListTextMemories(w http.ResponseWriter, r *http.Request) {
 	req := ListTextMemoriesRequest{
 		UserID:      r.URL.Query().Get("user_id"),
 		WorkspaceID: r.URL.Query().Get("workspace_id"),
+		WorkID:      r.URL.Query().Get("work_id"),
 	}
-	if req.UserID == "" && req.WorkspaceID == "" {
-		writeError(w, cderr.Invalid("user_id or workspace_id is required"))
+	if req.UserID == "" && req.WorkspaceID == "" && req.WorkID == "" {
+		writeError(w, cderr.Invalid("user_id, workspace_id or work_id is required"))
 		return
 	}
 	var items []memory.TextMemory
@@ -61,6 +63,14 @@ func (a *API) ListTextMemories(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.WorkspaceID != "" {
 		listed, err := memory.List(r.Context(), a.q(r.Context()), memory.ScopeWorkspace, req.WorkspaceID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		items = append(items, listed...)
+	}
+	if req.WorkID != "" {
+		listed, err := memory.List(r.Context(), a.q(r.Context()), memory.ScopeWork, req.WorkID)
 		if err != nil {
 			writeError(w, err)
 			return

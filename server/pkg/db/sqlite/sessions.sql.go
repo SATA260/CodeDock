@@ -186,6 +186,48 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (S
 	return i, err
 }
 
+const listActiveSessions = `-- name: ListActiveSessions :many
+SELECT id, tenant_id, user_id, agent_id, status, active_run_id, last_event_seq, compaction_seq, created_at, updated_at, workspace_id, summary FROM sessions
+WHERE status != 'archived'
+ORDER BY updated_at DESC, id ASC
+`
+
+func (q *Queries) ListActiveSessions(ctx context.Context) ([]Session, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveSessions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.UserID,
+			&i.AgentID,
+			&i.Status,
+			&i.ActiveRunID,
+			&i.LastEventSeq,
+			&i.CompactionSeq,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.WorkspaceID,
+			&i.Summary,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setSessionSummary = `-- name: SetSessionSummary :exec
 UPDATE sessions
 SET summary = ?, updated_at = ?
