@@ -6,7 +6,7 @@ import { BoardProvider } from "@codedock/views/board";
 import { ChatPage, type SessionEngine } from "@codedock/views/chat";
 import { GitProvider } from "@codedock/views/git";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { apiBase, defaultUserId } from "@/lib/env";
 import { rememberSession } from "@/lib/session";
@@ -17,12 +17,15 @@ export function ChatHost() {
   const router = useRouter();
   const parsed = parseChatPath(pathname);
   const lastSession = useRef<{ id: string; engine: SessionEngine } | null>(null);
-  if (parsed.sessionId && parsed.engine) {
-    lastSession.current = { id: parsed.sessionId, engine: parsed.engine };
-  }
-  if (parsed.sessionId && parsed.engine === "agent") {
-    rememberSession(parsed.sessionId);
-  }
+  // 记住最近一次打开的会话，离开看板时回到那里。
+  useEffect(() => {
+    if (parsed.sessionId && parsed.engine) {
+      lastSession.current = { id: parsed.sessionId, engine: parsed.engine };
+    }
+    if (parsed.sessionId && parsed.engine === "agent") {
+      rememberSession(parsed.sessionId);
+    }
+  }, [parsed.sessionId, parsed.engine]);
   const [boardGitSessionId, setBoardGitSessionId] = useState<string | undefined>();
   const routeGitSessionId = parsed.engine === "agent" ? parsed.sessionId : undefined;
   const gitSessionId = parsed.board ? boardGitSessionId : routeGitSessionId;

@@ -11,8 +11,8 @@ import (
 
 	"codedock/internal/agent"
 	"codedock/internal/board"
-	"codedock/internal/config"
 	intcodex "codedock/internal/codex"
+	"codedock/internal/config"
 	cderr "codedock/internal/errors"
 	"codedock/internal/events"
 	"codedock/internal/logger"
