@@ -18,11 +18,7 @@ export function useSessionList() {
       let page = 1;
       while (true) {
         const listed = await client.listSessions(page, 50);
-        visible.push(
-          ...listed.sessions.filter(
-            (session) => session.status !== "archived" && session.last_event_seq > 0,
-          ),
-        );
+        visible.push(...listed.sessions.filter((session) => session.status !== "archived"));
         const pageSize = listed.page.page_size || listed.sessions.length || 50;
         if (listed.sessions.length === 0 || page * pageSize >= listed.page.total) {
           break;

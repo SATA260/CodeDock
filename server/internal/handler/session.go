@@ -190,12 +190,14 @@ func (a *API) loadSessionByID(ctx context.Context, id string) (pkgagent.Session,
 	return mapSession(row), nil
 }
 
-// attachNeedsRecover 按 Worker 是否仍在执行，给 Session 填 needs_recover。
+// attachNeedsRecover 给带 active Run 的会话填 needs_recover，并标出是否还在执行。等审批不算执行中。
 func (a *API) attachNeedsRecover(ctx context.Context, session pkgagent.Session) pkgagent.Session {
 	if session.ActiveRunID == nil || *session.ActiveRunID == "" {
 		return session
 	}
 	session.NeedsRecover = a.runNeedsRecover(ctx, *session.ActiveRunID)
+	executing := a.nativeSessionLive(ctx, *session.ActiveRunID)
+	session.Executing = &executing
 	return session
 }
 

@@ -8,12 +8,17 @@
     "./chat": "./chat/index.ts",
     "./git": "./git/index.ts",
     "./codex": "./codex/index.ts",
-    "./claude": "./claude/index.ts"
+    "./claude": "./claude/index.ts",
+    "./board": "./board/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --experimental-strip-types board/group.test.ts board/layout.test.ts chat/column-layout.test.ts chat/lib/composer.test.ts chat/lib/files-window.test.ts chat/lib/terminal.test.ts git/lib/tree.test.ts"
   },
   "dependencies": {
     "@codedock/core": "workspace:*",
     "@codedock/ui": "workspace:*",
     "@git-diff-view/react": "^0.1.7",
+    "@uiw/react-md-editor": "^4.1.2",
     "lucide-react": "^0.544.0"
   },
   "peerDependencies": {

@@ -83,6 +83,8 @@ export interface Session {
   active_run_id?: string;
   /** 当前 active Run 已中断且 Worker 不在跑，界面才应显示「恢复」。 */
   needs_recover?: boolean;
+  /** 当前 active Run 还在执行。等审批、已结束、需要恢复时为 false；缺省表示这条响应没带。 */
+  executing?: boolean;
   last_event_seq: number;
   compaction_seq: number;
   summary?: string;

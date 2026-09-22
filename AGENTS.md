@@ -7,24 +7,26 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 ## 目录放置规则
 
 - 服务启动、配置读取、Router 和依赖装配放在 `server/cmd/server`。
-- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel / Restore，审批裁决，用户侧记忆查看/删除，以及 Git（直接调 `pkg/git`）。创建 Session 时在本包冻结 `workspace_id`。不 import `internal/agent/tools`。新对话选目录由 web 弹出系统目录选择框，不走 Agent Tool。Codex 的独立 `/codex` HTTP 放在 `server/internal/handler/codex`。Claude Code HTTP 仍在 `server/internal/handler`，直接调 `pkg/claude`。
-- Agent 运行时编排和 sqlc 持久化放在 `server/internal/agent`。
+- 大部分 HTTP 逻辑放在 `server/internal/handler`：Session / Message / Usage / Approval 的 CRUD，SSE，Run 的 Start / Continue / Cancel / Restore，审批裁决，用户侧记忆查看/删除，Git（直接调 `pkg/git`），以及看板 `/works` `/board`（调 `internal/board`）。创建 Session 时在本包冻结 `workspace_id`。不 import `internal/agent/tools`。新对话选目录由 web 弹出系统目录选择框，不走 Agent Tool。Codex 的独立 `/codex` HTTP 放在 `server/internal/handler/codex`。Claude Code HTTP 仍在 `server/internal/handler`，直接调 `pkg/claude`。
+- Agent 运行时编排和 sqlc 持久化放在 `server/internal/agent`。本回合记忆装 user + 当前 Work（`ScopeWork`）；`workspace` 热层保留但不进本回合。有 placement 时 native Loop 追加 Work Packet 为独立 system。
+- 产品工作流放在 `server/internal/board`：Work / Checkout / Info / Placement / Board 聚合 / Inbox。不写记忆、不 spawn CLI、不建 worktree。不进 `pkg/agent`。
 - 本机 Codex app-server 生命周期、内存排队/问票/SSE 放在 `server/internal/codex`。不新增 Codex 业务表；凡官方 API 能读到的都不入库。
 - Markdown 记忆（热层目录+专题）与 context message 索引（冷层按工作区 FTS）放在 `server/internal/agent/memory`；不放 `pkg/memory`。memory 不 import 父包 `internal/agent`，不定义 Tool。
 - 具体工具定义放在 `server/internal/agent/tools`。工具名、入参/出参、schema、权限和编排都在本包；Execute 若要调外部能力，只通过 `Ports` 里的接口。Runtime `New` 时由 `cmd/server` 注入 `Ports` 的具体实现，再 `Register`。每个工具只定义入参/出参结构体，执行用 `encoding/json`，schema 从类型推断。`tools` 可 import `memory`，不 import 父包 `internal/agent`。
 - Agent 通用无状态逻辑放在 `server/pkg/agent`：类型、token 统计、提示词、上下文、Tool 抽象（不含具体工具定义）、Agent 配置、模型调用。六个口的信封放在 `pkg/agent/seam`。
 - 插件 SDK 与 proto 放在 `server/pkg/plugin`；宿主放在 `server/internal/pluginhost`。两者都不进 `pkg/agent`，也不知道主循环内部状态机。可装载的插件放在仓根 `plugin/`（子目录名即插件名）。`plugin/example` 是作者拷贝模板：不订阅、不改正文、不换向、不登记方法。不进 `pkg/plugin`。插件共享参数用 `PluginContext`，不进模型、不复用 Hidden。
 - Git CLI 操作放在 `server/pkg/git`：无状态，不写产品流程；Handler 直接调用。不进 `pkg/agent`。
+- Issue/PR 只读快照放在 `server/pkg/github`：无状态，走本机 `gh`；不关 issue、不合 PR、不落 token。不进 `pkg/agent`。
 - Codex 协议与领域类型放在 `server/pkg/codex`：看板的子模块，JSONL 客户端给 `internal/codex` 调用；不查库、不 spawn CLI。不进 `pkg/agent`。
 - Claude Code 对接放在 `server/pkg/claude`：无状态，不落库；会话 / 实录 / 模型 / 权限档从本机 Claude 读。Handler 直接调用。不进 `pkg/agent`，不走本地对话的工具 / 记忆 / 压缩。
 - 进程内事件总线放在 `server/internal/events`。
 - 数据库入口和 sqlc 生成代码放在 `server/pkg/db`。
 - 数据库结构演进放在 `server/migrations`。
 - 运行时产生的文件（SQLite 等）放在仓根 `data/`，不要写进 `server/`。该目录 gitignore。
-- 无头业务放在 `packages/core`（`@codedock/core`）：按业务域拆（现有 `chat/`、`git/`、`codex/`、`claude/`），文件直接在域目录下，不要 `src/`。不依赖 React、Next、DOM、`process.env`。`baseUrl` / `userId` 由调用方注入。Git 用独立 `GitClient`。Codex 用独立 `CodexClient`，Claude 用独立 `ClaudeClient`，不扩 `AgentClient`。
+- 无头业务放在 `packages/core`（`@codedock/core`）：按业务域拆（现有 `chat/`、`git/`、`codex/`、`claude/`、`board/`），文件直接在域目录下，不要 `src/`。不依赖 React、Next、DOM、`process.env`。`baseUrl` / `userId` 由调用方注入。Git 用独立 `GitClient`。Codex 用独立 `CodexClient`，Claude 用独立 `ClaudeClient`，看板用独立 `BoardClient`，不扩 `AgentClient`。
 - 无业务 UI 放在 `packages/ui`（`@codedock/ui`）：`components/`、`lib/`、`styles/`，不要 `src/`，不按业务域拆。不依赖 core，不知道 Session / Run / TimelineItem。
-- 组合层放在 `packages/views`（`@codedock/views`）：按业务域拆，与 core 对齐（现有 `chat/`、`git/`、`codex/`、`claude/`）。包根 `provider.tsx` 注入 Agent client；Git 用 `views/git` 的 `GitProvider`；Codex 用 `views/codex` 的 `CodexProvider`，Claude 用 `views/claude` 的 `ClaudeProvider`，由 `ChatPage` 按模式组合，不单独做 Codex / Claude 页。不 import `next/*`；导航用回调。不要 `src/`，不预建空业务域。
-- Web 路由和平台装配放在 `apps/web`：读 `NEXT_PUBLIC_*`、创建 `AgentClient` / `GitClient` / `CodexClient` / `ClaudeClient`、包对应 Provider、`router.push`。`/git` 放在 `(chat)` 组外。Codex 走 `/` 与 `/s/c/:id`，Claude 走 `/` 与 `/s/claude/:id`。不解析 SSE。
+- 组合层放在 `packages/views`（`@codedock/views`）：按业务域拆，与 core 对齐（现有 `chat/`、`git/`、`codex/`、`claude/`、`board/`）。包根 `provider.tsx` 注入 Agent client；Git 用 `views/git` 的 `GitProvider`；Codex 用 `views/codex` 的 `CodexProvider`，Claude 用 `views/claude` 的 `ClaudeProvider`，看板用 `views/board` 的 `BoardProvider`，由 `ChatPage` 组会话 / 看板两态，不单独做 Codex / Claude / 看板页。右侧窗口栏只留 Plan / 文件 / Git。不 import `next/*`；导航用回调。不要 `src/`，不预建空业务域。
+- Web 路由和平台装配放在 `apps/web`：读 `NEXT_PUBLIC_*`、创建 `AgentClient` / `GitClient` / `CodexClient` / `ClaudeClient` / `BoardClient`、包对应 Provider、`router.push`。`/git` 放在 `(chat)` 组外。Codex 走 `/` 与 `/s/c/:id`，Claude 走 `/` 与 `/s/claude/:id`，看板走 `/board`。不解析 SSE。
 - 依赖方向：`apps/web` → `packages/views` → `packages/core`；`packages/views` → `packages/ui`。`ui` 不依赖 `core`。未来 CLI 只依赖 `core`。
 - 不要创建 `server/pkg/ai`。大模型调用属于 `pkg/agent`。
 
@@ -40,9 +42,9 @@ Agent Loop 已闭环：用户发文本、装上下文、调模型、产出文字
 - Agent 契约不得依赖 React、UI 包或路由框架。
 - 流式事件是通知，不是真实数据源；重连时应按 `event_seq` 回放。
 - 不要预先创建 Issue、Task、Review、Workspace 或其他具体业务域目录。
-- 不要把产品工作流放入 `server/pkg`。Git、Codex 与 Claude Code 是本机 CLI 域：不落库，Handler 直接调 `pkg/git` / `pkg/codex` / `pkg/claude`。
+- 不要把产品工作流放入 `server/pkg`。Git、Codex 与 Claude Code 是本机 CLI 域：不落库，Handler 直接调 `pkg/git` / `pkg/codex` / `pkg/claude`。看板工作流在 `internal/board`；`pkg/github` 只做 gh 快照。
 - 前端三层不得反依赖：`core` 不依赖 React / Next / DOM / `process.env`；`ui` 不依赖 `core`；`views` 不 import `next/*`；`apps/web` 只做路由与平台装配。
-- 前端按业务域拆模块，不要 `src/`：`core` / `views` 用同名域目录（现有 `chat` / `git` / `codex` / `claude`）；`ui` 只用 `components` / `lib` / `styles`。新业务再建目录，不预建空文件夹。
+- 前端按业务域拆模块，不要 `src/`：`core` / `views` 用同名域目录（现有 `chat` / `git` / `codex` / `claude` / `board`）；`ui` 只用 `components` / `lib` / `styles`。新业务再建目录，不预建空文件夹。
 
 ## 注释规则
 

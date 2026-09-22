@@ -11,7 +11,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// newRouter 注册健康检查、Agent CRUD、独立 /codex 与 /claude 路由。
+// newRouter 注册健康检查、Agent CRUD、看板 /works /board、独立 /codex 与 /claude 路由。
 func newRouter(log *slog.Logger, api *handler.API, codexAPI *codexhttp.API) http.Handler {
 	router := chi.NewRouter()
 	router.Use(cors)
@@ -53,6 +53,44 @@ func newRouter(log *slog.Logger, api *handler.API, codexAPI *codexhttp.API) http
 			r.Get("/", api.ListTextMemories)
 			r.Get("/{scope}/{scope_id}", api.GetTextMemory)
 			r.Delete("/{scope}/{scope_id}", api.DeleteTextMemory)
+		})
+		router.Route("/works", func(r chi.Router) {
+			r.Post("/", api.CreateWork)
+			r.Get("/", api.ListWorks)
+			r.Get("/{work_id}", api.GetWork)
+			r.Patch("/{work_id}", api.UpdateWork)
+			r.Delete("/{work_id}", api.DeleteWork)
+			r.Post("/{work_id}/checkouts", api.AttachWorkCheckout)
+			r.Get("/{work_id}/checkouts", api.ListWorkCheckouts)
+			r.Delete("/{work_id}/checkouts", api.DetachWorkCheckout)
+			r.Get("/{work_id}/info", api.GetWorkInfo)
+			r.Put("/{work_id}/info", api.PutWorkInfo)
+			r.Post("/{work_id}/sessions", api.StartWorkSession)
+			r.Post("/{work_id}/placements", api.AttachWorkPlacement)
+			r.Get("/{work_id}/inbox", api.ListWorkInbox)
+		})
+		router.Route("/board", func(r chi.Router) {
+			r.Get("/", api.GetBoard)
+			r.Get("/cards/{work_id}", api.GetBoardCard)
+		})
+		router.Get("/placements", api.ListPlacements)
+		router.Route("/placements/{engine}/{session_id}", func(r chi.Router) {
+			r.Get("/", api.GetPlacement)
+			r.Delete("/", api.DeletePlacement)
+			r.Get("/packet", api.GetPlacementPacket)
+		})
+		router.Post("/inbox/decision", api.DecideInbox)
+		router.Route("/session-directories/{engine}/{session_id}", func(r chi.Router) {
+			r.Put("/", api.BindSessionDirectory)
+			r.Delete("/", api.BindSessionDirectory)
+		})
+		router.Route("/session-links/{engine}/{session_id}", func(r chi.Router) {
+			r.Get("/", api.GetSessionLinks)
+			r.Put("/", api.ReplaceSessionLinks)
+			r.Put("/issue", api.PutSessionIssue)
+			r.Delete("/issue", api.DeleteSessionIssue)
+			r.Post("/pulls", api.PutSessionPull)
+			r.Delete("/pulls/{number}", api.DeleteSessionPull)
 		})
 		router.Route("/git", func(r chi.Router) {
 			r.Get("/status", api.GitStatus)

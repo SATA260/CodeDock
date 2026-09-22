@@ -29,7 +29,10 @@ func (rt *Runtime) ListSessions(ctx context.Context, archived bool, cursor strin
 		}
 		st.archived = archived
 		st.mu.Unlock()
-		out.Sessions = append(out.Sessions, pkg.MapThread(th, archived, active))
+		sess := pkg.MapThread(th, archived, active)
+		running := active != "" && len(rt.PendingAsks(th.ID)) == 0
+		sess.Running = &running
+		out.Sessions = append(out.Sessions, sess)
 	}
 	out.Sessions = dedupeSessions(out.Sessions)
 	return out, nil
@@ -150,6 +153,17 @@ func (rt *Runtime) sessionFromThread(sessionID string, th pkg.ThreadObject) pkg.
 	}
 	st.mu.Unlock()
 	return pkg.MapThread(th, archived, active)
+}
+
+// SetCwd 记下这条对话接下来使用的工作目录。
+func (rt *Runtime) SetCwd(sessionID, cwd string) {
+	if rt == nil || sessionID == "" || cwd == "" {
+		return
+	}
+	st := rt.state(sessionID)
+	st.mu.Lock()
+	st.settings.Cwd = cwd
+	st.mu.Unlock()
 }
 
 // Rename 改标题。

@@ -7,7 +7,7 @@ Agent Loop 已闭环：Handler 写用户消息与 Run，Worker 领取后由 Runt
 ## 总体架构
 
 ```text
-apps/web  (路由 + NEXT_PUBLIC_* + AgentClient / GitClient / CodexClient / ClaudeClient)
+apps/web  (路由 + NEXT_PUBLIC_* + AgentClient / GitClient / CodexClient / ClaudeClient / BoardClient)
     |
     v
 packages/views  (Chat 壳 / hooks，无 next/*)
@@ -28,18 +28,20 @@ server/internal/handler
     |-- 用户记忆查看 / 删除 --> pkg/db/sqlite
     |-- Git HTTP --> pkg/git（本机 CLI，无产品流程）
     |-- Claude HTTP --> pkg/claude（本机 Claude Code，不落库）
+    |-- 看板 /works /board --> internal/board（Work / Checkout / Placement / Inbox）
     |
     v
 server/internal/agent
     |-- sqlc 读写 Run / Turn / 事件 / 用量 / checkpoint
     |-- 调用 pkg/agent 无状态方法
     |-- 先持久化 AgentEvent，再发布 internal/events.Bus
-    |-- memory：热层目录+专题，冷层按工作区 FTS；Loop 装目录并 IndexMessage
+    |-- memory：热层目录+专题（含 work 范围），冷层按工作区 FTS；本回合装 user+Work
     |-- tools：工具定义在本包；New 注入 Ports（Execute 用的外部实现）后 Register
     |
     v
 server/pkg/agent
 server/pkg/git
+server/pkg/github
 server/pkg/codex
 server/pkg/claude
 ```
@@ -53,9 +55,9 @@ CodeDock/
 ├── apps/
 │   └── web/                     # Next.js 路由与平台装配；不解析 SSE
 ├── packages/
-│   ├── core/                    # 无头业务；按业务域拆（现有 chat/ git/ codex/ claude/），不要 src/
+│   ├── core/                    # 无头业务；按业务域拆（现有 chat/ git/ codex/ claude/ board/），不要 src/
 │   ├── ui/                      # 无业务语义；components / lib / styles，不要 src/
-│   └── views/                   # 组合层；按业务域拆（现有 chat/ git/ codex/ claude/），不要 src/
+│   └── views/                   # 组合层；按业务域拆（现有 chat/ git/ codex/ claude/ board/），不要 src/
 ├── docs/
 ├── plugin/example/          # 插件拷贝模板；不改正文、不换向
 ├── plugin/redact/           # 脱敏插件；PLUGIN_DIR 指到 plugin/
@@ -63,11 +65,12 @@ CodeDock/
 ├── server/
 │   ├── cmd/server/              # 服务启动、配置、Router 和依赖装配
 │   ├── internal/
-│   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel、记忆查看/删除、Git、Claude Code
+│   │   ├── handler/             # 大部分 HTTP：CRUD、SSE、Start / Continue / Cancel、记忆查看/删除、Git、看板、Claude Code
 │   │   │   └── codex/           # 独立 /codex HTTP 薄桥接
 │   │   ├── agent/               # 运行时编排 + sqlc 持久化
-│   │   │   ├── memory/          # 热层目录+专题，冷层工作区 FTS 索引
+│   │   │   ├── memory/          # 热层目录+专题（user / workspace / work），冷层工作区 FTS 索引
 │   │   │   └── tools/           # 具体工具定义：ping、memory_*、编码八工具、plan_*、explore
+│   │   ├── board/               # Work / Checkout / Info / Placement / Inbox / Packet；不写记忆、不建 worktree
 │   │   ├── codex/               # 本机 app-server 生命周期与内存排队/问票/SSE
 │   │   ├── events/              # 进程内事件总线
 │   │   ├── pluginhost/          # go-plugin 宿主：拉进程、Dispatch、Host 白名单
@@ -80,6 +83,7 @@ CodeDock/
 │   │   │   └── seam/            # Envelope / Dispatcher / 六个口的类型常量
 │   │   ├── plugin/              # 插件 SDK 与 proto；作者只 import 这个包
 │   │   ├── git/                 # 无状态 Git CLI 操作，供 Handler 直接调用
+│   │   ├── github/              # 无状态 gh CLI：issue/pr view 快照；不落 token、不合 PR
 │   │   ├── claude/              # 无状态 Claude Code 对接；从本机 Claude 读，不落库
 │   │   ├── codex/               # 看板的 Codex 子模块：协议客户端与领域类型
 │   │   └── db/                  # Client 与 sqlc 生成代码
@@ -105,7 +109,9 @@ internal/handler
   -> pkg/db/sqlite.Queries
   -> pkg/agent          # 映射响应、token 统计、Profile 装配
   -> pkg/git            # 本机 Git CLI 操作
+  -> pkg/github         # 本机 gh Issue/PR 快照
   -> pkg/claude         # 本机 Claude Code 对接
+  -> internal/board     # Work / 看板聚合 / Inbox 转交
   -> internal/agent     # Worker 领取后的 Loop
   -> internal/agent/memory  # 用户侧记忆响应类型
 
@@ -118,12 +124,18 @@ internal/codex
   启动本机 `codex app-server --stdio`
   排队、草稿、问票、SSE 只放内存
 
+internal/board
+  -> pkg/db/sqlite.Queries
+  -> pkg/agent          # 审批 kind 文本
+  不写记忆、不 spawn CLI、不建 worktree
+
 internal/agent
   -> pkg/db/sqlite.Queries
   -> pkg/agent
   -> internal/events
   -> internal/agent/memory
   -> internal/agent/tools
+  -> internal/board     # native 读 Placement 与 Packet
 
 internal/agent/memory
   -> pkg/db/sqlite.Queries
@@ -162,6 +174,10 @@ pkg/git
   不依赖 handler、internal、sqlc
   无状态，只 exec 本机 git；不写产品流程
 
+pkg/github
+  不依赖 handler、internal、sqlc
+  无状态，只 exec 本机 gh issue/pr view；不落 token
+
 pkg/claude
   不依赖 handler、internal、sqlc
   无状态，从本机 Claude 读会话 / 实录 / 配置，不落库；不写产品流程
@@ -174,7 +190,7 @@ pkg/codex
 
 packages/core
   不依赖 React、Next、DOM、process.env、AI SDK
-  按业务域拆目录（chat / git / codex / claude），不要 src/
+  按业务域拆目录（chat / git / codex / claude / board），不要 src/
   文件直接落在 packages/core/<domain>/
   baseUrl / userId 由调用方注入
 
@@ -187,13 +203,13 @@ packages/views
   -> packages/core
   -> packages/ui
   不 import next/*
-  按业务域拆目录，与 core 对齐（现有 chat / git / codex / claude）
-  AgentProvider 在包根注入 client + userId；CodexProvider / ClaudeProvider 注入各自 Client
-  ChatPage 在新建会话时选择 Local / Codex / Claude；导航用回调
+  按业务域拆目录，与 core 对齐（现有 chat / git / codex / claude / board）
+  AgentProvider 在包根注入 client + userId；CodexProvider / ClaudeProvider / BoardProvider 注入各自 Client
+  ChatPage 组会话 / 看板两态；导航用回调
 
 apps/web
   -> packages/views
-  -> packages/core          # 创建 AgentClient / GitClient / CodexClient / ClaudeClient
+  -> packages/core          # 创建 AgentClient / GitClient / CodexClient / ClaudeClient / BoardClient
   -> packages/ui            # 引入 tokens.css
   不直接解析 SSE 或 event type
 ```
@@ -205,7 +221,8 @@ apps/web
 承担大部分接口逻辑：
 
 - Session / Message / Usage / Approval 的增删改查。创建 Session 时在本包冻结 `workspace_id`（工作目录）：用户指定的路径必须是已存在目录，否则 400；未指定（空或 `default`）则 `GIT_REPO`，再否则 cwd。不 import `internal/agent/tools`。新对话选目录由 web 弹出系统目录选择框。`sessions.summary` 在首次用户消息写入，列表与详情返回
-- 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引；List 用 user_id / workspace_id，Get/Delete 用 name 默认目录）
+- 用户侧 TextMemory 的查看与删除（不提供写入，不暴露 message 索引；List 用 user_id / workspace_id / work_id，Get/Delete 用 name 默认目录）
+- 看板 HTTP（`/works`、`/board`、`/placements`、`/inbox/decision`、`/session-links`）：调 `internal/board`。Inbox 按引擎转给已有 `/approvals`、`/claude/...`、`/codex/...` 裁决，不把三引擎问票收成同一种结构。Issue/PR 快照走 `pkg/github`
 - SSE：先按 `afterSeq` / `Last-Event-ID` 回放已落库事件，再 `SubscribeAll` 并按 Session 过滤；客户端断开不取消 Run
 - 事件 JSON 回放：`GET /sessions/{id}/event-log`，供前端一次 hydrate，不替代 SSE 直播
 - Run 的 Start / Continue / Retry / Cancel / Restore 和审批裁决直接在 Handler 中处理，需要执行时再交给 Worker。`POST /runs/{id}/restore` 按快照粒度还原工作区。验证熔断单带 `kind=verify`（旧 `evaluate` 单仍可回放），人可 `accept` / `retry` / `abort`
@@ -231,13 +248,13 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `internal/agent/memory`
 
-热层是每个 scope 一篇目录（`kind=index`，`name` 固定 `index`）加多篇专题（`kind=topic`）。scope 只有 `user` / `workspace`。冷层是同一 `workspace_id` 下的 context message FTS。与 Loop 独立：
+热层是每个 scope 一篇目录（`kind=index`，`name` 固定 `index`）加多篇专题（`kind=topic`）。scope 是 `user` / `workspace` / `work`（`ScopeWork`）。冷层是同一 `workspace_id` 下的 context message FTS。与 Loop 独立：
 
 - 类型、`ByteLen`、`IndexOverBudget`、`ClipIndex`（200 行 / 25KB）
 - Agent 侧 TextMemory 的 Get / Upsert / Delete / List
 - `SearchMessages` 只查不写；`IndexMessage` 由 Loop 写 message 时调用
 
-不 import 父包；不解析 Markdown；不负责 Prompt / Context Packet / 对话压缩；不定义 Tool。不放在 `pkg`。不新建 Workspace 业务包，只持有 `workspace_id` 字段。Loop 在新 Session / 对话压缩后装冻结目录（独立 system 消息，不拼进静态 prompt，不入库）。超限目录立刻写入，由 Runtime 后台 `pkg.CompactIndex` 改短盖写，不自动建专题，不改当前 Session 冻结前缀。
+不 import 父包；不解析 Markdown；不负责 Prompt / Context Packet / 对话压缩；不定义 Tool。不放在 `pkg`。不新建 Workspace 业务包，只持有 `workspace_id` 字段。Loop 在新 Session / 对话压缩后装 **user + 当前 Work** 冻结目录（有 placement 时）；`workspace` 热层保留但不进本回合。Packet 是独立 system，不入库、不抄进记忆。超限目录立刻写入，由 Runtime 后台 `pkg.CompactIndex` 改短盖写，不自动建专题，不改当前 Session 冻结前缀。未归组会话只能写 user 记忆。
 
 ### `internal/agent/tools`
 
@@ -259,9 +276,17 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 详见 [plugin.md](plugin.md)。
 
+### `internal/board`
+
+产品工作流：Work / Info / Placement / Board 聚合 / Inbox 编排 / Packet。同一用户下标题不能重复；新建时标题为空则取最小的空号，从 `未命名(1)` 起。一张卡可挂多路会话。目录绑在会话上，不挂在卡上；只在创建会话时绑定，之后不能改、不能解绑。看板待审批和会话窗口一样一条一条看摘要，选齐同一张票才提交。旧会话不自动建卡；可先聊再补挂。删卡只断开归属，不删会话、不删磁盘。看板只聚合摘要，不加载对话正文。进行中只表示引擎还在执行；等审批单独计，不记成进行中。侧栏同样只把还在执行的会话算进行中。看板开着且有进行中或待审批时会重拉这两项。目录 Git 状态现问 `pkg/git`。不写记忆正文、不 spawn CLI、不建 worktree。
+
 ### `pkg/git`
 
 无状态 Git CLI：`Open` / `Status`（`SiteState` 整局）/ Diff / 图 / 暂存提交 / reset / revert / 推拉 / remote / 分支 / worktree / `stash create` 副本 / 冲突读写。不进 `pkg/agent`，不写 HTTP 或产品流程。Workspace / Branch / Undo / 说明 / Agent 快照的产品组合在 Handler。
+
+### `pkg/github`
+
+无状态本机 `gh` CLI：`issue view` / `pr view` JSON 快照。不关 issue、不合 PR、不落 token。不进 `pkg/agent`，不写产品流程。会话头上的 Issue/PR 由 Handler 写入 `session_issues` / `session_pulls`。
 
 ### `pkg/claude`
 
@@ -306,7 +331,7 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/core`
 
-跨端无头业务，无 UI。按业务域拆目录，文件直接放在 `packages/core/<domain>/`，不要 `src/`。现有 `chat/`：Session / Message / Run / 审批的 HTTP、SSE、Timeline reducer。Git 前端在 `git/`（`GitClient`，不扩 `AgentClient`）。Codex 前端在 `codex/`（`CodexClient`，不扩 `AgentClient`）。Claude 前端在 `claude/`（`ClaudeClient`，不扩 `AgentClient`）。`baseUrl` / `userId` 由调用方注入。不依赖 React。thinking 用 Run 状态（`queued` / `loading_context` / `running_llm` / `verifying`），不是模型 reasoning token。验证另有独立时间线卡片；跳过验证不画卡片。
+跨端无头业务，无 UI。按业务域拆目录，文件直接放在 `packages/core/<domain>/`，不要 `src/`。现有 `chat/`：Session / Message / Run / 审批的 HTTP、SSE、Timeline reducer。Git 前端在 `git/`（`GitClient`，不扩 `AgentClient`）。Codex 前端在 `codex/`（`CodexClient`，不扩 `AgentClient`）。Claude 前端在 `claude/`（`ClaudeClient`，不扩 `AgentClient`）。看板前端在 `board/`（`BoardClient`，不扩 `AgentClient`）。`baseUrl` / `userId` 由调用方注入。不依赖 React。thinking 用 Run 状态（`queued` / `loading_context` / `running_llm` / `verifying`），不是模型 reasoning token。验证另有独立时间线卡片；跳过验证不画卡片。
 
 ### `packages/ui`
 
@@ -320,11 +345,11 @@ Handler 直接依赖 `*sqlite.Queries`，不经过 Store 接口。Git 带 `sessi
 
 ### `packages/views`
 
-组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage` 三栏（会话列表、对话、右侧窗口栏，左右栏可收起），瀑布、审批、prompt；新建会话可选 Local / Codex / Claude。对话里的 Plan 收成条目，点开后在右侧窗口显示。每次 Run 改过的文件集中在一个框里（时间线与文件窗口共用），点选后右侧看正文。右侧窗口栏可新建 / 关闭 Plan、文件、Git，后续窗口种类往这里加。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` 与 `onOpenSession`。Git 在 `git/`：`GitProvider` 只注入 `GitClient`，不进 `AgentContext`；由 `ChatPage` 右侧窗口组合，不单独做业务页。Codex 在 `codex/`：`CodexProvider` 只注入 `CodexClient`。Claude 在 `claude/`：`ClaudeProvider` 只注入 `ClaudeClient`。二者都由 `ChatPage` 组合。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
+组合 core + ui。按业务域拆，与 core 对齐，不要 `src/`。现有 `chat/`：`ChatPage` 两态。会话模式是三栏（左侧按 Work 分组、中间对话、右侧 Plan / 文件 / Git）。看板模式藏中间对话，左上角仍是同一排 logo 和切换按钮，旁边是「新建分组」（不填标题，空号由服务端取）；再点切换按钮回到会话列表。列头标题可直接改。中间是横向 Work 列（列宽固定、列内纵向滚动，横向滑到末尾再挂下一列）。来回切换都从打开按钮长出黑点盖住屏幕，再褪开露出另一态。看板顶栏不放「新对话」。完整对话用可拖悬浮窗，右侧窗口栏不加 `chat` 种类。新建会话可选 Local / Codex / Claude，可先聊再补挂。发出第一条消息前就能打开设置；保存 Issue 或 PR 链接即创建会话，不必先发消息，关掉新建窗仍不建会话。链接随 Packet 加在对话前面。看板新建悬浮窗同样有这个按钮。包根 `provider.tsx` 注入 `AgentClient` + `userId`。`ChatPage` 接 `sessionId` / `boardMode` 与导航回调。Git 在 `git/`：`GitProvider` 只注入 `GitClient`。Codex / Claude 同上。看板在 `board/`：`BoardProvider` 只注入 `BoardClient`。不 import `next/*`。新业务新建目录，不预建 Issue / Task / Review / Workspace。
 
 ### `apps/web`
 
-路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient` / `GitClient` / `CodexClient` / `ClaudeClient`、包 `AgentProvider` / `GitProvider` / `CodexProvider` / `ClaudeProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。对话页装配 `GitClient` 给右侧 Git 窗口。Codex 走对话页的 `/` 与 `/s/c/:id`，Claude 走 `/` 与 `/s/claude/:id`。
+路由、`NEXT_PUBLIC_API_BASE` / `NEXT_PUBLIC_USER_ID`、创建 `AgentClient` / `GitClient` / `CodexClient` / `ClaudeClient` / `BoardClient`、包 `AgentProvider` / `GitProvider` / `CodexProvider` / `ClaudeProvider` / `BoardProvider`、`router.push`。本机 Web 直连 `:8080`（仅回环 Origin 的 CORS）。对话页装配 `GitClient` 给右侧 Git 窗口。看板上打开 Local 悬浮会话时，Git 窗口用这路会话的冻结目录。Codex 走对话页的 `/` 与 `/s/c/:id`，Claude 走 `/` 与 `/s/claude/:id`，看板走 `/board`，`/s/...` 仍是会话模式。
 
 ## 组装关系
 

@@ -21,6 +21,7 @@ func TestImportDirection(t *testing.T) {
 	}{
 		{"server/pkg/agent", []string{"codedock/internal"}, "底座核心包不可依赖上层内部包，请将事件通过接口回调注入。", "docs/architecture.md 第 3 节"},
 		{"server/pkg/git", []string{"codedock/internal", "codedock/pkg/agent"}, "Git CLI 不进 pkg/agent，也不写产品流程。", "docs/architecture.md"},
+		{"server/pkg/github", []string{"codedock/internal", "codedock/pkg/agent"}, "gh CLI 不进 pkg/agent，也不落 token。", "docs/architecture.md"},
 		{"server/pkg/plugin", []string{"codedock/internal"}, "插件 SDK 不依赖 handler 或 internal。", "docs/architecture.md"},
 		{"server/internal/agent/memory", []string{"codedock/internal/agent"}, "memory 不 import 父包 internal/agent。", "docs/architecture.md"},
 		{"server/internal/agent/tools", []string{"codedock/internal/agent"}, "tools 不 import 父包 internal/agent。", "docs/architecture.md"},

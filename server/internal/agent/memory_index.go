@@ -76,8 +76,8 @@ func (r *Runtime) compactIndex(ctx context.Context, key memory.TextMemoryKey) {
 	}
 }
 
-// loadMemoryIndexes 读取用户与工作区冻结目录，供本 Session 装上下文。
-func (r *Runtime) loadMemoryIndexes(ctx context.Context, userID, workspaceID string) []string {
+// loadMemoryIndexes 读取用户与当前 Work 冻结目录；工作区热层保留但不进本回合。
+func (r *Runtime) loadMemoryIndexes(ctx context.Context, userID, workID string) []string {
 	if r == nil {
 		return nil
 	}
@@ -93,10 +93,10 @@ func (r *Runtime) loadMemoryIndexes(ctx context.Context, userID, workspaceID str
 			out = append(out, item.Content)
 		}
 	}
-	if workspaceID != "" {
+	if workID != "" {
 		if item, err := memory.Get(ctx, q, memory.TextMemoryKey{
-			Scope:   memory.ScopeWorkspace,
-			ScopeID: workspaceID,
+			Scope:   memory.ScopeWork,
+			ScopeID: workID,
 			Kind:    memory.KindIndex,
 			Name:    memory.NameIndex,
 		}); err == nil && item.Content != "" {

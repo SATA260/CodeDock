@@ -217,6 +217,11 @@ func letterDirty(letter string) bool {
 	return letter != "" && letter != " " && letter != "."
 }
 
+// Dirty 判断这份检出是否有已跟踪改动（不含未跟踪）。
+func Dirty(state SiteState) bool {
+	return isDirty(state)
+}
+
 func isDirty(state SiteState) bool {
 	for _, file := range state.Files {
 		if file.Unmerged {
@@ -230,6 +235,26 @@ func isDirty(state SiteState) bool {
 		}
 	}
 	return false
+}
+
+// SharedWriters 列出同一仓库里除当前检出外的其他 worktree 路径。
+func SharedWriters(repo Repo, checkout Checkout) ([]string, error) {
+	trees, err := ListWorktrees(repo)
+	if err != nil {
+		return nil, err
+	}
+	current := checkoutDir(repo, checkout)
+	out := make([]string, 0)
+	for _, tree := range trees {
+		if samePath(tree.Path, current) {
+			continue
+		}
+		if strings.TrimSpace(tree.Path) == "" {
+			continue
+		}
+		out = append(out, tree.Path)
+	}
+	return out, nil
 }
 
 func hasUnmerged(state SiteState) bool {

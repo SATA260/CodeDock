@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"codedock/internal/agent/memory"
 	cderr "codedock/internal/errors"
@@ -252,6 +253,15 @@ func scopeIDFromSession(ctx context.Context, q *sqlite.Queries, sessionID string
 			return "default", nil
 		}
 		return session.WorkspaceID, nil
+	case memory.ScopeWork:
+		place, err := q.GetSessionPlacement(ctx, sqlite.GetSessionPlacementParams{
+			Engine:    "native",
+			SessionID: sessionID,
+		})
+		if err != nil || strings.TrimSpace(place.WorkID) == "" {
+			return "", cderr.Invalid("ungrouped session can only write user memory")
+		}
+		return place.WorkID, nil
 	default:
 		return "", cderr.Invalid("invalid memory scope")
 	}

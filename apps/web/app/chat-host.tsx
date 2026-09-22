@@ -1,54 +1,88 @@
 "use client";
 
+import { BoardClient } from "@codedock/core/board";
 import { GitClient } from "@codedock/core/git";
+import { BoardProvider } from "@codedock/views/board";
 import { ChatPage, type SessionEngine } from "@codedock/views/chat";
 import { GitProvider } from "@codedock/views/git";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { apiBase } from "@/lib/env";
+import { apiBase, defaultUserId } from "@/lib/env";
 import { rememberSession } from "@/lib/session";
 
-// ChatHost 解析对话路径并把导航收成回调；views 不知道具体 URL。
+// ChatHost 解析对话 / 看板路径并把导航收成回调；views 不知道具体 URL。
 export function ChatHost() {
   const pathname = usePathname();
   const router = useRouter();
   const parsed = parseChatPath(pathname);
-  if (parsed.sessionId && parsed.engine === "agent") {
-    rememberSession(parsed.sessionId);
-  }
-  const gitSessionId = parsed.engine === "agent" ? parsed.sessionId : undefined;
+  const lastSession = useRef<{ id: string; engine: SessionEngine } | null>(null);
+  // 记住最近一次打开的会话，离开看板时回到那里。
+  useEffect(() => {
+    if (parsed.sessionId && parsed.engine) {
+      lastSession.current = { id: parsed.sessionId, engine: parsed.engine };
+    }
+    if (parsed.sessionId && parsed.engine === "agent") {
+      rememberSession(parsed.sessionId);
+    }
+  }, [parsed.sessionId, parsed.engine]);
+  const [boardGitSessionId, setBoardGitSessionId] = useState<string | undefined>();
+  const routeGitSessionId = parsed.engine === "agent" ? parsed.sessionId : undefined;
+  const gitSessionId = parsed.board ? boardGitSessionId : routeGitSessionId;
   const git = useMemo(
     () => new GitClient({ baseUrl: apiBase, sessionId: gitSessionId }),
     [gitSessionId],
   );
+  const board = useMemo(
+    () => new BoardClient({ baseUrl: apiBase, userId: defaultUserId }),
+    [],
+  );
 
   return (
     <GitProvider client={git} sessionId={gitSessionId}>
-      <ChatPage
-        sessionId={parsed.sessionId}
-        engine={parsed.engine}
-        brandSrc="/brand/codedock-berth-mark.svg"
-        codexIconSrc="/brand/codex-app-icon.png"
-        claudeIconSrc="/brand/claude-app-icon.svg"
-        onOpenSession={(id, engine = parsed.engine ?? "agent") => {
-          const path = pathFor(id, engine);
-          if (pathname !== path) {
-            router.push(path);
-          }
-        }}
-        onNewConversation={() => {
-          if (pathname !== "/") {
-            router.push("/");
-          }
-        }}
-      />
+      <BoardProvider client={board}>
+        <ChatPage
+          sessionId={parsed.sessionId}
+          engine={parsed.engine}
+          boardMode={parsed.board}
+          brandSrc="/brand/codedock-berth-mark.svg"
+          codexIconSrc="/brand/codex-app-icon.png"
+          claudeIconSrc="/brand/claude-app-icon.svg"
+          onGitSession={setBoardGitSessionId}
+          onOpenSession={(id, engine = parsed.engine ?? "agent") => {
+            const path = pathFor(id, engine);
+            if (pathname !== path) {
+              router.push(path);
+            }
+          }}
+          onNewConversation={() => {
+            if (pathname !== "/") {
+              router.push("/");
+            }
+          }}
+          onOpenBoard={() => {
+            if (pathname !== "/board") {
+              router.push("/board");
+            }
+          }}
+          onLeaveBoard={() => {
+            const last = lastSession.current;
+            const path = last ? pathFor(last.id, last.engine) : "/";
+            if (pathname !== path) {
+              router.push(path);
+            }
+          }}
+        />
+      </BoardProvider>
     </GitProvider>
   );
 }
 
-// parseChatPath 先认 /s/claude/:id，再认 /s/c/:id，避免吃掉 Claude 前缀。
-function parseChatPath(pathname: string): { sessionId?: string; engine?: SessionEngine } {
+// parseChatPath 先认 /board，再认 /s/claude/:id 与 /s/c/:id。
+function parseChatPath(pathname: string): { sessionId?: string; engine?: SessionEngine; board?: boolean } {
+  if (pathname === "/board" || pathname.startsWith("/board/")) {
+    return { board: true };
+  }
   const claude = pathname.match(/^\/s\/claude\/([^/]+)/);
   if (claude?.[1]) {
     return { sessionId: decodeURIComponent(claude[1]), engine: "claude" };

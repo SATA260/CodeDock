@@ -17,6 +17,7 @@ type History struct {
 	Prompt        string
 	Hidden        []Message
 	MemoryIndexes []string
+	Packet        string
 }
 
 // Load 根据已准备数据构造上下文。
@@ -28,6 +29,7 @@ func Load(_ context.Context, hist History) (ContextSnapshot, error) {
 		SystemPrompt:  hist.Prompt,
 		Hidden:        hist.Hidden,
 		MemoryIndexes: hist.MemoryIndexes,
+		Packet:        hist.Packet,
 	}
 	if hist.Checkpoint != nil {
 		snapshot.BaseEventSeq = hist.Checkpoint.BaseEventSeq
@@ -87,6 +89,7 @@ func EstimateTokens(snapshot ContextSnapshot) int64 {
 	for _, index := range snapshot.MemoryIndexes {
 		total += CountTokens(index)
 	}
+	total += CountTokens(snapshot.Packet)
 	for _, msg := range snapshot.Hidden {
 		total += CountTokens(DecodeText(msg.Content))
 	}

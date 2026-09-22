@@ -45,6 +45,8 @@ export type Session = {
   preview?: string;
   cwd?: string;
   active_turn_id?: string;
+  /** 有进行中的回合且没有待审批。缺省表示这条响应没带。 */
+  running?: boolean;
   archived: boolean;
   ephemeral?: boolean;
   created_at?: number;

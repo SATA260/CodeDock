@@ -29,6 +29,8 @@ export type ClaudeSession = {
   claude_session_id: string;
   title: string;
   active_turn_id: string;
+  /** 有进行中的回合且没有待审批。缺省表示这条响应没带。 */
+  running?: boolean;
   archived: boolean;
   /** 本机实录第一条时间，Unix 秒。 */
   created_at?: number;

@@ -29,6 +29,16 @@ func CanTransition(from, next RunStatus) error {
 	return fmt.Errorf("invalid run transition %q -> %q", from, next)
 }
 
+// IsExecuting 判断 Run 是否还在自己往下走。等审批和终态都不算进行中。
+func IsExecuting(status RunStatus) bool {
+	switch status {
+	case RunQueued, RunLoadingContext, RunRunningLLM, RunExecutingTools, RunVerifying, RunEvaluating, RunCancelling:
+		return true
+	default:
+		return false
+	}
+}
+
 // IsTerminal 判断 Run 是否已结束。
 func IsTerminal(status RunStatus) bool {
 	switch status {

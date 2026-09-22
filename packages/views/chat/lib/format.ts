@@ -26,6 +26,34 @@ export function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+// compactAge 把时间收成 12m、20h、3d，给侧栏右侧用。
+export function compactAge(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) {
+    return "";
+  }
+  const minutes = Math.floor(Math.max(0, Date.now() - then) / 60_000);
+  if (minutes < 1) {
+    return "now";
+  }
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h`;
+  }
+  const days = Math.floor(hours / 24);
+  if (days < 14) {
+    return `${days}d`;
+  }
+  const weeks = Math.floor(days / 7);
+  if (weeks < 8) {
+    return `${weeks}w`;
+  }
+  return `${Math.floor(days / 30)}mo`;
+}
+
 // sessionTitle 侧栏标题：正文中间可省略，末尾 (n) 必须留下。
 export function sessionTitle(id: string, preview?: string): string {
   const { stem, suffix } = sessionTitleParts(id, preview);

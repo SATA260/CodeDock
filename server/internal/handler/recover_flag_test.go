@@ -11,7 +11,7 @@ import (
 	pkgagent "codedock/pkg/agent"
 )
 
-// TestNeedsRecoverHTTP 校验只有中断的 active Run 才带 needs_recover；执行中与等审批不带。
+// TestNeedsRecoverHTTP 校验只有中断的 active Run 才带 needs_recover。执行中 executing 为 true，等审批和已结束为 false。
 func TestNeedsRecoverHTTP(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -30,8 +30,9 @@ func TestNeedsRecoverHTTP(t *testing.T) {
 	if !getRun(t, f, orphaned).NeedsRecover {
 		t.Fatal("orphaned claimed run should need recover")
 	}
-	if !getSession(t, f, orphanedSess).NeedsRecover {
-		t.Fatal("orphaned session should need recover")
+	orphanedSession := getSession(t, f, orphanedSess)
+	if !orphanedSession.NeedsRecover || orphanedSession.Executing == nil || *orphanedSession.Executing {
+		t.Fatal("orphaned session should need recover and not be executing")
 	}
 	listed := listSessions(t, f, "")
 	var sawOrphan bool
@@ -57,8 +58,9 @@ func TestNeedsRecoverHTTP(t *testing.T) {
 		}),
 	})
 	waitNeedsRecover(t, f, liveID, false)
-	if getSession(t, f, liveSess).NeedsRecover {
-		t.Fatal("live session should not need recover")
+	live := getSession(t, f, liveSess)
+	if live.NeedsRecover || live.Executing == nil || !*live.Executing {
+		t.Fatal("live session should be executing")
 	}
 
 	waitSess := f.createSession(t)
@@ -67,8 +69,9 @@ func TestNeedsRecoverHTTP(t *testing.T) {
 	if getRun(t, f, waitID).NeedsRecover {
 		t.Fatal("waiting approval should not need recover")
 	}
-	if getSession(t, f, waitSess).NeedsRecover {
-		t.Fatal("waiting approval session should not need recover")
+	waiting := getSession(t, f, waitSess)
+	if waiting.NeedsRecover || waiting.Executing == nil || *waiting.Executing {
+		t.Fatal("waiting approval session should not be executing")
 	}
 
 	doneSess := f.createSession(t)
@@ -83,8 +86,9 @@ func TestNeedsRecoverHTTP(t *testing.T) {
 	if getRun(t, f, doneID).NeedsRecover {
 		t.Fatal("completed run should not need recover")
 	}
-	if getSession(t, f, doneSess).NeedsRecover {
-		t.Fatal("completed session should not need recover")
+	done := getSession(t, f, doneSess)
+	if done.NeedsRecover || (done.Executing != nil && *done.Executing) {
+		t.Fatal("completed session should not be executing")
 	}
 }
 

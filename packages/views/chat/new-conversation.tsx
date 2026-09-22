@@ -20,6 +20,7 @@ export function NewConversation({
   onPick,
   onClear,
   canClear,
+  placedIn,
   children,
 }: {
   brandSrc?: string;
@@ -34,6 +35,8 @@ export function NewConversation({
   onPick: () => void;
   onClear: () => void;
   canClear: boolean;
+  /** 发出第一条消息后，新会话会挂到这个 Work。 */
+  placedIn?: string;
   children: ReactNode;
 }) {
   return (
@@ -72,6 +75,9 @@ export function NewConversation({
         </div>
 
         <div className="mt-10 w-full">
+          {placedIn ? (
+            <p className="mb-2 text-center text-xs text-muted-foreground">发送后放到 {placedIn}</p>
+          ) : null}
           <div className="mb-2 flex w-full items-center gap-2 rounded-lg border border-border bg-accent/50 px-3 py-2">
             <button
               data-workspace-pick=""

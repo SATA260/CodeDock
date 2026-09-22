@@ -14,6 +14,7 @@ import (
 
 	"codedock/internal/agent"
 	agenttools "codedock/internal/agent/tools"
+	boardpkg "codedock/internal/board"
 	intcodex "codedock/internal/codex"
 	"codedock/internal/config"
 	"codedock/internal/events"
@@ -99,7 +100,22 @@ func main() {
 	api := handler.New(client, queries, runtime, bus, defaults, cfg, logger.NewLogger("handler"))
 	codexRT := intcodex.New(intcodex.Options{Bin: cfg.CodexBin})
 	defer func() { _ = codexRT.Close() }()
+	api.SetCodex(codexRT)
 	codexAPI := codexhttp.New(codexRT)
+	codexAPI.SetPacket(func(ctx context.Context, sessionID string) string {
+		pkt, err := boardpkg.BuildPacket(ctx, queries, boardpkg.EngineCodex, sessionID)
+		if err != nil {
+			return ""
+		}
+		return pkt.Text
+	})
+	codexAPI.SetDirectory(func(ctx context.Context, sessionID string) string {
+		path, err := boardpkg.GetSessionDirectory(ctx, queries, boardpkg.EngineCodex, sessionID)
+		if err != nil {
+			return ""
+		}
+		return path
+	})
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

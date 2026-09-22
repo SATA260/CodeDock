@@ -142,6 +142,9 @@ func Build(_ context.Context, req Prompt) (Chat, error) {
 		}
 		prefix = append(prefix, Message{Role: RoleSystem, Content: EncodeText(index)})
 	}
+	if strings.TrimSpace(req.Context.Packet) != "" {
+		prefix = append(prefix, Message{Role: RoleSystem, Content: EncodeText(req.Context.Packet)})
+	}
 	for _, msg := range req.Context.Hidden {
 		if len(msg.Content) == 0 {
 			continue
